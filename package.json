@@ -1,0 +1,49 @@
+{
+  "name": "ytspot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal Spotify-style desktop client for YouTube Music",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "dist": "electron-vite build && electron-builder --mac dir"
+  },
+  "dependencies": {
+    "@fontsource/figtree": "^5.3.0",
+    "youtubei.js": "^18.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "electron": "^45.0.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^6.0.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5"
+  },
+  "type": "module",
+  "productName": "ytspot",
+  "build": {
+    "appId": "com.chaitanya.ytspot",
+    "productName": "ytspot",
+    "files": [
+      "out/**"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "mac": {
+      "category": "public.app-category.music",
+      "target": "dir",
+      "icon": "build/icon.png",
+      "identity": null
+    }
+  }
+}

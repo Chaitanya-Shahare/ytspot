@@ -1,0 +1,114 @@
+export type Kind = 'song' | 'video' | 'album' | 'playlist' | 'artist' | 'other'
+
+export interface Card {
+  kind: Kind
+  id: string
+  title: string
+  subtitle: string
+  thumb: string
+  playlistId?: string
+}
+
+export interface Track {
+  videoId: string
+  title: string
+  artists: string
+  artistId?: string
+  album?: string
+  albumId?: string
+  duration: string
+  thumb: string
+}
+
+export interface Shelf {
+  title: string
+  cards: Card[]
+}
+
+export interface Collection {
+  kind: 'playlist' | 'album'
+  id: string
+  title: string
+  subtitle: string
+  meta: string
+  thumb: string
+  playlistId?: string
+  tracks: Track[]
+  more?: boolean
+}
+
+export interface ArtistPage {
+  id: string
+  title: string
+  thumb: string
+  songs: Track[]
+  shelves: Shelf[]
+}
+
+export interface SearchResult {
+  top?: Card
+  songs: Track[]
+  shelves: Shelf[]
+}
+
+export interface QueueItem {
+  videoId: string
+  title: string
+  artist: string
+  artistId?: string
+  albumId?: string
+  duration: string
+  thumb: string
+  selected: boolean
+}
+
+export interface PlayerState {
+  videoId: string
+  title: string
+  artist: string
+  artistId?: string
+  album: string
+  albumId?: string
+  thumb: string
+  time: number
+  duration: number
+  playing: boolean
+  volume: number
+  muted: boolean
+  repeat: 'NONE' | 'ALL' | 'ONE'
+  liked: boolean
+  // The current item is a video (music video / upload); `videoMode` is the user's preference.
+  isVideo: boolean
+  videoMode: boolean
+  queue: QueueItem[]
+  autoplay: QueueItem[]
+}
+
+export type PlayerCommand =
+  | { type: 'play'; videoId: string; playlistId?: string }
+  | { type: 'toggle' | 'next' | 'prev' | 'shuffle' | 'repeat' | 'like' | 'dislike' | 'mute' }
+  | { type: 'seek'; seconds: number }
+  | { type: 'volume'; value: number }
+  | { type: 'jump' | 'jumpAuto'; index: number }
+  | { type: 'queueAdd'; videoId: string; next: boolean }
+  | { type: 'queueRemove'; index: number }
+  | { type: 'queueMove' | 'autoplayMove'; from: number; to: number }
+  | { type: 'videoMode'; on: boolean }
+
+// A YouTube Music setting mirrored from its own settings dialog.
+export interface YtmSetting {
+  tab: string
+  title: string
+  summary?: string
+  kind: 'toggle' | 'choice' | 'action' | 'link'
+  value?: boolean | string
+  options?: string[]
+  url?: string
+  confirm?: string
+  // YTM's own endpoint for each value ("true"/"false", an option name, or "run" for actions).
+  endpoints?: Record<string, unknown>
+}
+
+export type SearchFilter = 'all' | 'song' | 'video' | 'album' | 'artist' | 'playlist'
+
+export type LibraryFilter = 'Playlists' | 'Albums' | 'Artists'
