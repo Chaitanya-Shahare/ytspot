@@ -58,14 +58,23 @@ The UI is a separate React app; it is not a restyle of the YouTube Music website
 
 ## Install
 
+**Homebrew** (recommended):
+
+```bash
+brew install --cask chaitanya-shahare/formulae/ytspot
+```
+
+**Manual:**
+
 1. Download `ytspot-mac-arm64.zip` from the [latest release](https://github.com/Chaitanya-Shahare/ytspot/releases/latest), unzip it, and move `ytspot.app` to `/Applications`.
-2. The app isn't notarized by Apple, so macOS blocks it on first launch. Clear the quarantine flag once:
+2. The app isn't notarized by Apple yet, so macOS blocks it on first launch. Clear the quarantine flag once (Homebrew does this for you):
    ```bash
    xattr -dr com.apple.quarantine /Applications/ytspot.app
    ```
-3. Open ytspot and click **Log in** at the top right.
 
-Requires macOS on Apple Silicon. Intel Macs, Windows and Linux are untested; see [Build from source](#build-from-source).
+Then open ytspot and click **Log in** at the top right.
+
+Requires macOS 13+ on Apple Silicon. Intel Macs, Windows and Linux are untested; see [Build from source](#build-from-source).
 
 ## Signing in: read this first
 
