@@ -2,7 +2,24 @@
   "name": "ytspot",
   "version": "0.1.0",
   "private": true,
-  "description": "Personal Spotify-style desktop client for YouTube Music",
+  "description": "YouTube Music for Mac with a Spotify-style UI",
+  "keywords": [
+    "youtube-music",
+    "ytmusic",
+    "spotify-ui",
+    "music-player",
+    "macos",
+    "electron",
+    "desktop-app",
+    "keyboard-shortcuts"
+  ],
+  "license": "MIT",
+  "author": "Chaitanya Shahare",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Chaitanya-Shahare/ytspot.git"
+  },
+  "homepage": "https://github.com/Chaitanya-Shahare/ytspot#readme",
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
