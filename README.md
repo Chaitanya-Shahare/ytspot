@@ -14,7 +14,9 @@ An open-source macOS desktop client for YouTube Music. It looks and handles like
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/Chaitanya-Shahare/ytspot?style=social)](https://github.com/Chaitanya-Shahare/ytspot/stargazers)
 
-![ytspot: a playlist playing with the Now Playing panel and queue open](docs/screenshots/playing.jpg)
+![ytspot demo: vim keys j/k skip tracks, a song is dragged to the top of the queue, g h goes Home](docs/demo.gif)
+
+<sub>`q` opens the queue · `j`/`k` next/previous · drag to reorder · `g h` Home</sub>
 
 </div>
 
@@ -37,20 +39,28 @@ The UI is a separate React app; it is not a restyle of the YouTube Music website
 
 <table>
   <tr>
+    <td><img src="docs/screenshots/playing.jpg" alt="Now Playing panel with the queue" /></td>
     <td><img src="docs/screenshots/home.jpg" alt="Home feed" /></td>
-    <td><img src="docs/screenshots/search.jpg" alt="Search results with filter chips" /></td>
   </tr>
   <tr>
+    <td align="center">Now Playing and queue</td>
     <td align="center">Home</td>
-    <td align="center">Search</td>
   </tr>
   <tr>
+    <td><img src="docs/screenshots/search.jpg" alt="Search results with filter chips" /></td>
     <td><img src="docs/screenshots/browse.jpg" alt="Browse all: moods and genres" /></td>
-    <td><img src="docs/screenshots/settings.jpg" alt="Settings with rebindable shortcuts" /></td>
   </tr>
   <tr>
+    <td align="center">Search</td>
     <td align="center">Browse all</td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/settings.jpg" alt="Settings with rebindable shortcuts" /></td>
+    <td><img src="docs/screenshots/shortcuts.jpg" alt="Keyboard shortcuts overlay" /></td>
+  </tr>
+  <tr>
     <td align="center">Settings and shortcut editor</td>
+    <td align="center">Keyboard shortcuts (⌘/)</td>
   </tr>
 </table>
 
@@ -104,8 +114,6 @@ Press **⌘/** or **?** in the app for the full list. Change any of them in **Se
 | Home / Explore / Library | `⌥⇧H` | `g h` / `g e` / `g l` |
 | Queue | `⌥⇧Q` | `q` |
 | Settings | `⌘,` | `g ,` |
-
-<img src="docs/screenshots/shortcuts.jpg" width="720" alt="Keyboard shortcuts overlay" />
 
 ## How it works
 
