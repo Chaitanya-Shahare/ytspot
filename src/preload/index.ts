@@ -47,6 +47,11 @@ const bridge = {
     ipcRenderer.on('player:state', fn)
     return () => void ipcRenderer.removeListener('player:state', fn)
   },
+  onTime: (cb: (t: number) => void) => {
+    const fn = (_: unknown, t: number) => cb(t)
+    ipcRenderer.on('player:time', fn)
+    return () => void ipcRenderer.removeListener('player:time', fn)
+  },
   onMenu: (cb: (a: Action) => void) => {
     const fn = (_: unknown, a: Action) => cb(a)
     ipcRenderer.on('menu:action', fn)

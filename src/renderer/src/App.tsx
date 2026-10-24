@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Card, LibraryFilter, PlayerState, Track } from '../../shared/types'
 import * as I from './components/icons'
-import { Ctx, fmt, invalidate, loadPrefs, routeFor, savePrefs, sized, TimeCtx, useApp, useCached, useTime, type AppCtx, type Prefs, type Route } from './lib'
+import { Ctx, fmt, getClock, invalidate, loadPrefs, routeFor, savePrefs, setClock, sized, useApp, useCached, useTime, type AppCtx, type Prefs, type Route } from './lib'
 import { bindings, comboLabel, comboOf, SHORTCUTS, type Action } from '../../shared/shortcuts'
 import { songMenu } from './components/menus'
 import { Boundary } from './components/ui'
@@ -19,8 +19,6 @@ export default function App() {
   const back = useCallback(() => setNav((n) => ({ ...n, pos: Math.max(0, n.pos - 1) })), [])
   const forward = useCallback(() => setNav((n) => ({ ...n, pos: Math.min(n.history.length - 1, n.pos + 1) })), [])
   const [player, setPlayer] = useState<PlayerState | null>(null)
-  const [time, setTime] = useState(0)
-  const timeRef = useRef(0)
   const [toastMsg, setToastMsg] = useState<string | null>(null)
   const [left, setLeft] = useState(window.innerWidth > 1100)
   const [right, setRight] = useState(true)
@@ -52,18 +50,17 @@ export default function App() {
   useEffect(() => {
     window.ytm.authStatus().then(setAuthed)
     const offAuth = window.ytm.onAuth(setAuthed)
-    // The clock ticks separately so only the progress bar re-renders while a song plays.
-    const sameInfo = (a: PlayerState | null, b: PlayerState) =>
-      !!a && JSON.stringify({ ...a, time: 0 }) === JSON.stringify({ ...b, time: 0 })
+    // The clock ticks separately (main sends just the time when nothing else changed), so only the
+    // progress bar re-renders while a song plays.
     const onState = (s: PlayerState) => {
-      timeRef.current = s.time
-      setTime(s.time)
-      setPlayer((prev) => (sameInfo(prev, s) ? prev : s))
+      setClock(s.time)
+      setPlayer(s)
     }
     // Main only pushes changes, so ask for the current state once on startup.
     window.ytm.state().then((s) => s && onState(s))
     const offState = window.ytm.onState(onState)
-    return () => (offAuth(), offState())
+    const offTime = window.ytm.onTime(setClock)
+    return () => (offAuth(), offState(), offTime())
   }, [])
 
   const go = useCallback(
@@ -134,10 +131,10 @@ export default function App() {
         case 'toggle': return void cmd({ type: 'toggle' })
         case 'next': return void cmd({ type: 'next' })
         case 'prev': return void cmd({ type: 'prev' })
-        case 'seekFwd': return void cmd({ type: 'seek', seconds: timeRef.current + 10 })
-        case 'seekBack': return void cmd({ type: 'seek', seconds: Math.max(0, timeRef.current - 10) })
-        case 'seekFwdSmall': return void cmd({ type: 'seek', seconds: timeRef.current + 1 })
-        case 'seekBackSmall': return void cmd({ type: 'seek', seconds: Math.max(0, timeRef.current - 1) })
+        case 'seekFwd': return void cmd({ type: 'seek', seconds: getClock() + 10 })
+        case 'seekBack': return void cmd({ type: 'seek', seconds: Math.max(0, getClock() - 10) })
+        case 'seekFwdSmall': return void cmd({ type: 'seek', seconds: getClock() + 1 })
+        case 'seekBackSmall': return void cmd({ type: 'seek', seconds: Math.max(0, getClock() - 1) })
         case 'mute': return void cmd({ type: 'mute' })
         case 'dislike': cmd({ type: 'dislike' }); return toast('Disliked — skipping')
         case 'explore': return go({ name: 'explore' })
@@ -208,7 +205,6 @@ export default function App() {
 
   return (
     <Ctx.Provider value={ctx}>
-      <TimeCtx.Provider value={time}>
       <div className={`app ${left ? '' : 'left-collapsed'} ${right && player?.videoId ? '' : 'right-hidden'}`}>
         <TopBar
           authed={authed}
@@ -243,7 +239,6 @@ export default function App() {
       </div>
       {help && <ShortcutsModal keys={keys} onClose={() => setHelp(false)} />}
       {toastMsg && <div className="toast">{toastMsg}</div>}
-      </TimeCtx.Provider>
     </Ctx.Provider>
   )
 }
