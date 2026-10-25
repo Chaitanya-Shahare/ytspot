@@ -160,13 +160,7 @@ const Row = memo(function Row({
 })
 
 export function Bars() {
-  return (
-    <span className="bars">
-      <i />
-      <i />
-      <i />
-    </span>
-  )
+  return <span className="bars" aria-label="Playing" />
 }
 
 // Skeleton placeholders shaped like the page that's loading (Spotify-style shimmer).
