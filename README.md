@@ -35,7 +35,7 @@ The UI is a separate React app; it is not a restyle of the YouTube Music website
 - **Audio-only by default:** songs stream without the video. Turn on **Switch to video** to watch the music video inside the Now Playing panel.
 - **Native macOS integration:** Control Center / Now Playing widget, media keys, and a full menu bar (Playback, View, Window). Closing the window keeps the music playing, like Spotify.
 - **All YouTube Music settings** in one Settings page: audio quality, Restricted Mode, dynamic queue, history, language and location.
-- **Light on resources:** about 2% CPU and 440–510 MB of memory while playing with the window closed. Home appears in about 0.9 s from cache.
+- **Light on resources:** about 2% CPU and 250–300 MB of memory while playing with the window closed, and close to zero CPU when paused. Home appears in about 0.9 s from cache.
 
 <table>
   <tr>

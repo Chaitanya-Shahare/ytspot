@@ -6,6 +6,7 @@ import * as yt from './api'
 import { buildMenu } from './menu'
 import { command, createPlayerWindow, placeVideo, rateVideo, getState, onLoggedIn, setVideoMode, applyYtmSetting, showLogin, signOut, ytmSession, ytmSettings } from './player'
 import { bindings, DEFAULT_PREFS, type Action } from '../shared/shortcuts'
+import type { PlayerState } from '../shared/types'
 
 const dir = fileURLToPath(new URL('.', import.meta.url))
 const boundsFile = join(app.getPath('userData'), 'window.json')
@@ -13,7 +14,7 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 
 let main: BrowserWindow | null = null
 let keys = bindings(DEFAULT_PREFS)
-let lastState = ''
+let sent: { info: string; time: number; queue: unknown; autoplay: unknown } | null = null
 let loggedIn: boolean | null = null // unknown until the first cookie check
 let quitting = false
 let keepPlaying = true
@@ -58,7 +59,7 @@ function createMain(): BrowserWindow {
   win.on('closed', () => (main = null))
   // A reloading UI can't report that the video slot went away; put the video back out of sight.
   win.webContents.on('did-start-loading', () => placeVideo(null, null))
-  lastState = ''
+  sent = null
   if (process.env.ELECTRON_RENDERER_URL) win.loadURL(process.env.ELECTRON_RENDERER_URL)
   else win.loadFile(join(dir, '../renderer/index.html'))
   return win
@@ -73,6 +74,24 @@ function showMain(then?: (w: BrowserWindow) => void): void {
   }
   const win = createMain()
   if (then) win.webContents.once('did-finish-load', () => setTimeout(() => then(win), 300))
+}
+
+// Push player state while someone can see it: the whole state when anything besides the clock
+// changed, otherwise just the time. Each push repaints the window, so once a second (an m:ss clock)
+// is enough; commands refresh right away so the controls still respond instantly.
+async function pushState(): Promise<void> {
+  if (!main?.isVisible()) return
+  const s = await getState()
+  if (!s || !main) return
+  const { time, queue, autoplay, ...rest }: PlayerState = s
+  const info = JSON.stringify(rest)
+  if (!sent || info !== sent.info || queue !== sent.queue || autoplay !== sent.autoplay) {
+    sent = { info, time, queue, autoplay }
+    main.webContents.send('player:state', s)
+  } else if (time !== sent.time) {
+    sent.time = time
+    main.webContents.send('player:time', time)
+  }
 }
 
 const rebuildMenu = () => buildMenu(() => main, showMain, keys)
@@ -140,7 +159,10 @@ app.whenReady().then(() => {
   ipcMain.handle('yt:album', data(yt.album))
   ipcMain.handle('yt:artist', data(yt.artist))
   ipcMain.handle('yt:search', data(yt.search))
-  ipcMain.handle('player:cmd', (_, c) => command(c))
+  ipcMain.handle('player:cmd', async (_, c) => {
+    await command(c)
+    setTimeout(pushState, 150)
+  })
   ipcMain.handle('player:get', () => getState())
   ipcMain.handle('ui:popup', popup)
   ipcMain.handle('ui:open', (_, url: string) => shell.openExternal(url))
@@ -169,14 +191,5 @@ app.whenReady().then(() => {
     t = setTimeout(syncAuth, 1500)
   })
 
-  // Push player state only when it changed and someone can see it.
-  setInterval(async () => {
-    if (!main?.isVisible()) return
-    const s = await getState()
-    const json = JSON.stringify(s)
-    if (s && json !== lastState) {
-      lastState = json
-      main?.webContents.send('player:state', s)
-    }
-  }, 500)
+  setInterval(pushState, 1000)
 })

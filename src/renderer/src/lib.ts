@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useState, useSyncExternalStore } from 'react'
 import type { ShortcutPrefs } from '../../shared/shortcuts'
 import { DEFAULT_PREFS } from '../../shared/shortcuts'
 import type { Card, PlayerState, Track } from '../../shared/types'
@@ -16,7 +16,7 @@ export type Route =
 export interface AppCtx {
   route: Route
   go: (r: Route) => void
-  // Everything except the playback clock, so long lists don't re-render twice a second.
+  // Everything except the playback clock, so long lists don't re-render every tick.
   player: PlayerState | null
   playTrack: (t: Track, playlistId?: string) => void
   openCard: (c: Card) => void
@@ -40,8 +40,17 @@ export const savePrefs = (p: Prefs) => localStorage.setItem('prefs', JSON.string
 
 export const Ctx = createContext<AppCtx>(null as unknown as AppCtx)
 export const useApp = () => useContext(Ctx)
-export const TimeCtx = createContext(0)
-export const useTime = () => useContext(TimeCtx)
+
+// The playback clock lives outside React state, so a tick re-renders only what shows the time.
+let clock = 0
+const clockSubs = new Set<() => void>()
+export const getClock = () => clock
+export function setClock(t: number): void {
+  clock = t
+  clockSubs.forEach((f) => f())
+}
+const subscribeClock = (f: () => void) => (clockSubs.add(f), () => void clockSubs.delete(f))
+export const useTime = () => useSyncExternalStore(subscribeClock, getClock)
 
 // Ask YouTube's image CDN for roughly the size we display (2x for retina) instead of 544px everywhere.
 export const sized = (url: string, px: number) => url.replace(/=w\d+-h\d+/, `=w${px * 2}-h${px * 2}`)

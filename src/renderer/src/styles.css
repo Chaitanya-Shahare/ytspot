@@ -192,11 +192,9 @@ img { display: block; object-fit: cover; background: #282828; }
 .tt { display: flex; flex-direction: column; min-width: 0; }
 .track-row.current .t1 { color: var(--green); }
 .dur { text-align: right; display: flex; justify-content: flex-end; }
-.bars { display: inline-flex; gap: 2px; height: 14px; align-items: flex-end; }
-.bars i { width: 3px; background: var(--green); animation: eq .9s ease-in-out infinite alternate; }
-.bars i:nth-child(2) { animation-delay: -.3s; }
-.bars i:nth-child(3) { animation-delay: -.6s; }
-@keyframes eq { from { height: 3px; } to { height: 14px; } }
+/* An animated GIF (scripts/equaliser-gif.py), like Spotify: a CSS animation here makes the GPU
+   recomposite the whole rounded main panel 60 times a second, about 10% CPU. */
+.bars { display: inline-block; width: 13px; height: 14px; background: url(./assets/equaliser.gif) left bottom / 13px 14px no-repeat; }
 
 /* search */
 .search { padding-top: 16px; }

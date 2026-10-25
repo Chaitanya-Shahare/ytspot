@@ -31,7 +31,9 @@ const VIDEO_CSS = `
 
 export function createPlayerWindow(): BaseWindow {
   host = new BaseWindow({ show: false, ...HIDDEN_BOUNDS })
-  view = new WebContentsView({ webPreferences: { session: ytmSession(), backgroundThrottling: false, spellcheck: false } })
+  // Background throttling stays on: Chromium never throttles a page while it plays audio, and when
+  // paused it lets this hidden page sleep instead of waking the CPU for YTM's timers.
+  view = new WebContentsView({ webPreferences: { session: ytmSession(), spellcheck: false } })
   host.contentView.addChildView(view)
   view.setBounds(HIDDEN_BOUNDS)
   view.setVisible(false)
@@ -138,6 +140,17 @@ const SETUP_JS = (videoMode: boolean) => `(() => {
   const autoplay = () => (store()?.autoplay ? rows(store().automixItems).filter(Boolean) : [])
   const s = window.__ytspot = {
     video: ${videoMode}, t, queue, autoplay,
+    // Queue rows are rebuilt only when YTM's queue store changes; it's immutable, so identity says
+    // whether anything changed. \`rev\` tells main whether its copy is current (unique per page load).
+    page: Math.random().toString(36).slice(2), n: 0,
+    snap() {
+      const st = store()
+      if (st === s.src && s.q) return
+      s.src = st
+      s.rev = s.page + ':' + ++s.n
+      s.q = queue().map((q) => q || { videoId: '', title: '', artist: '', duration: '', thumb: '', selected: false })
+      s.a = autoplay()
+    },
     apply() {
       const p = document.getElementById('movie_player'), tg = document.querySelector('ytmusic-av-toggle')
       if (!p?.setPlaybackQualityRange) return
@@ -167,13 +180,14 @@ export function setVideoMode(on: boolean): void {
   run(`window.__ytspot && (window.__ytspot.video = ${on}, window.__ytspot.apply())`)
 }
 
-const STATE_JS = `(() => {
+// `rev` is the queue revision main already has; the queue is only sent when it differs.
+const STATE_JS = (rev: string) => `(() => {
   const p = document.getElementById('movie_player'), y = window.__ytspot
   if (!p || !p.getVideoData || !y) return null
+  y.snap()
   const d = p.getVideoData(), m = navigator.mediaSession.metadata
   const bar = document.querySelector('ytmusic-player-bar')
-  const queue = y.queue().map((q) => q || { videoId: '', title: '', artist: '', duration: '', thumb: '', selected: false })
-  const cur = queue.find((q) => q.selected)
+  const cur = y.q.find((q) => q.selected)
   return {
     videoId: d.video_id || '',
     title: m?.title || d.title || '',
@@ -191,12 +205,20 @@ const STATE_JS = `(() => {
     liked: bar?.querySelector('ytmusic-like-button-renderer')?.getAttribute('like-status') === 'LIKE',
     isVideo: !!bar?.hasAttribute('is-video'),
     videoMode: y.video,
-    queue,
-    autoplay: y.autoplay()
+    rev: y.rev,
+    ...(y.rev === ${JSON.stringify(rev)} ? {} : { queue: y.q, autoplay: y.a })
   }
 })()`
 
-export const getState = () => run<PlayerState>(STATE_JS)
+// Unchanged queues keep the same array references, so callers can compare them by identity.
+let lastQueue: Pick<PlayerState, 'queue' | 'autoplay'> & { rev: string } = { rev: '', queue: [], autoplay: [] }
+export async function getState(): Promise<PlayerState | null> {
+  const s = await run<Omit<PlayerState, 'queue' | 'autoplay'> & Partial<PlayerState> & { rev: string }>(STATE_JS(lastQueue.rev))
+  if (!s) return null
+  const { rev, queue, autoplay, ...rest } = s
+  if (queue && autoplay) lastQueue = { rev, queue, autoplay }
+  return { ...rest, queue: lastQueue.queue, autoplay: lastQueue.autoplay }
+}
 
 const click = (sel: string) => `document.querySelector('ytmusic-player-bar ${sel}')?.click()`
 const rate = (which: 'like' | 'dislike') =>
@@ -362,7 +384,16 @@ export async function rateVideo(videoId: string, like: boolean): Promise<void> {
   )
 }
 
-export const ytmSettings = () => run<YtmSetting[]>(SETTINGS_READ)
+// Reading settings clicks through YTM's dialog with short waits, which a throttled page would
+// stretch to a second each, so lift throttling while it runs.
+export async function ytmSettings(): Promise<YtmSetting[] | null> {
+  page?.setBackgroundThrottling(false)
+  try {
+    return await run<YtmSetting[]>(SETTINGS_READ)
+  } finally {
+    page?.setBackgroundThrottling(true)
+  }
+}
 export async function applyYtmSetting(endpoint: unknown): Promise<void> {
   if (!page) return
   const reloads = !!(endpoint as { setClientSettingEndpoint?: unknown })?.setClientSettingEndpoint
