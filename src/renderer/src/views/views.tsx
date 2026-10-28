@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ArtistPage, Card, Collection, HomeData, Shelf, Track } from '../../../shared/types'
-import { More, Shuffle } from '../components/icons'
+import { HeartFill, More, Shuffle } from '../components/icons'
 import { cardMenu, queue } from '../components/menus'
-import { CardTile, ErrorBox, GreenPlay, Loading, ShelfRow, StickyHead, TrackTable } from '../components/ui'
+import { CardTile, ErrorBox, GreenPlay, Img, Loading, ShelfRow, StickyHead, TrackTable } from '../components/ui'
 import { moreRoute, routeFor, sameRoute, sized, useApp, useCached, useColor } from '../lib'
 
 // "55 songs • 3 hours, 9 minutes" -> "55 songs, 3 hr 9 min", as Spotify writes it.
@@ -19,12 +19,13 @@ function Shortcuts({ cards }: { cards: Card[] }) {
   return (
     <div className="shortcuts">
       {cards.map((c) => {
-        const playing = !!player?.playing && (c.id === player.videoId || sameRoute(routeFor(c), source?.route))
+        const current = !!player?.videoId && (c.id === player.videoId || sameRoute(routeFor(c), source?.route))
+        const playing = current && !!player?.playing
         return (
           <div key={c.kind + c.id} className={`shortcut ${playing ? 'playing' : ''}`} onClick={() => openCard(c)} onContextMenu={(e) => (e.preventDefault(), cardMenu(c, ctx))}>
-            <img src={sized(c.thumb, 64)} className={c.kind === 'artist' ? 'round' : ''} />
-            <span className="shortcut-title">{c.title}</span>
-            <GreenPlay size={32} playing={playing} onClick={() => (playing ? window.ytm.cmd({ type: 'toggle' }) : playCard(c))} />
+            <Img src={sized(c.thumb, 64)} artist={c.kind === 'artist'} />
+            <span className={`shortcut-title ${current ? 'green' : ''}`}>{c.title}</span>
+            <GreenPlay size={32} playing={playing} onClick={() => (current ? window.ytm.cmd({ type: 'toggle' }) : playCard(c))} />
           </div>
         )
       })}
@@ -36,6 +37,11 @@ function Shortcuts({ cards }: { cards: Card[] }) {
 // the chip list, kept so it stays on screen while a mood's shelves load.
 let homeChip = ''
 let homeChips: string[] = []
+// Signing in or out: the old session's mood chips may not exist in the new one.
+export function resetHome(): void {
+  homeChip = ''
+  homeChips = []
+}
 
 export function HomeView() {
   const [chip, setChip] = useState(homeChip)
@@ -43,10 +49,21 @@ export function HomeView() {
   const { data, error, retry } = useCached<HomeData>(`home:${chip}`, () => window.ytm.home(chip || undefined), { persist: !chip })
   if (data?.chips.length) homeChips = data.chips
   const chips = homeChips
+  // The chip row sticks to the top and gets a background once the page scrolls under it.
+  const [scrolled, setScrolled] = useState(false)
+  const pageRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const scroller = pageRef.current?.closest('.main-scroll')
+    if (!scroller) return
+    const check = () => setScrolled(scroller.scrollTop > 8)
+    check()
+    scroller.addEventListener('scroll', check, { passive: true })
+    return () => scroller.removeEventListener('scroll', check)
+  }, [])
   return (
-    <div className="page home">
+    <div className="page home" ref={pageRef}>
       {chips.length > 0 && (
-        <div className="chips home-chips">
+        <div className={`chips home-chips ${scrolled ? 'scrolled' : ''}`}>
           <button className={`chip ${chip ? '' : 'on'}`} onClick={() => pick('')}>
             All
           </button>
@@ -112,19 +129,27 @@ export function CollectionView({ kind, id }: { kind: 'playlist' | 'album'; id: s
   const color = useColor(data?.thumb)
 
   // Stream the rest of a long playlist in after the first page is on screen. Results always land
-  // in the cache, so leaving mid-load and coming back resumes where it stopped.
+  // in the cache, so leaving mid-load and coming back resumes where it stopped. Pages are added to
+  // the newest data (a row may have been removed meanwhile) and counted by what was fetched.
+  const latest = useRef(data)
+  latest.current = data
+  const [moreFailed, setMoreFailed] = useState(false)
+  const loaded = data ? (data.loaded ?? data.tracks.length) : 0
   useEffect(() => {
-    if (!data?.more) return
-    window.ytm
-      .playlistMore(id, data.tracks.length)
-      .then((r: { tracks: Track[]; more: boolean }) => set({ ...data, tracks: [...data.tracks, ...r.tracks], more: r.more }))
-      .catch(() => set({ ...data, more: false }))
+    if (!data?.more || moreFailed) return
+    window.ytm.playlistMore(id, loaded).then(
+      (r: { tracks: Track[]; more: boolean }) => {
+        const cur = latest.current
+        if (cur) set({ ...cur, tracks: [...cur.tracks, ...r.tracks], more: r.more, loaded: loaded + r.tracks.length })
+      },
+      () => setMoreFailed(true)
+    )
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, id])
+  }, [data?.more, loaded, id, moreFailed])
 
   if (error) return <ErrorBox error={error} onRetry={retry} />
   if (!data) return <Loading kind="collection" />
-  const from = { route: { name: kind, id } as const, title: data.title }
+  const from = { route: { name: kind, id } as const, title: data.title, ids: data.tracks.map((t) => t.videoId) }
   const isCurrent = !!player && data.tracks.some((t) => t.videoId === player.videoId)
   const play = () =>
     isCurrent ? window.ytm.cmd({ type: 'toggle' }) : data.tracks[0] && playTrack(data.tracks[0], data.playlistId, from)
@@ -150,7 +175,7 @@ export function CollectionView({ kind, id }: { kind: 'playlist' | 'album'; id: s
       { id: 'next', label: 'Play next' },
       { id: 'queue', label: 'Add to queue' },
       { id: '-', label: '-' },
-      { id: 'copy', label: 'Copy link' },
+      { id: 'share', label: 'Share', submenu: [{ id: 'copy', label: `Copy link to ${kind === 'album' ? 'Album' : 'playlist'}` }] },
       { id: 'open', label: 'Open in YouTube Music' }
     ])
     if (pick === 'play') play()
@@ -164,7 +189,13 @@ export function CollectionView({ kind, id }: { kind: 'playlist' | 'album'; id: s
     <div className="page collection" style={{ '--tint': color } as React.CSSProperties}>
       <StickyHead title={data.title} playing={isCurrent && player?.playing} onPlay={play} anchor={actions} />
       <header className="hero">
-        {data.thumb ? <img src={data.thumb} className="hero-art" /> : <div className="hero-art liked-art" />}
+        {id === 'LM' || id === 'VLLM' ? (
+          <div className="hero-art liked-art">
+            <HeartFill size={64} />
+          </div>
+        ) : (
+          <Img src={data.thumb} className="hero-art" />
+        )}
         <div className="hero-text">
           <span className="hero-kind">{heroKind}</span>
           <h1 className="hero-title">{data.title}</h1>
@@ -200,10 +231,28 @@ export function CollectionView({ kind, id }: { kind: 'playlist' | 'album'; id: s
         tracks={data.tracks}
         playlistId={data.playlistId}
         from={from}
-        editable={kind === 'playlist' ? { id, onRemoved: (v) => set({ ...data, tracks: data.tracks.filter((t) => t.videoId !== v) }) } : undefined}
+        editable={
+          kind === 'playlist'
+            ? {
+                id,
+                onRemoved: (v) => {
+                  const cur = latest.current ?? data
+                  set({ ...cur, loaded: cur.loaded ?? cur.tracks.length, tracks: cur.tracks.filter((t) => t.videoId !== v) })
+                }
+              }
+            : undefined
+        }
         showAlbum={kind === 'playlist' && data.tracks.some((t) => t.album)}
       />
-      {data.more && <div className="loading">Loading more songs…</div>}
+      {data.more && !moreFailed && <div className="loading">Loading more songs…</div>}
+      {data.more && moreFailed && (
+        <div className="loading">
+          Couldn’t load the rest of this playlist.{' '}
+          <button className="link-btn" onClick={() => setMoreFailed(false)}>
+            Try again
+          </button>
+        </div>
+      )}
       {!data.tracks.length && !data.more && (
         <div className="empty-collection">
           <h2>{kind === 'playlist' ? 'Let’s find something for your playlist' : 'Nothing to play here yet'}</h2>
@@ -228,7 +277,7 @@ export function ArtistView({ id }: { id: string }) {
   if (!data) return <Loading kind="artist" />
   // Playing an artist plays their top songs as a list, like Spotify.
   const list = data.songsMore?.browseId.replace(/^VL/, '')
-  const from = { route: { name: 'artist', id } as const, title: data.title }
+  const from = { route: { name: 'artist', id } as const, title: data.title, ids: data.songs.map((t) => t.videoId) }
   const isCurrent = !!player && data.songs.some((t) => t.videoId === player.videoId)
   const play = () => (isCurrent ? window.ytm.cmd({ type: 'toggle' }) : data.songs[0] && playTrack(data.songs[0], list, from))
   const shufflePlay = () => {

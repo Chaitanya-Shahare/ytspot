@@ -45,7 +45,7 @@ export async function cardMenu(c: Card, ctx: AppCtx): Promise<void> {
     { id: '-', label: '-' },
     { id: 'go', label: `Go to ${c.kind}`, enabled: !!r },
     { id: '-', label: '-' },
-    { id: 'share', label: 'Share', submenu: [{ id: 'copy', label: 'Copy link' }] },
+    { id: 'share', label: 'Share', submenu: [{ id: 'copy', label: `Copy link to ${c.kind === 'album' ? 'Album' : c.kind}` }] },
     { id: 'open', label: 'Open in YouTube Music' }
   ])
   if (pick === 'play') playCard(c)
@@ -127,7 +127,8 @@ export async function songMenu(song: MenuSong, ctx: AppCtx, where: Where = {}): 
   if (pick === 'queue') queue([song.videoId], false).then(done('Added to queue'))
   if (pick === 'remove-q' && where.queueIndex !== undefined)
     window.ytm.cmd({ type: 'queueRemove', index: where.queueIndex }).then(done('Removed from queue'))
-  if (pick === 'radio') window.ytm.cmd({ type: 'play', videoId: song.videoId, playlistId: `RDAMVM${song.videoId}` })
+  // Through playTrack so "Playing from" lets go of the page the song was on.
+  if (pick === 'radio') ctx.playTrack({ videoId: song.videoId, title: song.title, artists: '', duration: '', thumb: '' }, `RDAMVM${song.videoId}`)
   if (pick === 'artist' && song.artistId) go({ name: 'artist', id: song.artistId })
   if (pick === 'album' && song.albumId) go({ name: 'album', id: song.albumId })
   if (pick === 'copy') window.ytm.copy(url).then(done('Link copied to clipboard'))

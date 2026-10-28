@@ -122,10 +122,19 @@ const SETUP_JS = (videoMode: boolean) => `(() => {
   if (window.__ytspot) return
   const t = (x) => typeof x === 'string' ? x : x?.runs ? x.runs.map((r) => r.text).join('') : (x?.simpleText || '')
   const store = () => document.querySelector('#queue')?.queue?.store?.store?.getState?.().queue
+  const thumbs = (r) => r?.thumbnail?.thumbnails || []
   const rows = (list) => (list || []).map((it) => {
+    // A wrapper pairs a song with its music video; whichever one is playing describes the row.
     const w = it.playlistPanelVideoWrapperRenderer
-    const r = it.playlistPanelVideoRenderer || w?.primaryRenderer?.playlistPanelVideoRenderer
+    const prim = it.playlistPanelVideoRenderer || w?.primaryRenderer?.playlistPanelVideoRenderer
+    const cp = w?.counterpart?.[0]?.counterpartRenderer?.playlistPanelVideoRenderer
+    const r = cp?.selected ? cp : prim
     if (!r) return null
+    // Square album art (from the song version, when there is one) at Now Playing size; otherwise
+    // the largest thumbnail, which for a music video is a frame of the video.
+    const urls = [r, prim, cp].flatMap((x) => thumbs(x).slice(-1).map((th) => th.url))
+    const album = urls.find((u) => /googleusercontent|ggpht/.test(u || ''))
+    const art = album ? album.replace(/=w\d+-h\d+/, '=w544-h544') : urls[0] || ''
     let artistId, albumId
     for (const run of r.longBylineText?.runs || []) {
       const id = run.navigationEndpoint?.browseEndpoint?.browseId || ''
@@ -134,8 +143,8 @@ const SETUP_JS = (videoMode: boolean) => `(() => {
     }
     return {
       videoId: r.videoId, title: t(r.title), artist: t(r.shortBylineText), artistId, albumId,
-      duration: t(r.lengthText), thumb: r.thumbnail?.thumbnails?.[0]?.url || '',
-      selected: !!r.selected || JSON.stringify(w?.counterpart || '').includes('"selected":true')
+      duration: t(r.lengthText), thumb: thumbs(r)[0]?.url || '', art, square: !!album,
+      selected: !!prim?.selected || !!cp?.selected
     }
   })
   const queue = () => rows(document.querySelector('#queue')?.queue?.getItems?.())
@@ -188,17 +197,25 @@ const STATE_JS = (rev: string) => `(() => {
   const p = document.getElementById('movie_player'), y = window.__ytspot
   if (!p || !p.getVideoData || !y) return null
   y.snap()
-  const d = p.getVideoData(), m = navigator.mediaSession.metadata
+  const d = p.getVideoData(), m = navigator.mediaSession.metadata, id = d.video_id || ''
   const bar = document.querySelector('ytmusic-player-bar')
-  const cur = y.q.find((q) => q.selected)
+  const cur = y.q.find((q) => q && q.selected && q.videoId === id) || y.q.find((q) => q && q.videoId === id)
+  // Right after a track change YTM already reports the new video but still has the previous song's
+  // media metadata (title, artwork) for a moment; only trust it once it describes this video.
+  const fresh = !!m?.title && m.title === d.title
+  const msArt = m?.artwork?.length ? m.artwork[m.artwork.length - 1].src : ''
+  // When listening (not watching), album art beats a frame of the music video.
+  const thumb = (!y.video && cur?.square && cur.art) || (fresh && msArt) || cur?.art || ''
   return {
-    videoId: d.video_id || '',
-    title: m?.title || d.title || '',
-    artist: m?.artist || d.author || '',
+    videoId: id,
+    title: (fresh && m.title) || cur?.title || d.title || '',
+    artist: (fresh && m.artist) || cur?.artist || d.author || '',
     artistId: cur?.artistId,
-    album: m?.album || '',
+    album: (fresh && m.album) || '',
     albumId: cur?.albumId,
-    thumb: m?.artwork?.length ? m.artwork[m.artwork.length - 1].src : '',
+    thumb,
+    // Nothing reliable to show for this song yet; main waits a moment before pushing it.
+    pending: !fresh && !cur,
     time: p.getCurrentTime() || 0,
     duration: p.getDuration() || 0,
     playing: p.getPlayerState() === 1 || p.getPlayerState() === 3,
@@ -233,7 +250,7 @@ let playSeq = 0
 
 export async function command(c: PlayerCommand): Promise<void> {
   const P = `document.getElementById('movie_player')`
-  if (['play', 'next', 'prev', 'jump', 'jumpAuto', 'toggle'].includes(c.type)) playSeq++
+  if (['play', 'next', 'prev', 'jump', 'jumpAuto', 'toggle', 'dislike'].includes(c.type)) playSeq++
   switch (c.type) {
     case 'play': {
       const mine = playSeq
@@ -404,14 +421,20 @@ export async function subscribe(channelId: string, on: boolean): Promise<void> {
 
 // Reading settings clicks through YTM's dialog with short waits, which a throttled page would
 // stretch to a second each, so lift throttling while it runs.
-export async function ytmSettings(): Promise<YtmSetting[]> {
-  if (!page) throw new Error('YouTube Music isn’t loaded yet')
-  page.setBackgroundThrottling(false)
-  try {
-    return await page.executeJavaScript(SETTINGS_READ, true)
-  } finally {
-    page?.setBackgroundThrottling(true)
-  }
+// One read at a time: two would click through the same dialog and close it under each other.
+let settingsRead: Promise<unknown> = Promise.resolve()
+export function ytmSettings(): Promise<YtmSetting[]> {
+  const run = settingsRead.catch(() => undefined).then(async () => {
+    if (!page) throw new Error('YouTube Music isn’t loaded yet')
+    page.setBackgroundThrottling(false)
+    try {
+      return (await page.executeJavaScript(SETTINGS_READ, true)) as YtmSetting[]
+    } finally {
+      page?.setBackgroundThrottling(true)
+    }
+  })
+  settingsRead = run
+  return run
 }
 export async function applyYtmSetting(endpoint: unknown): Promise<void> {
   if (!page) return

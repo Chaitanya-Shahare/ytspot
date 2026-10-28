@@ -26,34 +26,44 @@ export function LyricsView() {
   return <SongLyrics key={player.videoId} player={player} />
 }
 
-function SongLyrics({ player }: { player: PlayerState }) {
+// The playing song's lyrics; the Lyrics page and the Now Playing card share one fetch.
+function useLyrics(player: PlayerState) {
   const { videoId, title, artist, album, duration } = player
-  const { data, error, retry } = useCached<Lyrics | null>(
+  return useCached<Lyrics | null>(
     `lyrics:${videoId}:${title}`,
     () => window.ytm.lyrics({ videoId, title, artist, album, duration }),
     { revalidate: false }
   )
+}
+
+// Jump to a line (and start playing, as Spotify does when you click a lyric).
+function seekTo(t: number | undefined, playing: boolean): void {
+  if (t === undefined) return
+  setClock(t)
+  window.ytm.cmd({ type: 'seek', seconds: t })
+  if (!playing) window.ytm.cmd({ type: 'toggle' })
+}
+
+function SongLyrics({ player }: { player: PlayerState }) {
+  const { data, error, retry } = useLyrics(player)
   const bg = lyricsBackground(useColor(player.thumb))
   const active = useActiveLine(data, player.playing)
   const box = useRef<HTMLDivElement>(null)
-  const scrolled = useRef(0)
-
-  // Keep the sung line in view, unless the user just scrolled away to read ahead.
+  // Scrolling by hand stops the view following the song until "Sync" is pressed (Spotify).
+  const [away, setAway] = useState(false)
+  const follow = () => box.current?.children[active]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   useEffect(() => {
-    if (active < 0 || Date.now() - scrolled.current < 4000) return
-    box.current?.children[active]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-  }, [active])
+    if (active >= 0 && !away) follow()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, away])
 
   const seek = (t?: number) => {
-    if (t === undefined) return
-    setClock(t)
-    window.ytm.cmd({ type: 'seek', seconds: t })
-    if (!player.playing) window.ytm.cmd({ type: 'toggle' })
-    scrolled.current = 0
+    seekTo(t, player.playing)
+    setAway(false)
   }
 
   return (
-    <div className="page lyrics-page" style={{ '--lyrics-bg': bg } as React.CSSProperties} onWheel={() => (scrolled.current = Date.now())}>
+    <div className="page lyrics-page" style={{ '--lyrics-bg': bg } as React.CSSProperties} onWheel={() => data?.synced && setAway(true)}>
       {error && data === undefined ? (
         <ErrorBox error={error} onRetry={retry} />
       ) : data === undefined ? (
@@ -75,6 +85,11 @@ function SongLyrics({ player }: { player: PlayerState }) {
             ))}
           </div>
           <p className="lyrics-source">Lyrics provided by {data.source}</p>
+          {away && data.synced && (
+            <button className="lyrics-sync" onClick={() => setAway(false)}>
+              Sync
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -94,8 +109,58 @@ function useActiveLine(data: Lyrics | null | undefined, playing: boolean): numbe
       setActive(i)
     }
     tick()
-    const id = setInterval(tick, 200)
+    // While paused only a seek can move the line, so check far less often.
+    const id = setInterval(tick, playing ? 200 : 1000)
     return () => clearInterval(id)
   }, [data, playing])
   return active
+}
+
+// Spotify's lyrics card in the Now Playing panel: a few lines around the one being sung, on the
+// song's lyrics colour, following along; "Show more" makes it taller, and the header opens the
+// full Lyrics page.
+export function LyricsCard({ player, onOpen }: { player: PlayerState; onOpen: () => void }) {
+  const { data } = useLyrics(player)
+  const bg = lyricsBackground(useColor(player.thumb))
+  const active = useActiveLine(data, player.playing)
+  const [more, setMore] = useState(false)
+  const body = useRef<HTMLDivElement>(null)
+  // Keep the sung line at the top of the card, just below the faded edge (scrolling only the card;
+  // a long line can wrap to three rows in this narrow panel).
+  useEffect(() => {
+    const box = body.current
+    const line = box?.children[Math.max(0, active)] as HTMLElement | undefined
+    if (box && line) box.scrollTo({ top: Math.max(0, line.offsetTop - 28), behavior: 'smooth' })
+  }, [active, more])
+  if (!data?.lines.length) return null
+  return (
+    <div className={`np-card np-lyrics ${more ? 'more' : ''}`} style={{ '--lyrics-bg': bg } as React.CSSProperties}>
+      <div className="np-lyrics-head">
+        <b className="link" onClick={onOpen}>
+          Lyrics
+        </b>
+        <div className="np-lyrics-actions">
+          <button className="np-lyrics-btn" onClick={onOpen}>
+            Show lyrics
+          </button>
+        </div>
+      </div>
+      <div ref={body} className={`np-lyrics-body ${data.synced ? 'synced' : ''}`}>
+        {data.lines.map((l, i) => (
+          <div
+            key={i}
+            className={`lyric ${!data.synced ? '' : i === active ? 'active' : i < active ? 'passed' : ''}`}
+            onClick={() => (data.synced ? seekTo(l.time, player.playing) : onOpen())}
+          >
+            {l.text || '♪'}
+          </div>
+        ))}
+      </div>
+      <div className="np-lyrics-foot">
+        <button className="np-lyrics-btn" onClick={() => setMore((m) => !m)}>
+          {more ? 'Show less' : 'Show more'}
+        </button>
+      </div>
+    </div>
+  )
 }

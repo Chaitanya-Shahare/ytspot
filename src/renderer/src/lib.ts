@@ -19,6 +19,8 @@ export type Route =
 export interface Source {
   route: Route
   title: string
+  // The songs it covers; once something else plays (radio, autoplay) it no longer applies.
+  ids?: string[]
 }
 export const sameRoute = (a?: Route | null, b?: Route | null) => !!a && !!b && JSON.stringify(a) === JSON.stringify(b)
 
@@ -70,8 +72,12 @@ export const useTime = () => useSyncExternalStore(subscribeClock, getClock)
 export const sized = (url: string, px: number) => url.replace(/=w\d+-h\d+/, `=w${px * 2}-h${px * 2}`)
 
 // A "Show all" target: playlists open as playlists, anything else as a grid of cards.
-export const moreRoute = (m: More, title: string): Route =>
-  m.browseId.startsWith('VL') ? { name: 'playlist', id: m.browseId } : { name: 'more', title, browseId: m.browseId, params: m.params }
+export function moreRoute(m: More, title: string): Route {
+  if (m.browseId.startsWith('VL')) return { name: 'playlist', id: m.browseId }
+  if (!m.params && m.browseId.startsWith('UC')) return { name: 'artist', id: m.browseId }
+  if (m.browseId.startsWith('MPRE')) return { name: 'album', id: m.browseId }
+  return { name: 'more', title, browseId: m.browseId, params: m.params }
+}
 
 export function routeFor(c: Card): Route | null {
   if (c.kind === 'album') return { name: 'album', id: c.id }
@@ -82,9 +88,10 @@ export function routeFor(c: Card): Route | null {
 
 export function fmt(sec: number): string {
   if (!isFinite(sec) || sec < 0) sec = 0
-  const m = Math.floor(sec / 60)
-  const s = Math.floor(sec % 60)
-  return `${m}:${String(s).padStart(2, '0')}`
+  const h = Math.floor(sec / 3600)
+  const m = Math.floor((sec % 3600) / 60)
+  const s = String(Math.floor(sec % 60)).padStart(2, '0')
+  return h ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`
 }
 
 // Page data cache: revisits and back/forward render instantly from cache. Feeds (home, search,
@@ -95,14 +102,17 @@ localStorage.removeItem('cache:home') // pre-0.2 home feed, saved without its mo
 // Bumped when a key is invalidated, so a request (or a playlist page) that was already on its way
 // can't put the stale copy back.
 const generation = new Map<string, number>()
-const gen = (key: string) => generation.get(key) ?? 0
+// Bumped on sign-in/out, so requests still on their way from the old session are dropped too.
+let session = 0
+const gen = (key: string) => `${session}:${generation.get(key) ?? 0}`
 export function invalidate(key: string): void {
   cache.delete(key)
-  generation.set(key, gen(key) + 1)
+  generation.set(key, (generation.get(key) ?? 0) + 1)
 }
 // Signing in or out: nothing cached belongs to the new session.
 export function resetCache(): void {
-  for (const key of cache.keys()) invalidate(key)
+  session++
+  cache.clear()
   for (const k of Object.keys(localStorage)) if (k.startsWith('cache:')) localStorage.removeItem(k)
 }
 
@@ -125,7 +135,9 @@ export function useCached<T>(
   fn: () => Promise<T>,
   { revalidate = true, persist = false } = {}
 ): { data?: T; error?: string; set: (d: T) => void; retry: () => void } {
-  const [res, setRes] = useState<{ data?: T; error?: string }>(() => ({ data: read<T>(key, persist) }))
+  // The result remembers its key: on the render where the key changes, the old key's data must not
+  // show (e.g. the previous artist's card) before the effect below catches up.
+  const [res, setRes] = useState<{ key: string; data?: T; error?: string }>(() => ({ key, data: read<T>(key, persist) }))
   const [attempt, setAttempt] = useState(0)
   const [loadedGen, setLoadedGen] = useState(() => gen(key))
   const store = (data: T) => {
@@ -134,27 +146,28 @@ export function useCached<T>(
   }
   const set = (data: T) => {
     if (gen(key) === loadedGen) store(data)
-    setRes({ data })
+    setRes({ key, data })
   }
   useEffect(() => {
     let live = true
     const cached = read<T>(key, persist)
     const g = gen(key)
     setLoadedGen(g)
-    setRes({ data: cached })
+    setRes({ key, data: cached })
     if (cache.has(key) && !revalidate) return
     fn()
       .then((data) => {
         if (gen(key) === g) store(data)
-        if (live) setRes({ data })
+        if (live) setRes({ key, data })
       })
-      .catch((e: Error) => live && cached === undefined && setRes({ error: e.message }))
+      .catch((e: Error) => live && cached === undefined && setRes({ key, error: e.message }))
     return () => {
       live = false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, attempt])
-  return { ...res, set, retry: () => setAttempt((n) => n + 1) }
+  const current = res.key === key ? res : { key, data: read<T>(key, persist) }
+  return { data: current.data, error: current.error, set, retry: () => setAttempt((n) => n + 1) }
 }
 
 // Average colour of an image, darkened, for Spotify-style header gradients.

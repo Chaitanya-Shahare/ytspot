@@ -68,7 +68,7 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
 // Everything in YouTube Music's own settings dialog, applied through it.
 function YtmSettings() {
   const { toast } = useApp()
-  const { data, error, set, retry } = useCached<YtmSetting[]>('ytm-settings', () => window.ytm.ytmSettings())
+  const { data, error, set, retry } = useCached<YtmSetting[]>('ytm-settings', () => window.ytm.ytmSettings(), { revalidate: false })
   const change = async (s: YtmSetting, value: boolean | string | null) => {
     if (s.kind === 'action' && s.confirm && !confirm(s.confirm)) return
     if (data && value !== null) set(data.map((x) => (x === s ? { ...x, value } : x)))

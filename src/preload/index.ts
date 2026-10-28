@@ -7,6 +7,7 @@ export interface PopupItem {
   id: string
   label: string
   enabled?: boolean
+  checked?: boolean
   submenu?: PopupItem[]
 }
 
@@ -41,7 +42,7 @@ const bridge = {
     ipcRenderer.invoke('ui:popup', items),
   open: (url: string) => ipcRenderer.invoke('ui:open', url),
   copy: (text: string) => ipcRenderer.invoke('ui:copy', text),
-  fullscreen: (on?: boolean) => ipcRenderer.invoke('ui:fullscreen', on),
+  fullscreen: (on?: boolean): Promise<boolean> => ipcRenderer.invoke('ui:fullscreen', on),
   log: (msg: string) => ipcRenderer.invoke('ui:log', msg),
   videoRect: (r: { x: number; y: number; width: number; height: number } | null) => ipcRenderer.invoke('ui:videoRect', r),
   setBindings: (b: Record<Action, string[]>) => ipcRenderer.invoke('ui:bindings', b),

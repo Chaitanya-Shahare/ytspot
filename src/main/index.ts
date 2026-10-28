@@ -98,10 +98,17 @@ function showMain(then?: (w: BrowserWindow) => void): void {
 // Push player state while someone can see it: the whole state when anything besides the clock
 // changed, otherwise just the time. Each push repaints the window, so once a second (an m:ss clock)
 // is enough; commands refresh right away so the controls still respond instantly.
+// A track change briefly has no trustworthy title/artwork (see player.ts); hold the update back
+// for up to a second so the UI never shows the old song's art under the new song.
+let pendingSince: { id: string; at: number } | null = null
 async function pushState(): Promise<void> {
   if (!main?.isVisible()) return
   const s = await getState()
   if (!s || !main) return
+  if (s.pending) {
+    if (pendingSince?.id !== s.videoId) pendingSince = { id: s.videoId, at: Date.now() }
+    if (Date.now() - pendingSince.at < 1000) return void setTimeout(pushState, 200)
+  } else pendingSince = null
   const { time, queue, autoplay, ...rest }: PlayerState = s
   const info = JSON.stringify(rest)
   if (!sent || info !== sent.info || queue !== sent.queue || autoplay !== sent.autoplay) {
@@ -120,6 +127,7 @@ interface PopupItem {
   id: string
   label: string
   enabled?: boolean
+  checked?: boolean // shown as a radio choice
   submenu?: PopupItem[]
 }
 function popup(e: Electron.IpcMainInvokeEvent, items: PopupItem[]) {
@@ -131,7 +139,12 @@ function popup(e: Electron.IpcMainInvokeEvent, items: PopupItem[]) {
           ? { type: 'separator' }
           : i.submenu
             ? { label: i.label, submenu: build(i.submenu) }
-            : { label: i.label, enabled: i.enabled ?? true, click: () => (picked = i.id) }
+            : {
+                label: i.label,
+                enabled: i.enabled ?? true,
+                ...(i.checked !== undefined ? { type: 'radio' as const, checked: i.checked } : {}),
+                click: () => (picked = i.id)
+              }
       )
     Menu.buildFromTemplate(build(items)).popup({
       window: BrowserWindow.fromWebContents(e.sender) ?? undefined,
@@ -195,7 +208,12 @@ app.whenReady().then(() => {
   ipcMain.handle('ui:log', (_, msg: string) => console.error('[ui]', msg))
   ipcMain.handle('ui:videoRect', (_, r: Electron.Rectangle | null) => placeVideo(main, r))
   // A test run stays in its window: native full screen would take over the user's screen.
-  ipcMain.handle('ui:fullscreen', (_, on?: boolean) => !testProfile && main?.setFullScreen(on ?? !main.isFullScreen()))
+  // Returns whether the window was already in full screen, so a caller only undoes its own change.
+  ipcMain.handle('ui:fullscreen', (_, on?: boolean) => {
+    const was = !!main?.isFullScreen()
+    if (!testProfile) main?.setFullScreen(on ?? !was)
+    return was
+  })
   ipcMain.handle('ui:bindings', (_, b: Record<Action, string[]>) => {
     keys = b
     rebuildMenu()

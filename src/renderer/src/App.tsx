@@ -4,11 +4,11 @@ import * as I from './components/icons'
 import { cachedPlaylists, Ctx, fmt, getClock, invalidate, loadPrefs, onLibraryChange, resetCache, routeFor, savePrefs, setClock, sized, useApp, useCached, useColor, useTime, type AppCtx, type Prefs, type Route, type Source, sameRoute } from './lib'
 import { bindings, comboLabel, comboOf, SHORTCUTS, type Action } from '../../shared/shortcuts'
 import { cardMenu, songMenu } from './components/menus'
-import { Boundary } from './components/ui'
+import { Boundary, Img } from './components/ui'
 import { SettingsView } from './views/settings'
-import { LyricsView } from './views/lyrics'
+import { LyricsCard, LyricsView } from './views/lyrics'
 import { MoodView, SearchView } from './views/search'
-import { ArtistView, CollectionView, ExploreView, HomeView, MoreView } from './views/views'
+import { ArtistView, CollectionView, ExploreView, HomeView, MoreView, resetHome } from './views/views'
 
 const LIKED: Card = { kind: 'playlist', id: 'LM', title: 'Liked Songs', subtitle: 'Playlist', thumb: '' }
 type LibrarySort = 'Recents' | 'Alphabetical' | 'Creator'
@@ -34,7 +34,8 @@ export default function App() {
   const back = useCallback(() => setNav((n) => ({ ...n, pos: Math.max(0, n.pos - 1) })), [])
   const forward = useCallback(() => setNav((n) => ({ ...n, pos: Math.min(n.history.length - 1, n.pos + 1) })), [])
   const [player, setPlayer] = useState<PlayerState | null>(null)
-  const [toastMsg, setToastMsg] = useState<string | null>(null)
+  // A repeated message restarts the timer (each toast has its own id); `out` plays the fade-out.
+  const [toastMsg, setToastMsg] = useState<{ id: number; msg: string; out?: boolean } | null>(null)
   const [left, setLeft] = useState(window.innerWidth > 1100)
   const [right, setRight] = useState(true)
   // The right sidebar shows either Now Playing or the Queue, as in Spotify.
@@ -90,12 +91,21 @@ export default function App() {
     return () => (offAuth(), offState(), offTime())
   }, [])
 
+  // Where each history entry was scrolled to, so Back/Forward land where you left off.
+  const scrolls = useRef(new Map<number, number>())
+
   const go = useCallback(
     (r: Route) =>
       setNav((n) => {
         // Typing in search replaces the current search entry instead of stacking one per keystroke.
         if (r.name === 'search' && n.history[n.pos].name === 'search')
           return { ...n, history: n.history.map((x, i) => (i === n.pos ? r : x)) }
+        // Already there (Home on Home, the open playlist in the library): back to the top instead.
+        if (JSON.stringify(r) === JSON.stringify(n.history[n.pos])) {
+          document.querySelector('.main-scroll')?.scrollTo({ top: 0, behavior: 'smooth' })
+          return n
+        }
+        scrolls.current.forEach((_, k) => k > n.pos && scrolls.current.delete(k))
         return { history: [...n.history.slice(0, n.pos + 1), r], pos: n.pos + 1 }
       }),
     []
@@ -108,15 +118,17 @@ export default function App() {
     if (authed === null) return
     if (lastAuth.current !== null && lastAuth.current !== authed) {
       resetCache()
+      resetHome()
+      setSource(null)
       setEpoch((e) => e + 1)
     }
     lastAuth.current = authed
   }, [authed])
 
-  const toast = useCallback((msg: string) => setToastMsg(msg), [])
+  const toast = useCallback((msg: string) => setToastMsg({ id: Date.now(), msg }), [])
   useEffect(() => {
-    if (!toastMsg) return
-    const t = setTimeout(() => setToastMsg(null), 2500)
+    if (!toastMsg || toastMsg.out) return
+    const t = setTimeout(() => setToastMsg((m) => m && { ...m, out: true }), 3000)
     return () => clearTimeout(t)
   }, [toastMsg])
 
@@ -165,25 +177,34 @@ export default function App() {
     (c: Card) => {
       const r = routeFor(c)
       if (r) return go(r)
+      if (c.kind !== 'song' && c.kind !== 'video') return toast('That can’t be played here yet')
       setSource(null)
       window.ytm.cmd({ type: 'play', videoId: c.id })
     },
-    [go]
+    [go, toast]
   )
 
   const playCard = useCallback(
     async (c: Card) => {
       const r = routeFor(c)
-      setSource(r && { route: r, title: c.title })
       try {
-        if (c.kind === 'song' || c.kind === 'video') return void (await window.ytm.cmd({ type: 'play', videoId: c.id }))
+        if (c.kind === 'song' || c.kind === 'video') {
+          setSource(null)
+          return void (await window.ytm.cmd({ type: 'play', videoId: c.id }))
+        }
+        if (!r) return toast('That can’t be played here yet')
+        // Artists play their top songs as a list, the same as their page's play button.
         if (c.kind === 'artist') {
           const a = await window.ytm.artist(c.id)
-          if (a.songs[0]) window.ytm.cmd({ type: 'play', videoId: a.songs[0].videoId })
+          if (!a.songs[0]) return
+          setSource({ route: r, title: c.title, ids: a.songs.map((t: Track) => t.videoId) })
+          window.ytm.cmd({ type: 'play', videoId: a.songs[0].videoId, playlistId: a.songsMore?.browseId.replace(/^VL/, '') })
           return
         }
         const col = c.kind === 'album' ? await window.ytm.album(c.id) : await window.ytm.playlist(c.id)
-        if (col.tracks[0]) window.ytm.cmd({ type: 'play', videoId: col.tracks[0].videoId, playlistId: col.playlistId })
+        if (!col.tracks[0]) return
+        setSource({ route: r, title: c.title, ids: col.tracks.map((t: Track) => t.videoId) })
+        window.ytm.cmd({ type: 'play', videoId: col.tracks[0].videoId, playlistId: col.playlistId })
       } catch {
         toast('Couldn’t play that — check your connection')
       }
@@ -285,9 +306,11 @@ export default function App() {
     return () => (window.removeEventListener('keydown', onKey), offMenu(), clearTimeout(timer))
   }, [run, keys, help, full])
 
+  // "Playing from" holds only while one of its songs is playing (not after radio or autoplay).
+  const liveSource = source && (!source.ids || !player?.videoId || source.ids.includes(player.videoId)) ? source : null
   const ctx: AppCtx = useMemo(
-    () => ({ route, go, player, playTrack, source, openCard, playCard, toast, prefs, setPrefs, openQueue }),
-    [route, go, player, playTrack, source, openCard, playCard, toast, prefs, setPrefs, openQueue]
+    () => ({ route, go, player, playTrack, source: liveSource, openCard, playCard, toast, prefs, setPrefs, openQueue }),
+    [route, go, player, playTrack, liveSource, openCard, playCard, toast, prefs, setPrefs, openQueue]
   )
 
   if (authed === null) return <div className="splash" />
@@ -325,7 +348,11 @@ export default function App() {
         <Resizer side="left" width={leftPx} onResize={resizeLeft} label="Resize Your Library" />
         {/* Typing in search keeps the same page (and its filter chip); every other move starts fresh. */}
         <main className="main-view" key={`${epoch}:${route.name === 'search' ? 'search' : JSON.stringify(route)}`}>
-          <div className="main-scroll">
+          <div
+            className="main-scroll"
+            ref={(el) => restoreScroll(el, scrolls.current.get(pos))}
+            onScroll={(e) => scrolls.current.set(pos, e.currentTarget.scrollTop)}
+          >
             <Boundary resetKey={JSON.stringify(route)}>
             {route.name === 'home' && <HomeView />}
             {route.name === 'search' && <SearchView q={route.q} />}
@@ -368,7 +395,17 @@ export default function App() {
         </Boundary>
       )}
       {help && <ShortcutsModal keys={keys} onClose={() => setHelp(false)} />}
-      {toastMsg && <div className="toast">{toastMsg}</div>}
+      {toastMsg && (
+        <div
+          key={toastMsg.id}
+          className={`toast ${toastMsg.out ? 'out' : ''}`}
+          role="status"
+          onAnimationEnd={() => toastMsg.out && setToastMsg(null)}
+        >
+          {toastMsg.msg}
+        </div>
+      )}
+      <Tooltips />
     </Ctx.Provider>
   )
 }
@@ -410,9 +447,11 @@ function TopBar(p: {
     const now = route.name === 'search' ? route.q : ''
     if (now !== typed.current) setQ((typed.current = now))
   }, [route])
+  // Typing searches (from any page); just focusing the box stays put, as in Spotify.
   useEffect(() => {
-    if (route.name !== 'search') return
-    const t = setTimeout(() => q !== route.q && go({ name: 'search', q: (typed.current = q) }), 300)
+    const now = route.name === 'search' ? route.q : ''
+    if (q === now || (route.name !== 'search' && !q)) return
+    const t = setTimeout(() => go({ name: 'search', q: (typed.current = q) }), 300)
     return () => clearTimeout(t)
   }, [q, route, go])
   return (
@@ -436,7 +475,6 @@ function TopBar(p: {
             placeholder="What do you want to play?"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            onFocus={() => route.name !== 'search' && go({ name: 'search', q: (typed.current = q) })}
             onKeyDown={(e) => e.key === 'Enter' && go({ name: 'search', q: (typed.current = q) })}
           />
           {q && (
@@ -452,6 +490,19 @@ function TopBar(p: {
               <I.Close size={16} />
             </button>
           )}
+          <span className="search-divider" />
+          <button
+            className={`search-browse ${route.name === 'search' && !route.q ? 'on' : ''}`}
+            aria-label="Browse"
+            title="Browse"
+            onClick={(e) => {
+              e.preventDefault()
+              setQ('')
+              go({ name: 'search', q: (typed.current = '') })
+            }}
+          >
+            <I.Browse size={20} />
+          </button>
         </label>
       </div>
       {p.authed ? (
@@ -477,11 +528,16 @@ function LibraryPanel({ authed, collapsed, onToggle }: { authed: boolean; collap
   const [find, setFind] = useState<string | null>(null)
   const [version, setVersion] = useState(0)
   useEffect(() => onLibraryChange(() => setVersion((v) => v + 1)), [])
-  const load = (f: LibraryFilter) =>
+  // While a reload (after creating a playlist) is on its way, keep showing the previous list.
+  const last = useRef<Record<string, Card[]>>({})
+  const load = (f: LibraryFilter) => {
     // eslint-disable-next-line react-hooks/rules-of-hooks
-    useCached<Card[]>(`library:${authed}:${f}:${version}`, () => (authed ? window.ytm.library(f) : Promise.resolve([])), {
+    const { data } = useCached<Card[]>(`library:${authed}:${f}:${version}`, () => (authed ? window.ytm.library(f) : Promise.resolve([])), {
       persist: version === 0
-    }).data ?? []
+    })
+    if (data) last.current[f] = data
+    return data ?? (authed ? (last.current[f] ?? []) : [])
+  }
   const lists = { Playlists: load('Playlists'), Artists: load('Artists'), Albums: load('Albums') }
   const create = async () => {
     if (!authed) return window.ytm.login()
@@ -502,14 +558,20 @@ function LibraryPanel({ authed, collapsed, onToggle }: { authed: boolean; collap
   if (find) list = list.filter((c) => `${c.title} ${c.subtitle}`.toLowerCase().includes(find.toLowerCase()))
   // "Recents" keeps YouTube Music's own order (most recent first); Liked Songs stays pinned on top.
   if (sort !== 'Recents') {
-    const key = (c: Card) => (sort === 'Creator' ? c.subtitle.split(' • ').slice(-1)[0] : c.title).toLowerCase()
+    // The creator is the subtitle part that isn't the kind, a year or a count ("Playlist • Owner • 12 songs").
+    const creator = (c: Card) =>
+      c.subtitle
+        .split(' • ')
+        .find((p) => !/^(Playlist|Album|Single|EP|Artist|Auto playlist)$/i.test(p) && !/^\d{4}$/.test(p) && !/\d[\d.,]*\s*[KMB]?\s*(songs?|tracks?|episodes?|subscribers?|views?)/i.test(p)) ?? ''
+    const key = (c: Card) => (sort === 'Creator' ? creator(c) || c.title : c.title).toLowerCase()
     list = [...list.filter((c) => c.id === 'LM'), ...list.filter((c) => c.id !== 'LM').sort((a, b) => key(a).localeCompare(key(b)))]
   }
   const sortMenu = async () => {
-    const pick = await window.ytm.popup(
-      (['Recents', 'Alphabetical', 'Creator'] as LibrarySort[]).map((s) => ({ id: s, label: `${s === sort ? '✓ ' : '    '}${s}` }))
-    )
-    if (pick) setSort(pick as LibrarySort)
+    const pick = await window.ytm.popup([
+      { id: 'head', label: 'Sort by', enabled: false },
+      ...(['Recents', 'Alphabetical', 'Creator'] as LibrarySort[]).map((s) => ({ id: s, label: s, checked: s === sort }))
+    ])
+    if (pick && pick !== 'head') setSort(pick as LibrarySort)
   }
   return (
     <nav className="library panel">
@@ -597,7 +659,7 @@ function LibraryPanel({ authed, collapsed, onToggle }: { authed: boolean; collap
                   <I.HeartFill size={collapsed ? 20 : 16} />
                 </div>
               ) : (
-                <img src={sized(c.thumb, 48)} className={c.kind === 'artist' ? 'round' : ''} loading="lazy" />
+                <Img src={sized(c.thumb, 48)} artist={c.kind === 'artist'} />
               )}
               {!collapsed && (
                 <div className="lib-text">
@@ -632,7 +694,7 @@ function QueueRow({ q, onPlay, menu, dnd, playing }: {
       onClick={onPlay}
       onContextMenu={(e) => (e.preventDefault(), menu())}
     >
-      <img src={q.thumb || `https://i.ytimg.com/vi/${q.videoId}/default.jpg`} loading="lazy" />
+      <Img src={q.thumb || `https://i.ytimg.com/vi/${q.videoId}/mqdefault.jpg`} />
       <div className="np-next-text">
         <div className={`t1 ${playing ? 'green' : ''}`}>{q.title}</div>
         <div className="t2">{q.artist}</div>
@@ -707,7 +769,7 @@ function NowPlayingPanel({ onClose, onLike, onQueue, covered }: { onClose: () =>
         {prefs.videoMode && player.isVideo && !covered ? (
           <VideoSlot poster={player.thumb} />
         ) : (
-          <img className="np-art" src={player.thumb} />
+          <Img className="np-art" src={player.thumb} />
         )}
         <div className="np-title-row">
           <div className="np-titles">
@@ -738,6 +800,7 @@ function NowPlayingPanel({ onClose, onLike, onQueue, covered }: { onClose: () =>
             {prefs.videoMode ? 'Switch to audio' : 'Switch to video'}
           </button>
         </div>
+        <LyricsCard player={player} onOpen={() => go({ name: 'lyrics' })} />
         {player.artistId && <AboutArtist id={player.artistId} />}
         <div className="np-card">
           <div className="np-card-head">
@@ -872,35 +935,148 @@ function VideoSlot({ poster }: { poster: string }) {
   )
 }
 
-function Slider({ value, max, onChange, className = '' }: { value: number; max: number; onChange: (v: number) => void; className?: string }) {
+// Spotify's progress/volume bar: hover shows the fill up to the pointer (and, for the progress bar,
+// a time tooltip), dragging previews the value, ←/→ step it from the keyboard.
+function Slider({
+  value,
+  max,
+  onChange,
+  onInput,
+  onPreview,
+  tip,
+  step,
+  label,
+  className = ''
+}: {
+  value: number
+  max: number
+  onChange: (v: number) => void
+  onInput?: (v: number) => void // live while dragging (volume)
+  onPreview?: (v: number | null) => void // the value being dragged to, or null when done
+  tip?: (v: number) => string
+  step: number
+  label: string
+  className?: string
+}) {
   const [drag, setDrag] = useState<number | null>(null)
+  const [hover, setHover] = useState<number | null>(null)
   const ref = useRef<HTMLDivElement>(null)
   const at = (x: number) => {
     const r = ref.current!.getBoundingClientRect()
     return Math.min(1, Math.max(0, (x - r.left) / r.width)) * max
   }
+  const move = (v: number) => (setDrag(v), onPreview?.(v), onInput?.(v))
+  const done = () => (setDrag(null), onPreview?.(null))
   const shown = drag ?? value
   const pct = max ? (shown / max) * 100 : 0
+  const hoverPct = max && hover !== null ? (hover / max) * 100 : 0
   return (
     <div
       ref={ref}
       className={`slider ${drag !== null ? 'dragging' : ''} ${className}`}
+      role="slider"
+      tabIndex={max ? 0 : -1}
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={Math.round(max)}
+      aria-valuenow={Math.round(shown)}
+      aria-valuetext={tip?.(shown)}
       onPointerDown={(e) => {
+        if (!max) return
         e.currentTarget.setPointerCapture(e.pointerId)
-        setDrag(at(e.clientX))
+        move(at(e.clientX))
       }}
-      onPointerMove={(e) => drag !== null && setDrag(at(e.clientX))}
+      onPointerMove={(e) => {
+        if (!max) return
+        setHover(at(e.clientX))
+        if (drag !== null) move(at(e.clientX))
+      }}
+      onPointerLeave={() => setHover(null)}
       onPointerUp={(e) => {
         if (drag === null) return
         onChange(at(e.clientX))
-        setDrag(null)
+        done()
       }}
-      onPointerCancel={() => setDrag(null)}
+      onPointerCancel={done}
+      onKeyDown={(e) => {
+        if (!max || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return
+        e.preventDefault()
+        e.stopPropagation()
+        onChange(Math.min(max, Math.max(0, value + (e.key === 'ArrowRight' ? step : -step))))
+      }}
     >
       <div className="track">
+        {hover !== null && drag === null && <div className="hover-fill" style={{ width: `${hoverPct}%` }} />}
         <div className="fill" style={{ width: `${pct}%` }} />
       </div>
       <div className="knob" style={{ left: `${pct}%` }} />
+      {tip && (drag ?? hover) !== null && (
+        <div className="slider-tip" style={{ left: `${max ? ((drag ?? hover)! / max) * 100 : 0}%` }}>
+          {tip((drag ?? hover)!)}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Puts a freshly mounted page back where it was scrolled; the content may still be loading, so
+// keep trying for a moment while it grows (and stop if the user scrolls first).
+function restoreScroll(el: HTMLDivElement | null, top: number | undefined): void {
+  if (!el || !top || el.dataset.restored) return
+  el.dataset.restored = '1'
+  const started = performance.now()
+  let ours = 0 // where our last attempt left it; anything else means the user scrolled
+  const tryIt = () => {
+    if (Math.abs(el.scrollTop - ours) > 1) return
+    el.scrollTop = top
+    ours = el.scrollTop
+    if (ours < top - 1 && performance.now() - started < 3000) requestAnimationFrame(tryIt)
+  }
+  tryIt()
+}
+
+// Spotify-style tooltips for everything with a `title`: the title moves to `data-tip` (so the
+// native one doesn't also show) and a dark label appears after a short delay.
+function Tooltips() {
+  const [tip, setTip] = useState<{ text: string; x: number; y: number; below: boolean } | null>(null)
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>
+    let target: HTMLElement | null = null
+    const over = (e: MouseEvent) => {
+      const el = (e.target as HTMLElement)?.closest?.('[title], [data-tip]') as HTMLElement | null
+      if (el === target) return
+      target = el
+      clearTimeout(timer)
+      setTip(null)
+      if (!el) return
+      if (el.title) {
+        el.dataset.tip = el.title
+        el.removeAttribute('title')
+      }
+      timer = setTimeout(() => {
+        if (!el.isConnected || !el.dataset.tip) return
+        const r = el.getBoundingClientRect()
+        const below = r.top < 48
+        setTip({ text: el.dataset.tip, x: r.left + r.width / 2, y: below ? r.bottom + 8 : r.top - 8, below })
+      }, 500)
+    }
+    const hide = () => (clearTimeout(timer), setTip(null), (target = null))
+    document.addEventListener('mouseover', over)
+    document.addEventListener('mousedown', hide)
+    window.addEventListener('blur', hide)
+    document.addEventListener('scroll', hide, true)
+    return () => {
+      clearTimeout(timer)
+      document.removeEventListener('mouseover', over)
+      document.removeEventListener('mousedown', hide)
+      window.removeEventListener('blur', hide)
+      document.removeEventListener('scroll', hide, true)
+    }
+  }, [])
+  if (!tip) return null
+  return (
+    <div className={`tooltip ${tip.below ? 'below' : ''}`} style={{ left: tip.x, top: tip.y }} role="tooltip">
+      {tip.text}
     </div>
   )
 }
@@ -944,10 +1120,20 @@ function Controls({ onShuffle, big }: { onShuffle: () => void; big?: boolean }) 
 function Progress() {
   const { player: p } = useApp()
   const time = useTime()
+  // While dragging, the elapsed time shows where the song would jump to.
+  const [preview, setPreview] = useState<number | null>(null)
   return (
     <div className="pb-progress">
-      <span className="time">{fmt(time)}</span>
-      <Slider value={time} max={p?.duration ?? 0} onChange={(s) => window.ytm.cmd({ type: 'seek', seconds: s })} />
+      <span className="time">{fmt(preview ?? time)}</span>
+      <Slider
+        value={time}
+        max={p?.duration ?? 0}
+        step={5}
+        label="Change progress"
+        tip={fmt}
+        onPreview={setPreview}
+        onChange={(s) => (setClock(s), window.ytm.cmd({ type: 'seek', seconds: s }))}
+      />
       <span className="time">{fmt(p?.duration ?? 0)}</span>
     </div>
   )
@@ -955,23 +1141,34 @@ function Progress() {
 
 function VolumeControl() {
   const { player: p } = useApp()
+  const level = p?.muted ? 0 : (p?.volume ?? 0)
+  // The volume follows the drag (throttled), as in Spotify, rather than jumping on release.
+  const last = useRef(0)
+  const live = (v: number) => {
+    if (performance.now() - last.current < 80) return
+    last.current = performance.now()
+    window.ytm.cmd({ type: 'volume', value: v })
+  }
   return (
-    <>
+    <div className="vol">
       <button
         className="icon-btn"
         onClick={() => window.ytm.cmd({ type: 'mute' })}
-        aria-label={p?.muted || p?.volume === 0 ? 'Unmute' : 'Mute'}
-        title={p?.muted || p?.volume === 0 ? 'Unmute' : 'Mute'}
+        aria-label={level === 0 ? 'Unmute' : 'Mute'}
+        title={level === 0 ? 'Unmute' : 'Mute'}
       >
-        {p?.muted || p?.volume === 0 ? <I.VolumeMute /> : <I.Volume />}
+        {level === 0 ? <I.VolumeMute /> : level < 50 ? <I.VolumeLow /> : <I.Volume />}
       </button>
       <Slider
         className="volume"
-        value={p?.muted ? 0 : (p?.volume ?? 0)}
+        value={level}
         max={100}
+        step={10}
+        label="Change volume"
+        onInput={live}
         onChange={(v) => window.ytm.cmd({ type: 'volume', value: v })}
       />
-    </>
+    </div>
   )
 }
 
@@ -998,17 +1195,27 @@ function Resizer({ side, width, onResize, label }: { side: 'left' | 'right'; wid
 // Spotify's full-screen player: blurred artwork behind, big cover and title bottom-left, controls
 // along the bottom. Puts the window itself into full screen while open.
 function FullScreenView({ onClose, onLike, onShuffle, covered }: { onClose: () => void; onLike: () => void; onShuffle: () => void; covered: boolean }) {
-  const { player: p, prefs, route } = useApp()
+  const { player: p, prefs, source } = useApp()
   const tint = useColor(p?.thumb)
   const close = useRef(onClose)
   close.current = onClose
   useEffect(() => {
-    window.ytm.fullscreen(true)
-    // Leaving full screen from the window's own controls closes this view too.
-    const off = window.ytm.onFullscreen((on) => !on && close.current())
+    // Only undo full screen if this view turned it on (not if the window was already full screen).
+    let entered = false
+    let live = true
+    let seenOn = false
+    window.ytm.fullscreen(true).then((was) => {
+      if (was) seenOn = true
+      entered = live && !was
+      if (!live && !was) window.ytm.fullscreen(false)
+    })
+    // Leaving full screen from the window's own controls closes this view too; a leave event still
+    // on its way from an earlier view doesn't count until this one has seen the window go full screen.
+    const off = window.ytm.onFullscreen((on) => (on ? (seenOn = true) : seenOn && close.current()))
     return () => {
+      live = false
       off()
-      window.ytm.fullscreen(false)
+      if (entered) window.ytm.fullscreen(false)
     }
   }, [])
   if (!p) return null
@@ -1017,10 +1224,10 @@ function FullScreenView({ onClose, onLike, onShuffle, covered }: { onClose: () =
       <div className="fs-bg" style={{ backgroundImage: `url(${p.thumb})` }} />
       <div className="fs-top">
         <span>Playing from</span>
-        <b>{p.album || (route.name === 'lyrics' ? 'Lyrics' : 'YouTube Music')}</b>
+        <b>{source?.title || p.album || 'YouTube Music'}</b>
       </div>
       <div className="fs-now">
-        {prefs.videoMode && p.isVideo && !covered ? <VideoSlot poster={p.thumb} /> : <img className="fs-art" src={p.thumb} />}
+        {prefs.videoMode && p.isVideo && !covered ? <VideoSlot poster={p.thumb} /> : <Img className="fs-art" src={p.thumb} />}
         <div className="fs-text">
           <div className="fs-title">{p.title}</div>
           <div className="fs-artist">{p.artist}</div>
@@ -1063,7 +1270,7 @@ function PlayerBar(props: {
       <div className="pb-left">
         {p?.videoId && (
           <>
-            <img src={sized(p.thumb, 56)} className="clickable" onClick={onToggleRight} title="Now playing view" />
+            <Img src={sized(p.thumb, 56)} className="clickable" onClick={onToggleRight} title="Now playing view" />
             <div className="pb-text">
               <span
                 className={`t1 ${p.albumId ? 'link' : ''}`}
@@ -1142,8 +1349,20 @@ function ShortcutsModal({ keys, onClose }: { keys: Record<Action, string[]>; onC
               <div key={s.action} className="sc-row">
                 <span>{s.label}</span>
                 <span>
+                  {/* One key cap per key, like Spotify's sheet ("⌘" "→", "G" then "H"). */}
                   {keys[s.action].map((k) => (
-                    <kbd key={k}>{comboLabel(k)}</kbd>
+                    <span key={k} className="combo">
+                      {comboLabel(k)
+                        .split(' then ')
+                        .map((step, i) => (
+                          <span key={i}>
+                            {i > 0 && <span className="then">then</span>}
+                            {step.split(' ').map((key, j) => (
+                              <kbd key={j}>{key}</kbd>
+                            ))}
+                          </span>
+                        ))}
+                    </span>
                   ))}
                 </span>
               </div>

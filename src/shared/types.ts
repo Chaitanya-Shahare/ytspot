@@ -45,6 +45,7 @@ export interface Collection {
   playlistId?: string
   tracks: Track[]
   more?: boolean
+  loaded?: number // songs fetched so far, counting ones since removed (the next page starts here)
 }
 
 export interface ArtistPage {
@@ -84,6 +85,8 @@ export interface QueueItem {
   albumId?: string
   duration: string
   thumb: string
+  art?: string // Now Playing-size artwork: album art when there is any, else a video frame
+  square?: boolean // `art` is album art
   selected: boolean
 }
 
@@ -107,6 +110,7 @@ export interface PlayerState {
   videoMode: boolean
   queue: QueueItem[]
   autoplay: QueueItem[]
+  pending?: boolean // the song just changed and its details haven't arrived yet
 }
 
 export type PlayerCommand =

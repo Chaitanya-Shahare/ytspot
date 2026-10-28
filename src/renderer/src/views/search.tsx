@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { SearchFilter, SearchResult, Shelf } from '../../../shared/types'
 import { Close, More } from '../components/icons'
 import { cardMenu } from '../components/menus'
-import { CardTile, ErrorBox, GreenPlay, Loading, ShelfRow, TrackTable } from '../components/ui'
+import { CardTile, ErrorBox, GreenPlay, Img, Loading, ShelfRow, TrackTable } from '../components/ui'
 import { sized, useApp, useCached } from '../lib'
 
 const FILTERS: [SearchFilter, string][] = [
@@ -61,7 +61,9 @@ function Results({ query, filter }: { query: string; filter: SearchFilter }) {
   const top = shown.top
   const cards = shown.shelves.flatMap((s) => s.cards)
   return (
-    <div className={data ? '' : 'stale'}>
+    <div className={data || error ? '' : 'stale'}>
+      {/* The new query failed: say so above the previous results rather than leave them dimmed. */}
+      {error && !data && <ErrorBox error={error} onRetry={retry} />}
       {filter === 'all' ? (
         <>
           <div className="search-top">
@@ -85,7 +87,7 @@ function Results({ query, filter }: { query: string; filter: SearchFilter }) {
                   >
                     <More size={24} />
                   </button>
-                  <img src={sized(top.thumb, 92)} className={top.kind === 'artist' ? 'round' : ''} />
+                  <Img src={sized(top.thumb, 92)} artist={top.kind === 'artist'} />
                   <div className="top-title">{top.title}</div>
                   <div className="sub">{top.subtitle}</div>
                   <GreenPlay
@@ -118,7 +120,7 @@ function Results({ query, filter }: { query: string; filter: SearchFilter }) {
           ))}
         </div>
       )}
-      {!top && !shown.songs.length && !cards.length && (
+      {data && !top && !shown.songs.length && !cards.length && (
         <div className="empty-search">
           <h2>{filter === 'all' ? 'No results found' : `No ${FILTERS.find(([f]) => f === filter)?.[1].toLowerCase()} found`} for “{query}”</h2>
           <p className="sub">Please make sure your words are spelled correctly, or use fewer or different keywords.</p>

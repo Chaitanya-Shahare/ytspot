@@ -140,8 +140,19 @@ export async function browseMore(more: More): Promise<Card[]> {
 let homeFeed: YTMusic.HomeFeed | null = null
 
 export async function home(chip?: string): Promise<HomeData> {
-  if (!chip || !homeFeed) homeFeed = await api().music.getHomeFeed()
-  const feed = chip ? await homeFeed.applyFilter(chip) : homeFeed
+  const client = api()
+  // A feed that arrives after signing in or out belongs to the old session; don't keep it.
+  const current = () => {
+    if (yt !== client) throw new Error('YouTube Music session changed, try again')
+  }
+  if (!chip || !homeFeed) {
+    const fresh = await client.music.getHomeFeed()
+    current()
+    homeFeed = fresh
+  }
+  // The chip may not exist in this session's feed (e.g. after switching accounts): show All.
+  const feed = chip && homeFeed.filters.includes(chip) ? await homeFeed.applyFilter(chip) : homeFeed
+  current()
   // The second page is optional; YTM sometimes returns it empty, which youtubei.js throws on.
   const more = feed.has_continuation ? await feed.getContinuation().catch(() => null) : null
   return {
@@ -237,10 +248,14 @@ export async function playlistMore(id: string, have: number): Promise<{ tracks: 
   if (!p) return { tracks: [], more: false }
   await p.busy
   if (p.tracks.length <= have && p.pl.has_continuation) {
-    p.busy = p.pl.getContinuation().then((next) => {
-      p.pl = next
-      p.tracks.push(...tracks(next.items as any[]))
-    })
+    // A failed page is retried by the next call instead of failing every call after it.
+    p.busy = p.pl
+      .getContinuation()
+      .then((next) => {
+        p.pl = next
+        p.tracks.push(...tracks(next.items as any[]))
+      })
+      .finally(() => (p.busy = undefined))
     await p.busy
   }
   const more = p.pl.has_continuation

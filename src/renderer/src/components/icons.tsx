@@ -149,3 +149,18 @@ export const Lyrics = svg(
 export const FullScreen = svg(<path d="M1.5 6V1.5H6M10 1.5h4.5V6M14.5 10v4.5H10M6 14.5H1.5V10" />, true)
 export const ExitFullScreen = svg(<path d="M6 1.5V6H1.5M14.5 6H10V1.5M10 14.5V10h4.5M1.5 10H6v4.5" />, true)
 export const Pin = svg(<path d="M8.8 1.2a.6.6 0 0 1 .85 0l5.15 5.15a.6.6 0 0 1 0 .85l-.6.6a1.5 1.5 0 0 1-1.6.34L10.4 10l.3 2.6a.6.6 0 0 1-.17.5l-.6.6a.6.6 0 0 1-.85 0L6.3 10.9l-3.9 3.9-.9-.9 3.9-3.9-2.8-2.8a.6.6 0 0 1 0-.85l.6-.6a.6.6 0 0 1 .5-.17l2.6.3 1.86-2.2a1.5 1.5 0 0 1 .34-1.6z" />)
+export const VolumeLow = svg(
+  <>
+    <path d="M1.5 5.5h2.5L8 2v12l-4-3.5H1.5z" fill="currentColor" />
+    <path d="M10.5 5.5a3.5 3.5 0 0 1 0 5" />
+  </>,
+  true
+)
+export const Note = svg(<path d="M6 2.5 14 1v9.5a2 2 0 1 1-1.5-1.94V4.2L7.5 5.2v7.3a2 2 0 1 1-1.5-1.94z" />)
+export const Browse = svg(
+  <>
+    <rect x="1.5" y="4.5" width="13" height="10" rx="1.5" />
+    <path d="M3.5 2h9" />
+  </>,
+  true
+)

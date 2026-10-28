@@ -1,8 +1,38 @@
 import type { Card, Shelf, Track } from '../../../shared/types'
 import { Component, memo, useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { moreRoute, routeFor, sameRoute, sized, useApp, type AppCtx, type Source } from '../lib'
-import { Clock, More, Pause, Play } from './icons'
+import { ChevronLeft, ChevronRight, Clock, More, Note, Pause, Play } from './icons'
 import { cardMenu, songMenu } from './menus'
+
+// Artwork that fades in once loaded (Spotify) and shows a placeholder when there's none or it fails.
+export function Img({ src, className = '', artist, onClick, title }: { src?: string; className?: string; artist?: boolean; onClick?: () => void; title?: string }) {
+  // Remember which source loaded or failed, so a new `src` starts over without an effect (a cached
+  // image can finish loading before an effect would run, and must not be hidden again).
+  const [loaded, setLoaded] = useState<string | null>(null)
+  const [failed, setFailed] = useState<string | null>(null)
+  // Once anything has loaded, a new `src` stays visible: the browser keeps drawing the old picture
+  // until the new one is ready, so artwork swaps without a blank flash.
+  const state = !src || failed === src ? 'failed' : loaded !== null ? 'ok' : 'loading'
+  if (state === 'failed')
+    return (
+      <span className={`img-fallback ${artist ? 'round' : ''} ${className}`} onClick={onClick} title={title}>
+        <Note />
+      </span>
+    )
+  return (
+    <img
+      src={src}
+      className={`fade ${state === 'ok' ? 'loaded' : ''} ${artist ? 'round' : ''} ${className}`}
+      loading="lazy"
+      ref={(el) => void (el?.complete && el.naturalWidth && loaded !== src && setLoaded(src ?? null))}
+      onLoad={() => setLoaded(src ?? null)}
+      onError={() => setFailed(src ?? null)}
+      onClick={onClick}
+      title={title}
+      alt=""
+    />
+  )
+}
 
 export function GreenPlay({ size = 48, playing, onClick }: { size?: number; playing?: boolean; onClick: () => void }) {
   return (
@@ -50,7 +80,7 @@ export function CardTile({ card }: { card: Card }) {
   return (
     <div className="card" onClick={() => openCard(card)} onContextMenu={(e) => (e.preventDefault(), cardMenu(card, ctx))}>
       <div className={`card-img ${playing ? 'playing' : ''}`}>
-        <img src={sized(card.thumb, 180)} className={card.kind === 'artist' ? 'round' : ''} loading="lazy" />
+        <Img src={sized(card.thumb, 180)} artist={card.kind === 'artist'} />
         <GreenPlay playing={playing} onClick={() => (current ? window.ytm.cmd({ type: 'toggle' }) : playCard(card))} />
       </div>
       <div className="card-title">{card.title}</div>
@@ -62,6 +92,22 @@ export function CardTile({ card }: { card: Card }) {
 export function ShelfRow({ shelf }: { shelf: Shelf }) {
   const { go } = useApp()
   const more = shelf.more && moreRoute(shelf.more, shelf.title)
+  // A row shows whole cards only; hover arrows page through the rest, as on Spotify's Home.
+  const row = useRef<HTMLDivElement>(null)
+  const [edges, setEdges] = useState({ start: true, end: true })
+  const measure = useCallback(() => {
+    const el = row.current
+    if (el) setEdges({ start: el.scrollLeft <= 1, end: el.scrollLeft + el.clientWidth >= el.scrollWidth - 1 })
+  }, [])
+  useEffect(() => {
+    const el = row.current
+    if (!el) return
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [measure, shelf.cards.length])
+  const page = (dir: 1 | -1) => row.current?.scrollBy({ left: dir * row.current.clientWidth, behavior: 'smooth' })
   return (
     <section className="shelf">
       <div className="shelf-head">
@@ -74,10 +120,22 @@ export function ShelfRow({ shelf }: { shelf: Shelf }) {
           </button>
         )}
       </div>
-      <div className="shelf-row">
-        {shelf.cards.map((c) => (
-          <CardTile key={c.kind + c.id} card={c} />
-        ))}
+      <div className="shelf-body">
+        <div className="shelf-row" ref={row} onScroll={measure}>
+          {shelf.cards.map((c) => (
+            <CardTile key={c.kind + c.id} card={c} />
+          ))}
+        </div>
+        {!edges.start && (
+          <button className="shelf-arrow prev" onClick={() => page(-1)} aria-label="Go back" title="Go back">
+            <ChevronLeft />
+          </button>
+        )}
+        {!edges.end && (
+          <button className="shelf-arrow next" onClick={() => page(1)} aria-label="Go forward" title="Go forward">
+            <ChevronRight />
+          </button>
+        )}
       </div>
     </section>
   )
@@ -130,6 +188,8 @@ export function TrackTable({
   )
   // Spotify-style selection: click selects a row, ↑/↓ move, Enter plays, double-click plays.
   const [sel, setSel] = useState(-1)
+  // A different list (new search, another page) starts with nothing selected.
+  useEffect(() => setSel(-1), [tracks[0]?.videoId])
   const box = useRef<HTMLDivElement>(null)
   const select = useCallback((i: number) => {
     setSel(i)
@@ -142,7 +202,7 @@ export function TrackTable({
       select(Math.max(0, Math.min(tracks.length - 1, sel + (e.key === 'ArrowDown' ? 1 : -1))))
     } else if (e.key === 'Enter' && tracks[sel]) {
       e.preventDefault()
-      playTrack(tracks[sel], playlistId, from)
+      play(tracks[sel])
     }
   }
   // The column header gets a background once it sticks to the top (Spotify), and is see-through
@@ -180,6 +240,7 @@ export function TrackTable({
           showPlays={showPlays}
           state={player?.videoId !== t.videoId ? '' : player.playing ? 'playing' : 'current'}
           selected={i === sel}
+          tabbable={i === sel || (sel < 0 && i === 0)}
           play={play}
           select={select}
           go={go}
@@ -198,6 +259,7 @@ const Row = memo(function Row({
   showPlays,
   state,
   selected,
+  tabbable,
   play,
   select,
   go,
@@ -209,6 +271,7 @@ const Row = memo(function Row({
   showPlays?: boolean
   state: '' | 'current' | 'playing'
   selected: boolean
+  tabbable: boolean
   play: (t: Track) => void
   select: (i: number) => void
   go: AppCtx['go']
@@ -217,7 +280,7 @@ const Row = memo(function Row({
   return (
     <div
       className={`track-row ${state ? 'current' : ''} ${selected ? 'selected' : ''}`}
-      tabIndex={selected ? 0 : -1}
+      tabIndex={tabbable ? 0 : -1}
       role="row"
       aria-selected={selected}
       onClick={() => select(i)}
@@ -236,7 +299,7 @@ const Row = memo(function Row({
         </button>
       </span>
       <span className="title-cell">
-        {t.thumb && <img src={sized(t.thumb, 40)} loading="lazy" />}
+        {t.thumb && <Img src={sized(t.thumb, 40)} />}
         <span className="tt">
           <span className="t1">{t.title}</span>
           <span
