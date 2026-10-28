@@ -1,6 +1,6 @@
 import type { PopupItem } from '../../../preload'
 import type { Card } from '../../../shared/types'
-import { cachedPlaylists, invalidate, routeFor, type AppCtx } from '../lib'
+import { cachedPlaylists, invalidate, libraryChanged, routeFor, type AppCtx } from '../lib'
 
 export interface MenuSong {
   videoId: string
@@ -10,7 +10,8 @@ export interface MenuSong {
 }
 
 interface Where {
-  playlistId?: string // the playlist page the row is on (enables "Remove from this playlist")
+  playlistId?: string // the playlist page (route id) the row is on (enables "Remove from this playlist")
+  onRemoved?: (videoId: string) => void // drop the row from that page once YouTube confirms
   liked?: boolean // known like state (current song, or rows of Liked Songs)
   queueIndex?: number // row in the Now Playing queue (enables "Remove from queue")
 }
@@ -61,7 +62,7 @@ export async function cardMenu(c: Card, ctx: AppCtx): Promise<void> {
 export async function songMenu(song: MenuSong, ctx: AppCtx, where: Where = {}): Promise<void> {
   const { go, toast } = ctx
   const playlists = cachedPlaylists().filter((p) => p.id !== 'VLLM' && p.id !== 'LM')
-  const ownPlaylist = where.playlistId && where.playlistId !== 'LM' ? where.playlistId : undefined
+  const ownPlaylist = where.playlistId && !/^(VL)?LM$/.test(where.playlistId) ? where.playlistId : undefined
   const items: PopupItem[] = [
     {
       id: 'add',
@@ -87,7 +88,7 @@ export async function songMenu(song: MenuSong, ctx: AppCtx, where: Where = {}): 
     { id: 'artist', label: 'Go to artist', enabled: !!song.artistId },
     { id: 'album', label: 'Go to album', enabled: !!song.albumId },
     { id: '-', label: '-' },
-    { id: 'share', label: 'Share', submenu: [{ id: 'copy', label: 'Copy song link' }] },
+    { id: 'share', label: 'Share', submenu: [{ id: 'copy', label: 'Copy link to Song' }] },
     { id: 'open', label: 'Open in YouTube Music' }
   ]
   const pick = await window.ytm.popup(items)
@@ -104,14 +105,20 @@ export async function songMenu(song: MenuSong, ctx: AppCtx, where: Where = {}): 
     const n = playlists.filter((p) => p.title.startsWith('My Playlist #')).length + 1
     window.ytm
       .createPlaylist(`My Playlist #${n}`)
-      .then((id) => window.ytm.addToPlaylist(id, song.videoId).then(() => toast(`Added to My Playlist #${n}`)), failed)
+      .then((id) => window.ytm.addToPlaylist(id, song.videoId))
+      .then(() => (libraryChanged(), toast(`Added to My Playlist #${n}`)), failed)
   }
   if (pick === 'remove-pl' && ownPlaylist)
     window.ytm.removeFromPlaylist(ownPlaylist, song.videoId).then(
-      () => (invalidate(`playlist:${ownPlaylist}`), toast('Removed from this playlist')),
+      () => (invalidate(`playlist:${ownPlaylist}`), where.onRemoved?.(song.videoId), toast('Removed from this playlist')),
       () => toast('You can only remove songs from your own playlists')
     )
-  if (pick === 'like' || pick === 'unlike')
+  // The playing song goes through the player's own like button so its heart updates too.
+  if ((pick === 'like' || pick === 'unlike') && song.videoId === ctx.player?.videoId) {
+    if (ctx.player.liked !== (pick === 'like')) window.ytm.cmd({ type: 'like' })
+    invalidate('playlist:LM')
+    toast(pick === 'like' ? 'Added to Liked Songs' : 'Removed from Liked Songs')
+  } else if (pick === 'like' || pick === 'unlike')
     window.ytm.rate(song.videoId, pick === 'like').then(() => {
       invalidate('playlist:LM')
       toast(pick === 'like' ? 'Added to Liked Songs' : 'Removed from Liked Songs')

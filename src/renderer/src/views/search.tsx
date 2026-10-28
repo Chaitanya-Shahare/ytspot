@@ -120,8 +120,8 @@ function Results({ query, filter }: { query: string; filter: SearchFilter }) {
       )}
       {!top && !shown.songs.length && !cards.length && (
         <div className="empty-search">
-          <h2>No results found for “{query}”</h2>
-          <p className="sub">Check the spelling, or try fewer or different keywords.</p>
+          <h2>{filter === 'all' ? 'No results found' : `No ${FILTERS.find(([f]) => f === filter)?.[1].toLowerCase()} found`} for “{query}”</h2>
+          <p className="sub">Please make sure your words are spelled correctly, or use fewer or different keywords.</p>
         </div>
       )}
     </div>

@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { Action } from '../shared/shortcuts'
-import type { HomeData, LibraryFilter, Lyrics, PlayerCommand, PlayerState, SearchFilter, YtmSetting } from '../shared/types'
+import type { Card, HomeData, LibraryFilter, Lyrics, More, PlayerCommand, PlayerState, SearchFilter, YtmSetting } from '../shared/types'
 import type { LyricsQuery } from '../main/lyrics'
 
 export interface PopupItem {
@@ -23,7 +23,9 @@ const bridge = {
   removeFromPlaylist: (playlistId: string, videoId: string) =>
     ipcRenderer.invoke('yt:removeFromPlaylist', playlistId, videoId),
   rate: (videoId: string, like: boolean) => ipcRenderer.invoke('yt:rate', videoId, like),
-  ytmSettings: (): Promise<YtmSetting[] | null> => ipcRenderer.invoke('ytm:settings'),
+  subscribe: (channelId: string, on: boolean) => ipcRenderer.invoke('yt:subscribe', channelId, on),
+  browseMore: (more: More): Promise<Card[]> => ipcRenderer.invoke('yt:browseMore', more),
+  ytmSettings: (): Promise<YtmSetting[]> => ipcRenderer.invoke('ytm:settings'),
   applyYtmSetting: (endpoint: unknown) => ipcRenderer.invoke('ytm:applySetting', endpoint),
   library: (f: LibraryFilter) => ipcRenderer.invoke('yt:library', f),
   playlist: (id: string) => ipcRenderer.invoke('yt:playlist', id),

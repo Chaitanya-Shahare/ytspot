@@ -18,11 +18,19 @@ export interface Track {
   albumId?: string
   duration: string
   thumb: string
+  plays?: string // "2.7B plays", on an artist's top songs
+}
+
+// Where a shelf's "Show all" leads: a browse page (playlist, discography, …).
+export interface More {
+  browseId: string
+  params?: string
 }
 
 export interface Shelf {
   title: string
   cards: Card[]
+  more?: More
 }
 
 export interface Collection {
@@ -32,6 +40,8 @@ export interface Collection {
   subtitle: string
   meta: string
   thumb: string
+  owner?: string // album artist or playlist owner
+  ownerId?: string
   playlistId?: string
   tracks: Track[]
   more?: boolean
@@ -41,7 +51,10 @@ export interface ArtistPage {
   id: string
   title: string
   thumb: string
+  description: string
+  subscribed: boolean
   songs: Track[]
+  songsMore?: More // the full top-songs list
   shelves: Shelf[]
 }
 

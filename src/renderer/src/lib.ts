@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState, useSyncExternalStore } from 'react'
 import type { ShortcutPrefs } from '../../shared/shortcuts'
 import { DEFAULT_PREFS } from '../../shared/shortcuts'
-import type { Card, PlayerState, Track } from '../../shared/types'
+import type { Card, More, PlayerState, Track } from '../../shared/types'
 
 export type Route =
   | { name: 'home' }
@@ -13,13 +13,22 @@ export type Route =
   | { name: 'mood'; params: string; title: string }
   | { name: 'settings' }
   | { name: 'lyrics' }
+  | { name: 'more'; title: string; browseId: string; params?: string }
+
+// Where playback was started from (a playlist, album or artist page), for "Playing from".
+export interface Source {
+  route: Route
+  title: string
+}
+export const sameRoute = (a?: Route | null, b?: Route | null) => !!a && !!b && JSON.stringify(a) === JSON.stringify(b)
 
 export interface AppCtx {
   route: Route
   go: (r: Route) => void
   // Everything except the playback clock, so long lists don't re-render every tick.
   player: PlayerState | null
-  playTrack: (t: Track, playlistId?: string) => void
+  playTrack: (t: Track, playlistId?: string, from?: Source) => void
+  source: Source | null
   openCard: (c: Card) => void
   playCard: (c: Card) => void
   toast: (msg: string) => void
@@ -60,6 +69,10 @@ export const useTime = () => useSyncExternalStore(subscribeClock, getClock)
 // Ask YouTube's image CDN for roughly the size we display (2x for retina) instead of 544px everywhere.
 export const sized = (url: string, px: number) => url.replace(/=w\d+-h\d+/, `=w${px * 2}-h${px * 2}`)
 
+// A "Show all" target: playlists open as playlists, anything else as a grid of cards.
+export const moreRoute = (m: More, title: string): Route =>
+  m.browseId.startsWith('VL') ? { name: 'playlist', id: m.browseId } : { name: 'more', title, browseId: m.browseId, params: m.params }
+
 export function routeFor(c: Card): Route | null {
   if (c.kind === 'album') return { name: 'album', id: c.id }
   if (c.kind === 'playlist') return { name: 'playlist', id: c.id }
@@ -79,7 +92,24 @@ export function fmt(sec: number): string {
 // `persist` are also saved to disk so the app opens with the last home feed/library already drawn.
 const cache = new Map<string, unknown>()
 localStorage.removeItem('cache:home') // pre-0.2 home feed, saved without its mood chips
-export const invalidate = (key: string) => cache.delete(key)
+// Bumped when a key is invalidated, so a request (or a playlist page) that was already on its way
+// can't put the stale copy back.
+const generation = new Map<string, number>()
+const gen = (key: string) => generation.get(key) ?? 0
+export function invalidate(key: string): void {
+  cache.delete(key)
+  generation.set(key, gen(key) + 1)
+}
+// Signing in or out: nothing cached belongs to the new session.
+export function resetCache(): void {
+  for (const key of cache.keys()) invalidate(key)
+  for (const k of Object.keys(localStorage)) if (k.startsWith('cache:')) localStorage.removeItem(k)
+}
+
+// Lets the library sidebar reload after a playlist is created elsewhere (e.g. a song's menu).
+const libraryWatchers = new Set<() => void>()
+export const libraryChanged = () => libraryWatchers.forEach((f) => f())
+export const onLibraryChange = (f: () => void) => (libraryWatchers.add(f), () => void libraryWatchers.delete(f))
 // The user's playlists as last loaded by the library sidebar (for "Add to playlist").
 export const cachedPlaylists = (): Card[] =>
   ([...cache].reverse().find(([k]) => k.startsWith('library:true:Playlists:'))?.[1] as Card[] | undefined) ?? []
@@ -97,20 +127,25 @@ export function useCached<T>(
 ): { data?: T; error?: string; set: (d: T) => void; retry: () => void } {
   const [res, setRes] = useState<{ data?: T; error?: string }>(() => ({ data: read<T>(key, persist) }))
   const [attempt, setAttempt] = useState(0)
-  const set = (data: T) => {
+  const [loadedGen, setLoadedGen] = useState(() => gen(key))
+  const store = (data: T) => {
     cache.set(key, data)
     if (persist) localStorage.setItem(`cache:${key}`, JSON.stringify(data))
+  }
+  const set = (data: T) => {
+    if (gen(key) === loadedGen) store(data)
     setRes({ data })
   }
   useEffect(() => {
     let live = true
     const cached = read<T>(key, persist)
+    const g = gen(key)
+    setLoadedGen(g)
     setRes({ data: cached })
     if (cache.has(key) && !revalidate) return
     fn()
       .then((data) => {
-        cache.set(key, data)
-        if (persist) localStorage.setItem(`cache:${key}`, JSON.stringify(data))
+        if (gen(key) === g) store(data)
         if (live) setRes({ data })
       })
       .catch((e: Error) => live && cached === undefined && setRes({ error: e.message }))
@@ -127,6 +162,7 @@ export function useColor(src?: string): string {
   const [color, setColor] = useState('rgb(83,83,83)')
   useEffect(() => {
     if (!src) return
+    let live = true
     const img = new Image()
     img.crossOrigin = 'anonymous'
     img.onload = () => {
@@ -140,12 +176,15 @@ export function useColor(src?: string): string {
         for (let i = 0; i < d.length; i += 4) (r += d[i]), (gr += d[i + 1]), (b += d[i + 2])
         const n = d.length / 4
         const k = 0.75
-        setColor(`rgb(${(r / n) * k | 0},${(gr / n) * k | 0},${(b / n) * k | 0})`)
+        if (live) setColor(`rgb(${(r / n) * k | 0},${(gr / n) * k | 0},${(b / n) * k | 0})`)
       } catch {
-        setColor('rgb(83,83,83)')
+        if (live) setColor('rgb(83,83,83)')
       }
     }
     img.src = src
+    return () => {
+      live = false
+    }
   }, [src])
   return color
 }

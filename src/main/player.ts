@@ -65,7 +65,9 @@ export function placeVideo(main: BrowserWindow | null, rect: Electron.Rectangle 
     if (shownIn !== main) main.contentView.addChildView(view)
     shownIn = main
     view.setVisible(true)
-    view.setBounds(rect)
+    // The renderer measures in CSS pixels; the view is placed in window points.
+    const z = main.webContents.getZoomFactor()
+    view.setBounds({ x: Math.round(rect.x * z), y: Math.round(rect.y * z), width: Math.round(rect.width * z), height: Math.round(rect.height * z) })
     view.setBorderRadius(8)
     run(`document.documentElement.classList.add('ytspot-video')`)
   } else if (shownIn) {
@@ -225,15 +227,22 @@ const click = (sel: string) => `document.querySelector('ytmusic-player-bar ${sel
 const rate = (which: 'like' | 'dislike') =>
   `(r => (r?.querySelector('#button-shape-${which} button') || r?.querySelector('.${which}'))?.click())(document.querySelector('ytmusic-player-bar ytmusic-like-button-renderer'))`
 
+// Bumped by every command that changes what's playing, so a `play` fallback that fires after the
+// user has already skipped or picked something else doesn't drag playback back.
+let playSeq = 0
+
 export async function command(c: PlayerCommand): Promise<void> {
   const P = `document.getElementById('movie_player')`
+  if (['play', 'next', 'prev', 'jump', 'jumpAuto', 'toggle'].includes(c.type)) playSeq++
   switch (c.type) {
     case 'play': {
+      const mine = playSeq
       const ep = JSON.stringify({ watchEndpoint: { videoId: c.videoId, playlistId: c.playlistId } })
       await run(`document.querySelector('ytmusic-app').dispatchEvent(new CustomEvent('yt-navigate',
         { bubbles: true, composed: true, detail: { endpoint: ${ep} } }))`)
       // In-app navigation is undocumented; fall back to a full load if it didn't take.
       setTimeout(async () => {
+        if (mine !== playSeq) return
         const s = await getState()
         if (s?.videoId !== c.videoId) {
           const list = c.playlistId ? `&list=${c.playlistId}` : ''
@@ -385,12 +394,21 @@ export async function rateVideo(videoId: string, like: boolean): Promise<void> {
   )
 }
 
+// Follow / unfollow an artist (a YouTube subscription) through YTM's own client.
+export async function subscribe(channelId: string, on: boolean): Promise<void> {
+  await page?.executeJavaScript(
+    `document.querySelector('ytmusic-app').networkManager.fetch('/subscription/${on ? 'subscribe' : 'unsubscribe'}', { channelIds: [${JSON.stringify(channelId)}] }).then(() => true)`,
+    true
+  )
+}
+
 // Reading settings clicks through YTM's dialog with short waits, which a throttled page would
 // stretch to a second each, so lift throttling while it runs.
-export async function ytmSettings(): Promise<YtmSetting[] | null> {
-  page?.setBackgroundThrottling(false)
+export async function ytmSettings(): Promise<YtmSetting[]> {
+  if (!page) throw new Error('YouTube Music isn’t loaded yet')
+  page.setBackgroundThrottling(false)
   try {
-    return await run<YtmSetting[]>(SETTINGS_READ)
+    return await page.executeJavaScript(SETTINGS_READ, true)
   } finally {
     page?.setBackgroundThrottling(true)
   }

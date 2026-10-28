@@ -1,6 +1,6 @@
 import type { Card, Shelf, Track } from '../../../shared/types'
-import { Component, memo, useCallback, useRef, type ReactNode } from 'react'
-import { sized, useApp, type AppCtx } from '../lib'
+import { Component, memo, useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { moreRoute, routeFor, sameRoute, sized, useApp, type AppCtx, type Source } from '../lib'
 import { Clock, More, Pause, Play } from './icons'
 import { cardMenu, songMenu } from './menus'
 
@@ -20,14 +20,38 @@ export function GreenPlay({ size = 48, playing, onClick }: { size?: number; play
   )
 }
 
+// Spotify's bar that fades in at the top of a playlist, album or artist page once the page's own
+// play button scrolls away: a play button and the title over the page's colour.
+export function StickyHead({ title, playing, onPlay, anchor }: { title: string; playing?: boolean; onPlay: () => void; anchor: RefObject<HTMLElement | null> }) {
+  const [shown, setShown] = useState(false)
+  useEffect(() => {
+    const el = anchor.current
+    const scroller = el?.closest('.main-scroll')
+    if (!el || !scroller) return
+    const check = () => setShown(scroller.scrollTop > el.offsetTop + el.offsetHeight - 64)
+    check()
+    scroller.addEventListener('scroll', check, { passive: true })
+    return () => scroller.removeEventListener('scroll', check)
+  }, [anchor])
+  return (
+    <div className={`sticky-head ${shown ? 'shown' : ''}`} aria-hidden={!shown}>
+      <GreenPlay size={48} playing={playing} onClick={onPlay} />
+      <span className="sticky-title">{title}</span>
+    </div>
+  )
+}
+
 export function CardTile({ card }: { card: Card }) {
   const ctx = useApp()
-  const { openCard, playCard } = ctx
+  const { openCard, playCard, player, source } = ctx
+  // The card for what's playing keeps its button showing, as a pause button.
+  const current = !!player?.videoId && (card.id === player.videoId || sameRoute(routeFor(card), source?.route))
+  const playing = current && !!player?.playing
   return (
     <div className="card" onClick={() => openCard(card)} onContextMenu={(e) => (e.preventDefault(), cardMenu(card, ctx))}>
-      <div className="card-img">
+      <div className={`card-img ${playing ? 'playing' : ''}`}>
         <img src={sized(card.thumb, 180)} className={card.kind === 'artist' ? 'round' : ''} loading="lazy" />
-        <GreenPlay onClick={() => playCard(card)} />
+        <GreenPlay playing={playing} onClick={() => (current ? window.ytm.cmd({ type: 'toggle' }) : playCard(card))} />
       </div>
       <div className="card-title">{card.title}</div>
       <div className="card-sub">{card.subtitle}</div>
@@ -36,10 +60,19 @@ export function CardTile({ card }: { card: Card }) {
 }
 
 export function ShelfRow({ shelf }: { shelf: Shelf }) {
+  const { go } = useApp()
+  const more = shelf.more && moreRoute(shelf.more, shelf.title)
   return (
     <section className="shelf">
       <div className="shelf-head">
-        <h2>{shelf.title}</h2>
+        <h2 className={more ? 'link' : ''} onClick={() => more && go(more)}>
+          {shelf.title}
+        </h2>
+        {more && (
+          <button className="show-all" onClick={() => go(more)}>
+            Show all
+          </button>
+        )}
       </div>
       <div className="shelf-row">
         {shelf.cards.map((c) => (
@@ -53,27 +86,82 @@ export function ShelfRow({ shelf }: { shelf: Shelf }) {
 export function TrackTable({
   tracks,
   playlistId,
+  editable,
+  from,
   showAlbum = true,
+  showPlays = false,
   showHeader = true
 }: {
   tracks: Track[]
   playlistId?: string
+  // The user's own playlist page: its route id, and how to drop a removed row from the page.
+  editable?: { id: string; onRemoved: (videoId: string) => void }
+  // The page these rows belong to, shown as "Playing from" while they play.
+  from?: Source
   showAlbum?: boolean
+  showPlays?: boolean
   showHeader?: boolean
 }) {
   const ctx = useApp()
   const { player, playTrack, go } = ctx
-  // Rows are memoised; read the latest context through a ref so the menu callback stays stable.
+  // Rows are memoised; read the latest props and context through refs so their callbacks stay stable.
   const ctxRef = useRef(ctx)
   ctxRef.current = ctx
+  const editRef = useRef(editable)
+  editRef.current = editable
+  const fromRef = useRef(from)
+  fromRef.current = from
   const menu = useCallback(
-    (t: Track) => songMenu(t, ctxRef.current, { playlistId, liked: playlistId === 'LM' || undefined }),
+    (t: Track) =>
+      songMenu(t, ctxRef.current, {
+        playlistId: editRef.current?.id,
+        onRemoved: editRef.current?.onRemoved,
+        liked: playlistId === 'LM' || (t.videoId === ctxRef.current.player?.videoId ? ctxRef.current.player.liked : undefined)
+      }),
     [playlistId]
   )
+  // The current song's own row pauses/resumes instead of restarting it.
+  const play = useCallback(
+    (t: Track) =>
+      t.videoId === ctxRef.current.player?.videoId
+        ? window.ytm.cmd({ type: 'toggle' })
+        : playTrack(t, playlistId, fromRef.current),
+    [playTrack, playlistId]
+  )
+  // Spotify-style selection: click selects a row, ↑/↓ move, Enter plays, double-click plays.
+  const [sel, setSel] = useState(-1)
+  const box = useRef<HTMLDivElement>(null)
+  const select = useCallback((i: number) => {
+    setSel(i)
+    ;(box.current?.querySelectorAll<HTMLElement>('.track-row:not(.head)')[i])?.focus()
+  }, [])
+  const onKey = (e: React.KeyboardEvent) => {
+    if (e.metaKey || e.altKey || e.ctrlKey) return
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      select(Math.max(0, Math.min(tracks.length - 1, sel + (e.key === 'ArrowDown' ? 1 : -1))))
+    } else if (e.key === 'Enter' && tracks[sel]) {
+      e.preventDefault()
+      playTrack(tracks[sel], playlistId, from)
+    }
+  }
+  // The column header gets a background once it sticks to the top (Spotify), and is see-through
+  // over the page's colour before that.
+  const head = useRef<HTMLDivElement>(null)
+  const [stuck, setStuck] = useState(false)
+  useEffect(() => {
+    const el = head.current
+    const scroller = el?.closest('.main-scroll')
+    if (!el || !scroller) return
+    const check = () => setStuck(el.getBoundingClientRect().top - scroller.getBoundingClientRect().top <= parseFloat(getComputedStyle(el).top) + 0.5 && scroller.scrollTop > 0)
+    check()
+    scroller.addEventListener('scroll', check, { passive: true })
+    return () => scroller.removeEventListener('scroll', check)
+  }, [showHeader])
   return (
-    <div className={`tracks ${showAlbum ? '' : 'no-album'}`}>
+    <div ref={box} className={`tracks ${showAlbum || showPlays ? '' : 'no-album'}`} onKeyDown={onKey} role="grid">
       {showHeader && (
-        <div className="track-row head">
+        <div ref={head} className={`track-row head ${stuck ? 'stuck' : ''}`}>
           <span className="num">#</span>
           <span>Title</span>
           {showAlbum && <span>Album</span>}
@@ -88,10 +176,12 @@ export function TrackTable({
           key={t.videoId + i}
           t={t}
           i={i}
-          playlistId={playlistId}
           showAlbum={showAlbum}
+          showPlays={showPlays}
           state={player?.videoId !== t.videoId ? '' : player.playing ? 'playing' : 'current'}
-          playTrack={playTrack}
+          selected={i === sel}
+          play={play}
+          select={select}
           go={go}
           menu={menu}
         />
@@ -104,32 +194,45 @@ export function TrackTable({
 const Row = memo(function Row({
   t,
   i,
-  playlistId,
   showAlbum,
+  showPlays,
   state,
-  playTrack,
+  selected,
+  play,
+  select,
   go,
   menu
 }: {
   t: Track
   i: number
-  playlistId?: string
   showAlbum: boolean
+  showPlays?: boolean
   state: '' | 'current' | 'playing'
-  playTrack: AppCtx['playTrack']
+  selected: boolean
+  play: (t: Track) => void
+  select: (i: number) => void
   go: AppCtx['go']
   menu: (t: Track) => void
 }) {
   return (
     <div
-      className={`track-row ${state ? 'current' : ''}`}
-      onDoubleClick={() => playTrack(t, playlistId)}
-      onContextMenu={(e) => (e.preventDefault(), menu(t))}
+      className={`track-row ${state ? 'current' : ''} ${selected ? 'selected' : ''}`}
+      tabIndex={selected ? 0 : -1}
+      role="row"
+      aria-selected={selected}
+      onClick={() => select(i)}
+      onDoubleClick={() => play(t)}
+      onContextMenu={(e) => (e.preventDefault(), select(i), menu(t))}
     >
       <span className="num">
         <span className="idx">{state === 'playing' ? <Bars /> : i + 1}</span>
-        <button className="row-play" onClick={() => playTrack(t, playlistId)} aria-label="Play">
-          <Play size={14} />
+        <button
+          className="row-play"
+          onClick={(e) => (e.stopPropagation(), play(t))}
+          aria-label={state === 'playing' ? `Pause ${t.title}` : `Play ${t.title}`}
+          title={state === 'playing' ? 'Pause' : 'Play'}
+        >
+          {state === 'playing' ? <Pause size={14} /> : <Play size={14} />}
         </button>
       </span>
       <span className="title-cell">
@@ -139,8 +242,9 @@ const Row = memo(function Row({
           <span
             className={`t2 ${t.artistId ? 'link' : ''}`}
             onClick={(e) => {
+              if (!t.artistId) return
               e.stopPropagation()
-              if (t.artistId) go({ name: 'artist', id: t.artistId })
+              go({ name: 'artist', id: t.artistId })
             }}
           >
             {t.artists}
@@ -148,12 +252,20 @@ const Row = memo(function Row({
         </span>
       </span>
       {showAlbum && (
-        <span className={`sub ${t.albumId ? 'link' : ''}`} onClick={() => t.albumId && go({ name: 'album', id: t.albumId })}>
+        <span
+          className={`sub album-cell ${t.albumId ? 'link' : ''}`}
+          onClick={(e) => {
+            if (!t.albumId) return
+            e.stopPropagation()
+            go({ name: 'album', id: t.albumId })
+          }}
+        >
           {t.album}
         </span>
       )}
+      {showPlays && <span className="sub plays">{t.plays?.replace(/\s*plays?$/, '')}</span>}
       <span className="dur sub">{t.duration}</span>
-      <button className="row-more" onClick={() => menu(t)} aria-label={`More options for ${t.title}`} title="More options">
+      <button className="row-more" onClick={(e) => (e.stopPropagation(), menu(t))} aria-label={`More options for ${t.title}`} title={`More options for ${t.title}`}>
         <More size={16} />
       </button>
     </div>

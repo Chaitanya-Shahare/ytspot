@@ -40,8 +40,13 @@ img { display: block; object-fit: cover; background: #282828; }
 .sub { color: var(--text-subdued); }
 .link:hover { text-decoration: underline; color: var(--text-base); cursor: pointer; }
 ::-webkit-scrollbar { width: 12px; }
-::-webkit-scrollbar-thumb { background: #ffffff4d; border: 3px solid transparent; background-clip: padding-box; }
+/* Like Spotify's overlay scrollbars: the thumb only shows while the pointer is over the area. */
+::-webkit-scrollbar-thumb { background: transparent; border: 3px solid transparent; background-clip: padding-box; }
+:hover::-webkit-scrollbar-thumb { background-color: #ffffff4d; }
 ::-webkit-scrollbar-thumb:hover { background-color: #ffffff80; }
+/* Keyboard focus (Spotify's ring); mouse clicks don't show it. */
+:focus-visible { outline: 2px solid #3673d4; outline-offset: 2px; }
+input:focus-visible { outline: none; }
 
 /* ---------- grid layout ---------- */
 .app {
@@ -89,7 +94,9 @@ img { display: block; object-fit: cover; background: #282828; }
   box-shadow: inset 0 0 0 1px transparent; transition: background .2s, box-shadow .2s;
 }
 .search-box:hover { background: var(--background-elevated-highlight); box-shadow: inset 0 0 0 1px #ffffff1a; }
-.search-box:focus-within { box-shadow: inset 0 0 0 2px var(--text-base); color: var(--text-base); }
+.search-box:focus-within { box-shadow: inset 0 0 0 2px var(--text-base); color: var(--text-base); background: var(--background-elevated-highlight); }
+.search-clear { color: var(--text-subdued); display: grid; place-items: center; width: 32px; height: 32px; margin-right: -8px; }
+.search-clear:hover { color: var(--text-base); }
 .search-box input { flex: 1; background: none; border: 0; outline: 0; color: var(--text-base); font: inherit; font-size: 16px; }
 .search-box input::placeholder { color: var(--text-subdued); }
 .avatar { width: 32px; height: 32px; margin: 0 8px; padding: 0; border-radius: 50%; background: #535353; border: 6px solid #1f1f1f; box-sizing: content-box; overflow: hidden; -webkit-app-region: no-drag; }
@@ -134,22 +141,25 @@ img { display: block; object-fit: cover; background: #282828; }
 
 /* ---------- main view ---------- */
 .main-view { grid-area: main; position: relative; container: main / inline-size; }
-.main-scroll { height: 100%; overflow-y: auto; overflow-x: hidden; }
+.main-scroll { height: 100%; overflow-y: auto; overflow-x: hidden; position: relative; }
 .page { --tint: rgb(83, 83, 83); min-height: 100%; padding: 0 24px 32px; background: linear-gradient(var(--tint) 0, var(--background-base) 332px) no-repeat, var(--background-base); }
 .page.home { background: linear-gradient(rgba(70, 70, 90, .6) 0, var(--background-base) 240px), var(--background-base); padding-top: 16px; }
 .loading, .empty-search { padding: 48px 24px; color: var(--text-subdued); font-size: 16px; }
 .shelf { margin-top: 24px; }
-.shelf-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; padding: 0 12px; }
+.shelf-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
 .shelf-head h2, .section-title, .search h2 { font-size: 24px; font-weight: 700; letter-spacing: -.01em; }
 .section-title { margin: 24px 0 16px; }
 .section-title.sub { font-size: 16px; color: var(--text-subdued); margin: 24px 0 8px; }
-.shelf-row { display: grid; grid-auto-flow: column; grid-auto-columns: 180px; overflow-x: auto; scrollbar-width: none; }
+/* Cards carry 12px of hover padding; pulling the row out by that much lines the artwork up with
+   the headings, as in Spotify. */
+.shelf-row { display: grid; grid-auto-flow: column; grid-auto-columns: 180px; overflow-x: auto; scrollbar-width: none; margin: 0 -12px; }
 .shelf-row::-webkit-scrollbar { display: none; }
 .card { padding: 12px; border-radius: var(--radius-larger); cursor: pointer; transition: background .3s; }
 .card:hover { background: var(--background-highlight); }
 .card-img { position: relative; margin-bottom: 8px; }
 .card-img img { width: 100%; aspect-ratio: 1; border-radius: var(--radius-larger); box-shadow: 0 8px 24px #00000080; }
-.card-img .green-play { position: absolute; right: 8px; bottom: 8px; opacity: 0; transform: translateY(8px); transition: all .3s; box-shadow: 0 8px 8px #0000004d; }
+.card-img .green-play { position: absolute; right: 8px; bottom: 8px; opacity: 0; transform: translateY(8px); transition: transform .2s ease-out, opacity .2s; box-shadow: 0 8px 8px #0000004d; }
+.card-img.playing .green-play { opacity: 1; transform: none; }
 .card:hover .green-play { opacity: 1; transform: none; }
 .card-title { font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px; line-height: 1.25; height: 1.25em; }
 /* Fixed height: a title in another script or with emoji falls back to a font with taller metrics,
@@ -163,7 +173,7 @@ img { display: block; object-fit: cover; background: #282828; }
 
 /* hero (playlist / album) */
 .hero { display: flex; align-items: flex-end; gap: 24px; padding: 64px 0 24px; }
-.hero-art { width: clamp(128px, 18vw, 232px); height: clamp(128px, 18vw, 232px); border-radius: var(--radius-base); box-shadow: 0 4px 60px #00000080; flex: none; }
+.hero-art { width: clamp(128px, calc(128px + (100cqw - 600px) / 424 * 104), 232px); aspect-ratio: 1; height: auto; border-radius: var(--radius-base); box-shadow: 0 4px 60px #00000080; flex: none; }
 .hero-text { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .hero-kind { font-size: 14px; }
 .hero-title { font-size: clamp(2rem, 5vw, 6rem); font-weight: 900; letter-spacing: -.04em; line-height: 1; margin: 8px 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
@@ -226,20 +236,22 @@ img { display: block; object-fit: cover; background: #282828; }
 .np-next > div { min-width: 0; }
 
 /* ---------- player bar ---------- */
-.player-bar { grid-area: bar; display: grid; grid-template-columns: 30% 40% 30%; align-items: center; padding: 0 8px; }
+.player-bar { grid-area: bar; display: grid; grid-template-columns: minmax(180px, 1fr) min(40%, 722px) minmax(180px, 1fr); align-items: center; padding: 0 8px; }
 .pb-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .pb-left img { width: 56px; height: 56px; border-radius: var(--radius-base); }
 .pb-text { display: flex; flex-direction: column; min-width: 0; }
 .pb-text .t1 { font-size: 14px; }
 .pb-text .t2 { font-size: 12px; }
 .pb-center { display: flex; flex-direction: column; align-items: center; gap: 8px; }
-.pb-controls { display: flex; align-items: center; gap: 16px; }
+.pb-controls { display: flex; align-items: center; gap: 8px; }
 .pb-controls .icon-btn { width: 32px; height: 32px; }
 .play-btn { width: 32px; height: 32px; border-radius: 50%; background: #fff; color: #000; display: grid; place-items: center; margin: 0 8px; }
 .play-btn:hover { transform: scale(1.06); }
 .one { position: absolute; top: 3px; right: 2px; font-size: 8px; font-weight: 900; background: #000; border-radius: 50%; width: 10px; line-height: 10px; }
 .pb-progress { display: flex; align-items: center; gap: 8px; width: 100%; }
-.time { font-size: 12px; color: var(--text-subdued); min-width: 40px; text-align: center; }
+/* Fixed width and tabular digits so the bar doesn't shift every second. */
+.time { font-size: 12px; color: var(--text-subdued); width: 50px; flex: none; font-variant-numeric: tabular-nums; text-align: right; }
+.pb-progress .time:last-child { text-align: left; }
 .pb-right { display: flex; justify-content: flex-end; align-items: center; gap: 12px; padding-right: 8px; }
 .pb-right .icon-btn { width: 32px; height: 32px; }
 .slider { flex: 1; height: 12px; position: relative; display: flex; align-items: center; cursor: pointer; }
@@ -317,7 +329,7 @@ kbd { font-family: inherit; font-size: 12px; background: var(--background-tinted
 .sk { background: linear-gradient(90deg, #ffffff0d 25%, #ffffff1a 37%, #ffffff0d 63%); background-size: 400% 100%; animation: shimmer 1.4s ease infinite; border-radius: var(--radius-base); }
 @keyframes shimmer { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
 .sk-shelf { margin-top: 24px; }
-.sk-heading { width: 220px; height: 24px; margin: 0 12px 16px; }
+.sk-heading { width: 220px; height: 24px; margin: 0 0 16px; }
 .sk-square { width: 100%; aspect-ratio: 1; border-radius: var(--radius-larger); margin-bottom: 10px; }
 .sk-line { height: 12px; width: 80%; margin: 6px 0; }
 .sk-line.short { width: 50%; }
@@ -340,10 +352,10 @@ kbd { font-family: inherit; font-size: 12px; background: var(--background-tinted
 .top-card { position: relative; }
 .top-card .green-play { position: absolute; right: 20px; bottom: 20px; opacity: 0; transform: translateY(8px); transition: all .3s; box-shadow: 0 8px 8px #0000004d; }
 .top-card:hover .green-play { opacity: 1; transform: none; }
-.card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); margin-top: 8px; }
+.card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); margin: 8px -12px 0; }
 .empty-search h2 { font-size: 24px; margin-bottom: 8px; color: var(--text-base); }
 .recent { margin-top: 16px; }
-.recent-list { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 12px; }
+.recent-list { display: flex; flex-wrap: wrap; gap: 8px; }
 .recent-chip { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px 0 14px; border-radius: 500px; background: var(--background-tinted-base); cursor: pointer; font-size: 14px; }
 .recent-chip:hover { background: var(--background-tinted-highlight); }
 .recent-chip button { color: var(--text-subdued); display: grid; place-items: center; }
@@ -359,9 +371,8 @@ kbd { font-family: inherit; font-size: 12px; background: var(--background-tinted
 /* ---------- search: plain background (as in Spotify) so the sticky filter pills don't cut a band
    out of a gradient; the pill bar spans the full width so results never show beside it ---------- */
 .page.search { background: var(--background-base); }
-.search-chips { margin: 0 -24px; padding: 8px 36px; }
-.search-top { padding: 0 12px; margin-top: 8px; }
-.card-grid { margin-top: 8px; }
+.search-chips { margin: 0 -24px; padding: 8px 24px; }
+.search-top { margin-top: 8px; }
 .top-more { position: absolute; top: 16px; right: 16px; color: var(--text-subdued); opacity: 0; display: grid; place-items: center; transition: opacity .2s; }
 .top-more:hover { color: var(--text-base); }
 .top-card:hover .top-more, .top-more:focus-visible { opacity: 1; }
@@ -369,7 +380,7 @@ kbd { font-family: inherit; font-size: 12px; background: var(--background-tinted
 .top-card .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 64px; }
 
 /* ---------- home mood pills ---------- */
-.home-chips { padding: 0 12px 8px; overflow-x: auto; scrollbar-width: none; }
+.home-chips { padding: 0 0 8px; overflow-x: auto; scrollbar-width: none; }
 .home-chips::-webkit-scrollbar { display: none; }
 
 /* ---------- sidebar resizers (Spotify LayoutResizer) ---------- */
@@ -426,3 +437,85 @@ kbd { font-family: inherit; font-size: 12px; background: var(--background-tinted
 @container main (width < 760px) {
   .search-top { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* ---------- sticky page header (appears once the page's play button scrolls away) ---------- */
+.sticky-head { position: sticky; top: 0; z-index: 3; height: 64px; margin: 0 -24px -64px; padding: 0 24px; display: flex; align-items: center; gap: 16px;
+  background: color-mix(in srgb, var(--tint) 55%, #000); opacity: 0; pointer-events: none; transition: opacity .25s; }
+.sticky-head.shown { opacity: 1; pointer-events: auto; }
+.sticky-title { font-size: 24px; font-weight: 700; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.collection .track-row.head { top: 64px; }
+.hero-meta-sub { color: #ffffffb3; }
+.play-btn:disabled { opacity: .4; cursor: default; transform: none; }
+
+/* ---------- collection colours (Spotify: solid colour behind the header, then a 232px fade) ---------- */
+.page.collection { background: var(--background-base); isolation: isolate; }
+.collection .hero { margin: 0 -24px; padding: 64px 24px 24px; background: linear-gradient(transparent, #00000080), var(--tint); }
+.collection .action-bar { position: relative; }
+.collection .action-bar::before { content: ''; position: absolute; z-index: -1; left: -24px; right: -24px; top: 0; height: 232px; background: linear-gradient(#0009, var(--background-base)), var(--tint); }
+.track-row.head { background: transparent; transition: background-color .2s; }
+.track-row.head.stuck { background: var(--background-elevated-base); margin-left: -24px; margin-right: -24px; padding: 0 40px; border-bottom-color: #ffffff1a; }
+.hero-art:hover { transform: scale(1.02); }
+.hero-art { transition: transform .2s; }
+
+/* ---------- track rows: selection, plays, links ---------- */
+.track-row:focus { outline: none; }
+.track-row.selected, .track-row.selected:hover { background: #ffffff4d !important; }
+.track-row.selected .row-play, .track-row.selected .row-more { visibility: visible; }
+.track-row.selected .idx { visibility: hidden; }
+.track-row { scroll-margin-top: 112px; }
+.track-row:hover .t2, .track-row:hover .album-cell { color: var(--text-base); }
+.plays { font-variant-numeric: tabular-nums; }
+
+/* ---------- shelves: "Show all" ---------- */
+.show-all { font-size: 14px; font-weight: 700; color: var(--text-subdued); white-space: nowrap; }
+.show-all:hover { text-decoration: underline; color: var(--text-base); }
+.shelf-head h2.link:hover { text-decoration: underline; }
+.see-more { margin: 16px 0 0 16px; }
+.more .card-grid { margin-top: 16px; }
+
+/* ---------- artist ---------- */
+.outline-btn.follow { height: 32px; padding: 0 16px; font-size: 14px; }
+.about-card { position: relative; border-radius: var(--radius-larger-2); min-height: 280px; background: center / cover no-repeat; overflow: hidden; cursor: pointer; display: flex; align-items: flex-end; max-width: 672px; }
+.about-card::before { content: ''; position: absolute; inset: 0; background: linear-gradient(transparent 30%, #000000d9); }
+.about-card p { position: relative; padding: 24px; font-size: 16px; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.about-card p.open { -webkit-line-clamp: unset; }
+
+/* ---------- now playing: about the artist, queue ---------- */
+.np-about { padding: 0; overflow: hidden; margin-bottom: 16px; cursor: pointer; }
+.np-about-art { aspect-ratio: 16 / 9; background: center 25% / cover no-repeat; padding: 16px; position: relative; }
+.np-about-art::before { content: ''; position: absolute; inset: 0; background: linear-gradient(#00000099, transparent 50%); }
+.np-about-art b { position: relative; font-size: 16px; }
+.np-about-text { padding: 16px; display: flex; flex-direction: column; gap: 8px; }
+.np-about-text b { font-size: 16px; }
+.np-about-text p { font-size: 14px; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.np-about:hover { background: var(--background-elevated-highlight); }
+.queue-h { font-size: 16px; font-weight: 700; margin: 16px 0 8px; }
+.queue-h:first-child { margin-top: 0; }
+.queue-empty { display: flex; flex-direction: column; gap: 8px; padding: 48px 8px; text-align: center; }
+.queue-empty b { font-size: 20px; }
+.np-next.current .t1 { color: var(--green); }
+.lib-item { position: relative; }
+.lib-playing { flex: none; margin-left: auto; }
+
+/* ---------- library tools ---------- */
+.lib-tools { display: flex; align-items: center; justify-content: space-between; padding: 4px 16px 8px; gap: 8px; }
+.lib-tools .icon-btn { width: 32px; height: 32px; border-radius: 50%; }
+.lib-tools .icon-btn:hover { background: var(--background-tinted-base); }
+.lib-find { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; border-radius: var(--radius-base); background: var(--background-tinted-highlight); flex: 1; min-width: 0; color: var(--text-subdued); }
+.lib-find input { flex: 1; min-width: 0; background: none; border: 0; outline: 0; color: var(--text-base); font: inherit; font-size: 14px; }
+.lib-sort { display: flex; align-items: center; gap: 6px; font-size: 14px; color: var(--text-subdued); white-space: nowrap; }
+.lib-sort:hover { color: var(--text-base); transform: scale(1.04); }
+.chip-clear { width: 32px; padding: 0; display: grid; place-items: center; }
+.lib-empty { display: flex; flex-direction: column; gap: 8px; padding: 24px 16px; text-align: center; }
+
+/* ---------- home shortcuts (Spotify's compact grid at the top of Home) ---------- */
+.shortcuts { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap: 8px; margin: 8px 0 8px; }
+.shortcut { display: flex; align-items: center; gap: 12px; height: 64px; border-radius: var(--radius-base); background: var(--background-tinted-base); overflow: hidden; cursor: pointer; position: relative; padding-right: 8px; transition: background .2s; }
+.shortcut:hover { background: var(--background-tinted-highlight); }
+.shortcut img { width: 64px; height: 64px; flex: none; box-shadow: 0 8px 24px #00000080; }
+.shortcut-title { flex: 1; min-width: 0; font-weight: 700; font-size: 14px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.shortcut .green-play { opacity: 0; transition: opacity .2s; box-shadow: 0 8px 8px #0000004d; }
+.shortcut:hover .green-play, .shortcut.playing .green-play { opacity: 1; }
+.empty-collection { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 24px 0; }
+.empty-collection h2 { font-size: 24px; }
+.ellipsis { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

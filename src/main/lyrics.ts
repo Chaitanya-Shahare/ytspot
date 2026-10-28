@@ -49,27 +49,34 @@ async function fromLrclib(q: LyricsQuery, altered: boolean): Promise<LrclibHit |
   // "Artist - Title" uploads.
   const dash = title.match(/^(.+?)\s+[-–—]\s+(.+)$/)
   if (dash && !q.album) [artist, title] = [dash[1], dash[2]]
+  // A 404 is "no lyrics"; a network failure throws, so the caller can tell the two apart.
   const exact = (await lrclib('get', {
     track_name: title,
     artist_name: artist,
     ...(q.album ? { album_name: q.album } : {}),
     ...(q.duration && !altered ? { duration: String(Math.round(q.duration)) } : {})
-  }).catch(() => null)) as LrclibHit | null
+  })) as LrclibHit | null
   if (exact?.syncedLyrics || exact?.instrumental) return exact
-  const hits = ((await lrclib('search', { track_name: title, artist_name: artist }).catch(() => null)) ?? []) as LrclibHit[]
+  const hits = ((await lrclib('search', { track_name: title, artist_name: artist })) ?? []) as LrclibHit[]
   const close = hits.filter((h) => !q.duration || altered || Math.abs(h.duration - q.duration) <= 3)
   return close.find((h) => h.syncedLyrics) ?? exact ?? close.find((h) => h.plainLyrics) ?? null
 }
 
 export async function lyrics(q: LyricsQuery): Promise<Lyrics | null> {
   const altered = ALTERED.test(q.title)
-  const [lrc, ytm] = await Promise.all([fromLrclib(q, altered).catch(() => null), ytmLyrics(q.videoId).catch(() => null)])
+  const [lrcRes, ytmRes] = await Promise.allSettled([fromLrclib(q, altered), ytmLyrics(q.videoId)])
+  const lrc = lrcRes.status === 'fulfilled' ? lrcRes.value : null
+  const ytm = ytmRes.status === 'fulfilled' ? ytmRes.value : null
+  // Nothing found and a source couldn't be reached: report it (so the view offers a retry) rather
+  // than settle on "no lyrics" for the rest of the session.
+  const unreachable = lrcRes.status === 'rejected' || ytmRes.status === 'rejected'
   if (lrc?.syncedLyrics && !altered) {
     const lines = parseLrc(lrc.syncedLyrics)
     if (lines.length) return { lines, synced: true, source: 'LRCLIB' }
   }
   if (lrc?.instrumental) return { lines: [{ text: '♪ Instrumental ♪' }], synced: false, source: 'LRCLIB' }
   const plain = ytm?.text ?? lrc?.plainLyrics ?? (lrc?.syncedLyrics && parseLrc(lrc.syncedLyrics).map((l) => l.text).join('\n'))
+  if (!plain && unreachable) throw new Error('Couldn’t load lyrics. Check your connection and try again.')
   if (!plain) return null
   return { lines: plain.split('\n').map((text) => ({ text: text.trim() })), synced: false, source: ytm?.source || 'LRCLIB' }
 }

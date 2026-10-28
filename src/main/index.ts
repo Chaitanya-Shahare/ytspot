@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import * as yt from './api'
 import { lyrics } from './lyrics'
 import { buildMenu } from './menu'
-import { command, createPlayerWindow, placeVideo, rateVideo, getState, onLoggedIn, setVideoMode, applyYtmSetting, showLogin, signOut, ytmSession, ytmSettings } from './player'
+import { command, createPlayerWindow, placeVideo, rateVideo, subscribe, getState, onLoggedIn, setVideoMode, applyYtmSetting, showLogin, signOut, ytmSession, ytmSettings } from './player'
 import { bindings, DEFAULT_PREFS, type Action } from '../shared/shortcuts'
 import type { PlayerState } from '../shared/types'
 
@@ -31,7 +31,12 @@ let keepPlaying = true
 async function syncAuth(): Promise<void> {
   const cookies = await ytmSession().cookies.get({ url: 'https://music.youtube.com' })
   const now = cookies.some((c) => c.name === 'SAPISID')
-  if (now !== loggedIn || !yt.ready()) await yt.connect(now ? cookies.map((c) => `${c.name}=${c.value}`).join('; ') : undefined)
+  try {
+    if (now !== loggedIn || !yt.ready()) await yt.connect(now ? cookies.map((c) => `${c.name}=${c.value}`).join('; ') : undefined)
+  } catch (e) {
+    // Offline: the window still opens, and data calls try to connect again (see `data` below).
+    console.error('[auth]', (e as Error).message)
+  }
   // Only after a real sign-in (not on startup) does the player page need reloading.
   if (now && loggedIn === false) onLoggedIn()
   loggedIn = now
@@ -64,7 +69,7 @@ function createMain(): BrowserWindow {
   win.on('close', () => {
     // Move the player page out before this window (and its views) is destroyed.
     placeVideo(null, null)
-    writeFileSync(boundsFile, JSON.stringify(win.getBounds()))
+    writeFileSync(boundsFile, JSON.stringify(win.getNormalBounds()))
     if (!quitting && !keepPlaying) app.quit()
   })
   win.on('closed', () => (main = null))
@@ -143,10 +148,13 @@ app.whenReady().then(() => {
   const ses = ytmSession()
   // Open the window right away; data handlers wait for the YouTube session instead.
   const init = syncAuth()
+  // One reconnect at a time when YouTube couldn't be reached earlier.
+  let reconnect: Promise<void> | null = null
   const data =
     <A extends unknown[], R>(fn: (...a: A) => Promise<R>) =>
     async (_: unknown, ...a: A) => {
       await init
+      if (!yt.ready()) await (reconnect ??= syncAuth().finally(() => (reconnect = null)))
       return fn(...a)
     }
 
@@ -164,6 +172,8 @@ app.whenReady().then(() => {
   ipcMain.handle('yt:addToPlaylist', data(yt.addToPlaylist))
   ipcMain.handle('yt:removeFromPlaylist', data(yt.removeFromPlaylist))
   ipcMain.handle('yt:rate', (_, videoId: string, like: boolean) => rateVideo(videoId, like))
+  ipcMain.handle('yt:subscribe', (_, channelId: string, on: boolean) => subscribe(channelId, on))
+  ipcMain.handle('yt:browseMore', data(yt.browseMore))
   ipcMain.handle('ytm:settings', () => ytmSettings())
   ipcMain.handle('ytm:applySetting', (_, endpoint: unknown) => applyYtmSetting(endpoint))
   ipcMain.handle('yt:library', data(yt.library))
