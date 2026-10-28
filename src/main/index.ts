@@ -3,12 +3,21 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as yt from './api'
+import { lyrics } from './lyrics'
 import { buildMenu } from './menu'
-import { command, createPlayerWindow, placeVideo, rateVideo, getState, onLoggedIn, setVideoMode, applyYtmSetting, showLogin, signOut, ytmSession, ytmSettings } from './player'
+import { command, createPlayerWindow, placeVideo, rateVideo, subscribe, getState, onLoggedIn, setVideoMode, applyYtmSetting, showLogin, signOut, ytmSession, ytmSettings } from './player'
 import { bindings, DEFAULT_PREFS, type Action } from '../shared/shortcuts'
 import type { PlayerState } from '../shared/types'
 
 const dir = fileURLToPath(new URL('.', import.meta.url))
+// Test runs (YTSPOT_PROFILE=<dir>) get their own profile so they never share data, the keychain
+// entry or the media keys with an installed copy; YTSPOT_MUTE=1 silences the player.
+const testProfile = process.env.YTSPOT_PROFILE
+if (testProfile) {
+  app.setPath('userData', testProfile)
+  app.commandLine.appendSwitch('use-mock-keychain')
+  app.commandLine.appendSwitch('disable-features', 'HardwareMediaKeyHandling,MediaSessionService')
+}
 const boundsFile = join(app.getPath('userData'), 'window.json')
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 
@@ -22,7 +31,12 @@ let keepPlaying = true
 async function syncAuth(): Promise<void> {
   const cookies = await ytmSession().cookies.get({ url: 'https://music.youtube.com' })
   const now = cookies.some((c) => c.name === 'SAPISID')
-  if (now !== loggedIn || !yt.ready()) await yt.connect(now ? cookies.map((c) => `${c.name}=${c.value}`).join('; ') : undefined)
+  try {
+    if (now !== loggedIn || !yt.ready()) await yt.connect(now ? cookies.map((c) => `${c.name}=${c.value}`).join('; ') : undefined)
+  } catch (e) {
+    // Offline: the window still opens, and data calls try to connect again (see `data` below).
+    console.error('[auth]', (e as Error).message)
+  }
   // Only after a real sign-in (not on startup) does the player page need reloading.
   if (now && loggedIn === false) onLoggedIn()
   loggedIn = now
@@ -43,6 +57,8 @@ function createMain(): BrowserWindow {
     minWidth: 900,
     minHeight: 600,
     backgroundColor: '#000000',
+    // A test run opens behind whatever the user is doing instead of taking focus.
+    show: !testProfile,
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 16, y: 20 },
     webPreferences: { preload: join(dir, '../preload/index.mjs'), sandbox: false, spellcheck: false }
@@ -53,10 +69,13 @@ function createMain(): BrowserWindow {
   win.on('close', () => {
     // Move the player page out before this window (and its views) is destroyed.
     placeVideo(null, null)
-    writeFileSync(boundsFile, JSON.stringify(win.getBounds()))
+    writeFileSync(boundsFile, JSON.stringify(win.getNormalBounds()))
     if (!quitting && !keepPlaying) app.quit()
   })
   win.on('closed', () => (main = null))
+  if (testProfile) win.once('ready-to-show', () => win.showInactive())
+  win.on('enter-full-screen', () => win.webContents.send('fullscreen', true))
+  win.on('leave-full-screen', () => win.webContents.send('fullscreen', false))
   // A reloading UI can't report that the video slot went away; put the video back out of sight.
   win.webContents.on('did-start-loading', () => placeVideo(null, null))
   sent = null
@@ -79,10 +98,17 @@ function showMain(then?: (w: BrowserWindow) => void): void {
 // Push player state while someone can see it: the whole state when anything besides the clock
 // changed, otherwise just the time. Each push repaints the window, so once a second (an m:ss clock)
 // is enough; commands refresh right away so the controls still respond instantly.
+// A track change briefly has no trustworthy title/artwork (see player.ts); hold the update back
+// for up to a second so the UI never shows the old song's art under the new song.
+let pendingSince: { id: string; at: number } | null = null
 async function pushState(): Promise<void> {
   if (!main?.isVisible()) return
   const s = await getState()
   if (!s || !main) return
+  if (s.pending) {
+    if (pendingSince?.id !== s.videoId) pendingSince = { id: s.videoId, at: Date.now() }
+    if (Date.now() - pendingSince.at < 1000) return void setTimeout(pushState, 200)
+  } else pendingSince = null
   const { time, queue, autoplay, ...rest }: PlayerState = s
   const info = JSON.stringify(rest)
   if (!sent || info !== sent.info || queue !== sent.queue || autoplay !== sent.autoplay) {
@@ -101,6 +127,7 @@ interface PopupItem {
   id: string
   label: string
   enabled?: boolean
+  checked?: boolean // shown as a radio choice
   submenu?: PopupItem[]
 }
 function popup(e: Electron.IpcMainInvokeEvent, items: PopupItem[]) {
@@ -112,7 +139,12 @@ function popup(e: Electron.IpcMainInvokeEvent, items: PopupItem[]) {
           ? { type: 'separator' }
           : i.submenu
             ? { label: i.label, submenu: build(i.submenu) }
-            : { label: i.label, enabled: i.enabled ?? true, click: () => (picked = i.id) }
+            : {
+                label: i.label,
+                enabled: i.enabled ?? true,
+                ...(i.checked !== undefined ? { type: 'radio' as const, checked: i.checked } : {}),
+                click: () => (picked = i.id)
+              }
       )
     Menu.buildFromTemplate(build(items)).popup({
       window: BrowserWindow.fromWebContents(e.sender) ?? undefined,
@@ -129,10 +161,13 @@ app.whenReady().then(() => {
   const ses = ytmSession()
   // Open the window right away; data handlers wait for the YouTube session instead.
   const init = syncAuth()
+  // One reconnect at a time when YouTube couldn't be reached earlier.
+  let reconnect: Promise<void> | null = null
   const data =
     <A extends unknown[], R>(fn: (...a: A) => Promise<R>) =>
     async (_: unknown, ...a: A) => {
       await init
+      if (!yt.ready()) await (reconnect ??= syncAuth().finally(() => (reconnect = null)))
       return fn(...a)
     }
 
@@ -150,6 +185,8 @@ app.whenReady().then(() => {
   ipcMain.handle('yt:addToPlaylist', data(yt.addToPlaylist))
   ipcMain.handle('yt:removeFromPlaylist', data(yt.removeFromPlaylist))
   ipcMain.handle('yt:rate', (_, videoId: string, like: boolean) => rateVideo(videoId, like))
+  ipcMain.handle('yt:subscribe', (_, channelId: string, on: boolean) => subscribe(channelId, on))
+  ipcMain.handle('yt:browseMore', data(yt.browseMore))
   ipcMain.handle('ytm:settings', () => ytmSettings())
   ipcMain.handle('ytm:applySetting', (_, endpoint: unknown) => applyYtmSetting(endpoint))
   ipcMain.handle('yt:library', data(yt.library))
@@ -159,6 +196,7 @@ app.whenReady().then(() => {
   ipcMain.handle('yt:album', data(yt.album))
   ipcMain.handle('yt:artist', data(yt.artist))
   ipcMain.handle('yt:search', data(yt.search))
+  ipcMain.handle('yt:lyrics', data(lyrics))
   ipcMain.handle('player:cmd', async (_, c) => {
     await command(c)
     setTimeout(pushState, 150)
@@ -169,7 +207,13 @@ app.whenReady().then(() => {
   ipcMain.handle('ui:copy', (_, text: string) => clipboard.writeText(text))
   ipcMain.handle('ui:log', (_, msg: string) => console.error('[ui]', msg))
   ipcMain.handle('ui:videoRect', (_, r: Electron.Rectangle | null) => placeVideo(main, r))
-  ipcMain.handle('ui:fullscreen', () => main?.setFullScreen(!main.isFullScreen()))
+  // A test run stays in its window: native full screen would take over the user's screen.
+  // Returns whether the window was already in full screen, so a caller only undoes its own change.
+  ipcMain.handle('ui:fullscreen', (_, on?: boolean) => {
+    const was = !!main?.isFullScreen()
+    if (!testProfile) main?.setFullScreen(on ?? !was)
+    return was
+  })
   ipcMain.handle('ui:bindings', (_, b: Record<Action, string[]>) => {
     keys = b
     rebuildMenu()

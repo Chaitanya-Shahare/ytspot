@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type { SearchFilter, SearchResult, Shelf } from '../../../shared/types'
-import { Close } from '../components/icons'
-import { CardTile, ErrorBox, GreenPlay, Loading, ShelfRow, TrackTable } from '../components/ui'
+import { Close, More } from '../components/icons'
+import { cardMenu } from '../components/menus'
+import { CardTile, ErrorBox, GreenPlay, Img, Loading, ShelfRow, TrackTable } from '../components/ui'
 import { sized, useApp, useCached } from '../lib'
 
 const FILTERS: [SearchFilter, string][] = [
@@ -40,7 +41,8 @@ export function SearchView({ q }: { q: string }) {
 }
 
 function Results({ query, filter }: { query: string; filter: SearchFilter }) {
-  const { playTrack, openCard, playCard } = useApp()
+  const ctx = useApp()
+  const { playTrack, openCard, playCard } = ctx
   const { data, error, retry } = useCached<SearchResult>(`search:${filter}:${query}`, () => window.ytm.search(query, filter))
   // Keep the previous results on screen (dimmed) while the next query loads, like Spotify.
   const last = useRef<SearchResult | undefined>(undefined)
@@ -59,7 +61,9 @@ function Results({ query, filter }: { query: string; filter: SearchFilter }) {
   const top = shown.top
   const cards = shown.shelves.flatMap((s) => s.cards)
   return (
-    <div className={data ? '' : 'stale'}>
+    <div className={data || error ? '' : 'stale'}>
+      {/* The new query failed: say so above the previous results rather than leave them dimmed. */}
+      {error && !data && <ErrorBox error={error} onRetry={retry} />}
       {filter === 'all' ? (
         <>
           <div className="search-top">
@@ -73,8 +77,17 @@ function Results({ query, filter }: { query: string; filter: SearchFilter }) {
                       ? playTrack({ videoId: top.id, title: top.title, artists: top.subtitle, duration: '', thumb: top.thumb })
                       : openCard(top)
                   }
+                  onContextMenu={(e) => (e.preventDefault(), cardMenu(top, ctx))}
                 >
-                  <img src={sized(top.thumb, 92)} className={top.kind === 'artist' ? 'round' : ''} />
+                  <button
+                    className="top-more"
+                    onClick={(e) => (e.stopPropagation(), cardMenu(top, ctx))}
+                    aria-label={`More options for ${top.title}`}
+                    title="More options"
+                  >
+                    <More size={24} />
+                  </button>
+                  <Img src={sized(top.thumb, 92)} artist={top.kind === 'artist'} />
                   <div className="top-title">{top.title}</div>
                   <div className="sub">{top.subtitle}</div>
                   <GreenPlay
@@ -107,10 +120,10 @@ function Results({ query, filter }: { query: string; filter: SearchFilter }) {
           ))}
         </div>
       )}
-      {!top && !shown.songs.length && !cards.length && (
+      {data && !top && !shown.songs.length && !cards.length && (
         <div className="empty-search">
-          <h2>No results found for “{query}”</h2>
-          <p className="sub">Check the spelling, or try fewer or different keywords.</p>
+          <h2>{filter === 'all' ? 'No results found' : `No ${FILTERS.find(([f]) => f === filter)?.[1].toLowerCase()} found`} for “{query}”</h2>
+          <p className="sub">Please make sure your words are spelled correctly, or use fewer or different keywords.</p>
         </div>
       )}
     </div>

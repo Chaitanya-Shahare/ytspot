@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { bindings, comboLabel, comboOf, conflicts, SHORTCUTS, type Action } from '../../../shared/shortcuts'
 import type { YtmSetting } from '../../../shared/types'
 import { Close, Plus } from '../components/icons'
-import { Loading } from '../components/ui'
+import { ErrorBox, Loading } from '../components/ui'
 import { useApp, useCached } from '../lib'
 
 export function SettingsView({ authed }: { authed: boolean }) {
@@ -68,7 +68,7 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
 // Everything in YouTube Music's own settings dialog, applied through it.
 function YtmSettings() {
   const { toast } = useApp()
-  const { data, set } = useCached<YtmSetting[] | null>('ytm-settings', () => window.ytm.ytmSettings())
+  const { data, error, set, retry } = useCached<YtmSetting[]>('ytm-settings', () => window.ytm.ytmSettings(), { revalidate: false })
   const change = async (s: YtmSetting, value: boolean | string | null) => {
     if (s.kind === 'action' && s.confirm && !confirm(s.confirm)) return
     if (data && value !== null) set(data.map((x) => (x === s ? { ...x, value } : x)))
@@ -79,16 +79,16 @@ function YtmSettings() {
       toast(s.kind === 'action' ? `${s.title}: done` : 'Saved')
       // YTM's settings data can lag a moment behind the change; re-read after a beat.
       await new Promise((r) => setTimeout(r, 1500))
-      const fresh = await window.ytm.ytmSettings()
-      if (fresh) set(fresh)
+      set(await window.ytm.ytmSettings())
     } catch {
+      if (data) set(data) // put the control back the way it was
       toast('YouTube Music didn’t accept that change')
     }
   }
   if (!data) return (
     <section className="set-section">
       <h2>YouTube Music</h2>
-      <Loading kind="rows" />
+      {error ? <ErrorBox error={error} onRetry={retry} /> : <Loading kind="rows" />}
     </section>
   )
   const tabs = [...new Set(data.map((s) => s.tab))]

@@ -157,12 +157,22 @@ codesign --force --deep -s - dist/mac-arm64/ytspot.app
 ditto dist/mac-arm64/ytspot.app /Applications/ytspot.app
 ```
 
+To try a build next to an installed copy without touching it, give it its own profile. `YTSPOT_MUTE=1` silences playback:
+
+```bash
+npm run build
+YTSPOT_PROFILE=/tmp/ytspot-test YTSPOT_MUTE=1 npx electron .
+```
+
+That profile has its own sign-in, never reads the installed app's keychain entry, leaves the media keys alone, and opens without taking focus.
+
 Project layout:
 
 | Path | What's there |
 |---|---|
 | `src/main/api.ts` | YouTube Music data via youtubei.js |
 | `src/main/player.ts` | Hidden player window, sign-in, playback commands |
+| `src/main/lyrics.ts` | Synced lyrics (LRCLIB) with YouTube Music's lyrics as fallback |
 | `src/main/menu.ts` | macOS menu bar |
 | `src/renderer/src/` | React UI: views, components, styles |
 | `src/shared/shortcuts.ts` | Default key bindings for both schemes |

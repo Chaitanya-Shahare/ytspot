@@ -8,7 +8,9 @@ import type {
   ArtistPage,
   Card,
   Collection,
+  HomeData,
   Kind,
+  More,
   LibraryFilter,
   SearchFilter,
   SearchResult,
@@ -22,6 +24,7 @@ let yt: Innertube | null = null
 
 export async function connect(cookie?: string): Promise<void> {
   yt = await Innertube.create({ cookie, retrieve_player: false })
+  homeFeed = null
 }
 
 export const ready = () => yt !== null
@@ -67,7 +70,8 @@ function toTrack(n: any): Track | null {
     album: n.album?.name,
     albumId: n.album?.id,
     duration: n.duration?.text ?? '',
-    thumb: thumb(n.thumbnail)
+    thumb: thumb(n.thumbnail),
+    plays: n.flex_columns?.map((c: any) => text(c.title)).find((t: string) => /\bplays?$/.test(t))
   }
 }
 
@@ -88,7 +92,8 @@ function toCard(n: any): Card | null {
   }
   if (n.type === 'MusicResponsiveListItem') {
     const kind = kindOf(n.item_type)
-    const id = n.id ?? findKey(n.endpoint, 'browseId')
+    // Library artists link to "MPLA" + channel id (YTM's library view of them); open the artist.
+    const id = (n.id ?? findKey(n.endpoint, 'browseId'))?.replace(/^MPLA(?=UC)/, '')
     if (!id) return null
     const people = n.artists ?? n.authors ?? []
     const song = kind === 'song' || kind === 'video'
@@ -111,20 +116,50 @@ const cards = (items: any[] = []): Card[] =>
 const tracks = (items: any[] = []): Track[] =>
   items.map(toTrack).filter((t): t is Track => !!t)
 
+function moreOf(s: any): More | undefined {
+  const p = (s.header?.more_content ?? s.header)?.endpoint?.payload ?? s.bottom_endpoint?.payload ?? s.endpoint?.payload
+  return p?.browseId ? { browseId: p.browseId, params: p.params } : undefined
+}
+
 function shelfOf(s: any): Shelf | null {
   if (s.type !== 'MusicCarouselShelf' && s.type !== 'MusicShelf') return null
   const title = text(s.header?.title ?? s.title)
   const c = cards(s.contents)
-  return c.length ? { title, cards: c } : null
+  return c.length ? { title, cards: c, more: moreOf(s) } : null
 }
 
-export async function home(): Promise<Shelf[]> {
-  const feed = await api().music.getHomeFeed()
+// A shelf's "Show all" page: everything in its grid.
+export async function browseMore(more: More): Promise<Card[]> {
+  const res: any = await api().actions.execute('/browse', { browseId: more.browseId, params: more.params, client: 'YTMUSIC', parse: true })
+  const items = (res.contents_memo?.get('Grid') ?? []).flatMap((g: any) => g.items ?? [])
+  const rows = (res.contents_memo?.get('MusicShelf') ?? []).flatMap((s: any) => s.contents ?? [])
+  return cards([...items, ...rows])
+}
+
+// The unfiltered feed, kept so a mood chip ("Relax", "Workout", …) can be applied to it.
+let homeFeed: YTMusic.HomeFeed | null = null
+
+export async function home(chip?: string): Promise<HomeData> {
+  const client = api()
+  // A feed that arrives after signing in or out belongs to the old session; don't keep it.
+  const current = () => {
+    if (yt !== client) throw new Error('YouTube Music session changed, try again')
+  }
+  if (!chip || !homeFeed) {
+    const fresh = await client.music.getHomeFeed()
+    current()
+    homeFeed = fresh
+  }
+  // The chip may not exist in this session's feed (e.g. after switching accounts): show All.
+  const feed = chip && homeFeed.filters.includes(chip) ? await homeFeed.applyFilter(chip) : homeFeed
+  current()
   // The second page is optional; YTM sometimes returns it empty, which youtubei.js throws on.
   const more = feed.has_continuation ? await feed.getContinuation().catch(() => null) : null
-  return [...(feed.sections ?? []), ...(more?.sections ?? [])]
-    .map(shelfOf)
-    .filter((s): s is Shelf => !!s)
+  return {
+    // Podcasts aren't playable here, so that chip is left out.
+    chips: homeFeed.filters.filter((f) => f !== 'Podcasts'),
+    shelves: [...(feed.sections ?? []), ...(more?.sections ?? [])].map(shelfOf).filter((s): s is Shelf => !!s)
+  }
 }
 
 export async function explore(): Promise<Shelf[]> {
@@ -174,13 +209,17 @@ export async function library(filter: LibraryFilter): Promise<Card[]> {
   return cards(items).filter((c) => c.kind !== 'other' && c.kind !== 'song')
 }
 
-function header(h: any): { title: string; subtitle: string; meta: string; thumb: string } {
+function header(h: any): { title: string; subtitle: string; meta: string; thumb: string; owner?: string; ownerId?: string } {
   if (h?.type === 'MusicEditablePlaylistDetailHeader') h = h.header
+  // The strapline is the album's artist (or the playlist's owner), linked to their channel.
+  const owner = text(h?.strapline_text_one).replace(/^N\/A$/, '')
   return {
     title: text(h?.title),
-    subtitle: [text(h?.strapline_text_one), text(h?.subtitle)].filter(Boolean).join(' • '),
+    subtitle: text(h?.subtitle),
     meta: text(h?.second_subtitle),
-    thumb: thumb(h?.thumbnail ?? h?.thumbnails)
+    thumb: thumb(h?.thumbnail ?? h?.thumbnails),
+    owner: owner || undefined,
+    ownerId: findKey(h?.strapline_text_one, 'browseId')
   }
 }
 
@@ -192,6 +231,7 @@ const pending = new Map<string, { pl: Playlist; tracks: Track[]; busy?: Promise<
 export async function playlist(id: string): Promise<Collection> {
   const pl = await api().music.getPlaylist(id)
   const first = tracks(pl.items as any[])
+  if (!pl.header && !first.length) throw new Error('Couldn’t find that playlist. It may have been deleted or made private.')
   pending.set(id, { pl, tracks: [...first] })
   return {
     kind: 'playlist',
@@ -208,10 +248,14 @@ export async function playlistMore(id: string, have: number): Promise<{ tracks: 
   if (!p) return { tracks: [], more: false }
   await p.busy
   if (p.tracks.length <= have && p.pl.has_continuation) {
-    p.busy = p.pl.getContinuation().then((next) => {
-      p.pl = next
-      p.tracks.push(...tracks(next.items as any[]))
-    })
+    // A failed page is retried by the next call instead of failing every call after it.
+    p.busy = p.pl
+      .getContinuation()
+      .then((next) => {
+        p.pl = next
+        p.tracks.push(...tracks(next.items as any[]))
+      })
+      .finally(() => (p.busy = undefined))
     await p.busy
   }
   const more = p.pl.has_continuation
@@ -240,7 +284,14 @@ export async function album(id: string): Promise<Collection> {
     id,
     ...h,
     playlistId: findKey(al.contents?.[0], 'playlistId') ?? findKey(al.header, 'playlistId'),
-    tracks: tracks(al.contents).map((t) => ({ ...t, album: t.album ?? h.title }))
+    // Album rows usually leave out the artist when it's the album's own.
+    tracks: tracks(al.contents).map((t) => ({
+      ...t,
+      album: t.album ?? h.title,
+      albumId: t.albumId ?? id,
+      artists: t.artists || h.owner || '',
+      artistId: t.artistId ?? h.ownerId
+    }))
   }
 }
 
@@ -252,7 +303,10 @@ export async function artist(id: string): Promise<ArtistPage> {
     id,
     title: text(h?.title),
     thumb: thumb(h?.thumbnail ?? h?.foreground_thumbnail),
+    description: text(h?.description).replace(/^N\/A$/, ''),
+    subscribed: !!h?.subscription_button?.subscribed,
     songs: tracks(songShelf?.contents),
+    songsMore: songShelf ? moreOf(songShelf) : undefined,
     shelves: ar.sections.map(shelfOf).filter((s): s is Shelf => !!s && s.title !== text(songShelf?.title))
   }
 }
@@ -291,4 +345,16 @@ function guessKind(browseId: string): Kind {
   if (browseId.startsWith('UC')) return 'artist'
   if (browseId.startsWith('VL')) return 'playlist'
   return 'other'
+}
+
+// YTM's own lyrics (Musixmatch/LyricFind): plain text, no timings.
+export async function ytmLyrics(videoId: string): Promise<{ text: string; source: string } | null> {
+  // youtubei.js throws when a song simply has no lyrics tab; only a request failure is an error.
+  const shelf: any = await api()
+    .music.getLyrics(videoId)
+    .catch((e: Error) => {
+      if (/fetch|network|timed? ?out|ENOTFOUND|ECONN/i.test(e.message)) throw e
+    })
+  const body = text(shelf?.description).trim()
+  return body ? { text: body, source: text(shelf?.footer).replace(/^Source:\s*/, '') } : null
 }

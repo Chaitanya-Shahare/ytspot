@@ -18,11 +18,19 @@ export interface Track {
   albumId?: string
   duration: string
   thumb: string
+  plays?: string // "2.7B plays", on an artist's top songs
+}
+
+// Where a shelf's "Show all" leads: a browse page (playlist, discography, …).
+export interface More {
+  browseId: string
+  params?: string
 }
 
 export interface Shelf {
   title: string
   cards: Card[]
+  more?: More
 }
 
 export interface Collection {
@@ -32,17 +40,35 @@ export interface Collection {
   subtitle: string
   meta: string
   thumb: string
+  owner?: string // album artist or playlist owner
+  ownerId?: string
   playlistId?: string
   tracks: Track[]
   more?: boolean
+  loaded?: number // songs fetched so far, counting ones since removed (the next page starts here)
 }
 
 export interface ArtistPage {
   id: string
   title: string
   thumb: string
+  description: string
+  subscribed: boolean
   songs: Track[]
+  songsMore?: More // the full top-songs list
   shelves: Shelf[]
+}
+
+export interface HomeData {
+  chips: string[]
+  shelves: Shelf[]
+}
+
+// Lyrics lines carry a start time (seconds) when synced.
+export interface Lyrics {
+  lines: { time?: number; text: string }[]
+  synced: boolean
+  source: string
 }
 
 export interface SearchResult {
@@ -59,6 +85,8 @@ export interface QueueItem {
   albumId?: string
   duration: string
   thumb: string
+  art?: string // Now Playing-size artwork: album art when there is any, else a video frame
+  square?: boolean // `art` is album art
   selected: boolean
 }
 
@@ -82,6 +110,7 @@ export interface PlayerState {
   videoMode: boolean
   queue: QueueItem[]
   autoplay: QueueItem[]
+  pending?: boolean // the song just changed and its details haven't arrived yet
 }
 
 export type PlayerCommand =
@@ -90,7 +119,7 @@ export type PlayerCommand =
   | { type: 'seek'; seconds: number }
   | { type: 'volume'; value: number }
   | { type: 'jump' | 'jumpAuto'; index: number }
-  | { type: 'queueAdd'; videoId: string; next: boolean }
+  | { type: 'queueAdd'; videoIds: string[]; next: boolean }
   | { type: 'queueRemove'; index: number }
   | { type: 'queueMove' | 'autoplayMove'; from: number; to: number }
   | { type: 'videoMode'; on: boolean }
