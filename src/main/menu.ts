@@ -38,7 +38,7 @@ export function buildMenu(
         submenu: [
           item('home'), item('explore'), item('search'), item('liked'), item('library'), sep,
           item('back', 'Back'), item('forward', 'Forward'), sep,
-          item('queue'), item('toggleLeft'), item('toggleRight'), sep,
+          item('queue'), item('lyrics'), item('toggleLeft'), item('toggleRight'), sep,
           { role: 'reload' }, { role: 'toggleDevTools' }, sep,
           { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, sep,
           item('fullscreen')

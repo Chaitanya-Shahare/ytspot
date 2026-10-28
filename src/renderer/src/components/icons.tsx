@@ -139,3 +139,12 @@ export const More = svg(
   </>
 )
 export const Close = svg(<path d="m3 3 10 10M13 3 3 13" />, true)
+export const Lyrics = svg(
+  <>
+    <circle cx="10.5" cy="5.5" r="3.5" />
+    <path d="m8 8-6 5.5L3 14.5l5.5-6M13 3 8 8" />
+  </>,
+  true
+)
+export const FullScreen = svg(<path d="M1.5 6V1.5H6M10 1.5h4.5V6M14.5 10v4.5H10M6 14.5H1.5V10" />, true)
+export const ExitFullScreen = svg(<path d="M6 1.5V6H1.5M14.5 6H10V1.5M10 14.5V10h4.5M1.5 10H6v4.5" />, true)

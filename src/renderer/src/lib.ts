@@ -12,6 +12,7 @@ export type Route =
   | { name: 'explore' }
   | { name: 'mood'; params: string; title: string }
   | { name: 'settings' }
+  | { name: 'lyrics' }
 
 export interface AppCtx {
   route: Route
@@ -43,12 +44,16 @@ export const useApp = () => useContext(Ctx)
 
 // The playback clock lives outside React state, so a tick re-renders only what shows the time.
 let clock = 0
+let clockAt = 0
 const clockSubs = new Set<() => void>()
 export const getClock = () => clock
 export function setClock(t: number): void {
   clock = t
+  clockAt = performance.now()
   clockSubs.forEach((f) => f())
 }
+// Main sends the time about once a second; synced lyrics need finer, so extrapolate while playing.
+export const liveClock = (playing: boolean) => (playing ? clock + Math.min(2, (performance.now() - clockAt) / 1000) : clock)
 const subscribeClock = (f: () => void) => (clockSubs.add(f), () => void clockSubs.delete(f))
 export const useTime = () => useSyncExternalStore(subscribeClock, getClock)
 
@@ -73,6 +78,7 @@ export function fmt(sec: number): string {
 // library) refresh quietly in the background; collections are kept for the session. Keys marked
 // `persist` are also saved to disk so the app opens with the last home feed/library already drawn.
 const cache = new Map<string, unknown>()
+localStorage.removeItem('cache:home') // pre-0.2 home feed, saved without its mood chips
 export const invalidate = (key: string) => cache.delete(key)
 // The user's playlists as last loaded by the library sidebar (for "Add to playlist").
 export const cachedPlaylists = (): Card[] =>

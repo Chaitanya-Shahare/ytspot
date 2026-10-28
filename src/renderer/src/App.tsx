@@ -1,15 +1,28 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Card, LibraryFilter, PlayerState, Track } from '../../shared/types'
 import * as I from './components/icons'
-import { Ctx, fmt, getClock, invalidate, loadPrefs, routeFor, savePrefs, setClock, sized, useApp, useCached, useTime, type AppCtx, type Prefs, type Route } from './lib'
+import { Ctx, fmt, getClock, invalidate, loadPrefs, routeFor, savePrefs, setClock, sized, useApp, useCached, useColor, useTime, type AppCtx, type Prefs, type Route } from './lib'
 import { bindings, comboLabel, comboOf, SHORTCUTS, type Action } from '../../shared/shortcuts'
 import { songMenu } from './components/menus'
 import { Boundary } from './components/ui'
 import { SettingsView } from './views/settings'
+import { LyricsView } from './views/lyrics'
 import { MoodView, SearchView } from './views/search'
 import { ArtistView, CollectionView, ExploreView, HomeView } from './views/views'
 
 const LIKED: Card = { kind: 'playlist', id: 'LM', title: 'Liked Songs', subtitle: 'Playlist', thumb: '' }
+
+// Sidebar widths the user dragged to (px); null keeps the right panel's default responsive width.
+interface Layout {
+  left: number
+  right: number | null
+}
+const loadLayout = (): Layout => ({ left: 280, right: null, ...JSON.parse(localStorage.getItem('layout') ?? '{}') })
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
+// Like Spotify, a sidebar can't squeeze the main view below this; the library collapses to its
+// icon rail when dragged narrower than COLLAPSE_AT.
+const MAIN_MIN = 400
+const COLLAPSE_AT = 200
 
 export default function App() {
   const [authed, setAuthed] = useState<boolean | null>(null)
@@ -23,6 +36,9 @@ export default function App() {
   const [left, setLeft] = useState(window.innerWidth > 1100)
   const [right, setRight] = useState(true)
   const [help, setHelp] = useState(false)
+  const [full, setFull] = useState(false)
+  const [layout, setLayout] = useState<Layout>(loadLayout)
+  useEffect(() => localStorage.setItem('layout', JSON.stringify(layout)), [layout])
   const [prefs, setPrefsState] = useState<Prefs>(loadPrefs)
   const setPrefs = useCallback(
     (p: Partial<Prefs>) =>
@@ -41,8 +57,13 @@ export default function App() {
   const searchRef = useRef<HTMLInputElement>(null)
   const route = history[pos]
 
+  // Collapse the library when the window gets narrow (and reopen it when it widens again), but only
+  // when crossing that width, so a resize doesn't undo the user's own toggle.
   useEffect(() => {
-    const fit = () => setLeft(window.innerWidth > 1100)
+    let wide = window.innerWidth > 1100
+    const fit = () => {
+      if (wide !== window.innerWidth > 1100) setLeft((wide = !wide))
+    }
     window.addEventListener('resize', fit)
     return () => window.removeEventListener('resize', fit)
   }, [])
@@ -97,6 +118,11 @@ export default function App() {
     setTimeout(() => document.getElementById('np-queue')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
   }, [])
 
+  const toggleLyrics = useCallback(
+    () => (route.name === 'lyrics' && pos > 0 ? back() : route.name !== 'lyrics' && go({ name: 'lyrics' })),
+    [route.name, pos, back, go]
+  )
+
   const playTrack = useCallback((t: Track, playlistId?: string) => {
     window.ytm.cmd({ type: 'play', videoId: t.videoId, playlistId })
   }, [])
@@ -140,7 +166,8 @@ export default function App() {
         case 'explore': return go({ name: 'explore' })
         case 'library': return setLeft(true)
         case 'settings': return go({ name: 'settings' })
-        case 'fullscreen': return void window.ytm.fullscreen()
+        case 'fullscreen': return setFull((v) => !v)
+        case 'lyrics': return toggleLyrics()
         case 'volUp': return void cmd({ type: 'volume', value: Math.min(100, vol + 10) })
         case 'volDown': return void cmd({ type: 'volume', value: Math.max(0, vol - 10) })
         case 'shuffle': return shuffle()
@@ -157,7 +184,7 @@ export default function App() {
         case 'help': return setHelp((v) => !v)
       }
     },
-    [player, go, back, forward, like, shuffle, openQueue, toast]
+    [player, go, back, forward, like, shuffle, openQueue, toast, toggleLyrics]
   )
 
   // Keyboard: Esc closes overlays/leaves the search box; otherwise match combos and sequences
@@ -172,6 +199,7 @@ export default function App() {
       const typing = !!el?.matches('input, textarea, select')
       if (e.key === 'Escape') {
         if (help) return setHelp(false)
+        if (full) return setFull(false)
         if (typing) return el?.blur()
       }
       const combo = comboOf(e)
@@ -194,7 +222,7 @@ export default function App() {
     window.addEventListener('keydown', onKey)
     const offMenu = window.ytm.onMenu(run)
     return () => (window.removeEventListener('keydown', onKey), offMenu(), clearTimeout(timer))
-  }, [run, keys, help])
+  }, [run, keys, help, full])
 
   const ctx: AppCtx = useMemo(
     () => ({ route, go, player, playTrack, openCard, playCard, toast, prefs, setPrefs, openQueue }),
@@ -203,9 +231,23 @@ export default function App() {
 
   if (authed === null) return <div className="splash" />
 
+  const rightShown = right && !!player?.videoId
+  const maxSide = (other: number) => Math.max(280, window.innerWidth - other - MAIN_MIN - 32)
+  const rightPx = () => document.querySelector('.now-playing')?.getBoundingClientRect().width ?? 0
+  const leftPx = () => document.querySelector('.library')?.getBoundingClientRect().width ?? 0
+  const resizeLeft = (w: number) => {
+    setLeft(w >= COLLAPSE_AT)
+    if (w >= COLLAPSE_AT) setLayout((l) => ({ ...l, left: clamp(w, 280, maxSide(rightPx())) }))
+  }
+  const resizeRight = (w: number) => setLayout((l) => ({ ...l, right: clamp(w, 280, maxSide(leftPx())) }))
+  const vars = {
+    ...(left ? { '--left-w': `${layout.left}px` } : {}),
+    ...(layout.right ? { '--right-w': `${layout.right}px` } : {})
+  } as React.CSSProperties
+
   return (
     <Ctx.Provider value={ctx}>
-      <div className={`app ${left ? '' : 'left-collapsed'} ${right && player?.videoId ? '' : 'right-hidden'}`}>
+      <div className={`app ${left ? '' : 'left-collapsed'} ${rightShown ? '' : 'right-hidden'}`} style={vars}>
         <TopBar
           authed={authed}
           onHelp={() => setHelp(true)}
@@ -216,6 +258,7 @@ export default function App() {
           onFwd={forward}
         />
         <LibraryPanel authed={authed} collapsed={!left} onToggle={() => setLeft((v) => !v)} />
+        <Resizer side="left" width={leftPx} onResize={resizeLeft} label="Resize Your Library" />
         <main className="main-view" key={JSON.stringify(route)}>
           <div className="main-scroll">
             <Boundary resetKey={JSON.stringify(route)}>
@@ -227,16 +270,32 @@ export default function App() {
             {route.name === 'explore' && <ExploreView />}
             {route.name === 'mood' && <MoodView params={route.params} title={route.title} />}
             {route.name === 'settings' && <SettingsView authed={authed} />}
+            {route.name === 'lyrics' && <LyricsView />}
             </Boundary>
           </div>
         </main>
-        {right && player?.videoId && (
-          <Boundary resetKey={player.videoId}>
-            <NowPlayingPanel onClose={() => setRight(false)} onLike={like} covered={help} />
-          </Boundary>
+        {rightShown && (
+          <>
+            <Resizer side="right" width={rightPx} onResize={resizeRight} label="Resize Now Playing view" />
+            <Boundary resetKey={player?.videoId}>
+              <NowPlayingPanel onClose={() => setRight(false)} onLike={like} covered={help || full} />
+            </Boundary>
+          </>
         )}
-        <PlayerBar rightOpen={right} onToggleRight={() => setRight((v) => !v)} onLike={like} onShuffle={shuffle} />
+        <PlayerBar
+          rightOpen={rightShown}
+          onToggleRight={() => setRight((v) => !v)}
+          onLike={like}
+          onShuffle={shuffle}
+          onLyrics={toggleLyrics}
+          onFull={() => setFull(true)}
+        />
       </div>
+      {full && player?.videoId && (
+        <Boundary resetKey={player.videoId}>
+          <FullScreenView onClose={() => setFull(false)} onLike={like} onShuffle={shuffle} covered={help} />
+        </Boundary>
+      )}
       {help && <ShortcutsModal keys={keys} onClose={() => setHelp(false)} />}
       {toastMsg && <div className="toast">{toastMsg}</div>}
     </Ctx.Provider>
@@ -545,7 +604,7 @@ function VideoSlot({ poster }: { poster: string }) {
   const [shown, setShown] = useState(false)
   useEffect(() => {
     const el = ref.current!
-    const scroller = el.closest('.np-scroll')!
+    const scroller = el.closest('.np-scroll, .fs')!
     let last = ''
     const report = () => {
       const r = el.getBoundingClientRect()
@@ -607,11 +666,145 @@ function Slider({ value, max, onChange, className = '' }: { value: number; max: 
   )
 }
 
-function PlayerBar(props: { rightOpen: boolean; onToggleRight: () => void; onLike: () => void; onShuffle: () => void }) {
-  const { rightOpen, onToggleRight } = props
-  const { player: p, openQueue } = useApp()
-  const time = useTime()
+// Shuffle / previous / play / next / repeat, shared by the player bar and the full-screen view.
+function Controls({ onShuffle, big }: { onShuffle: () => void; big?: boolean }) {
+  const { player: p } = useApp()
   const cmd = window.ytm.cmd
+  return (
+    <div className={`pb-controls ${big ? 'big' : ''}`}>
+      <button className="icon-btn" onClick={onShuffle} aria-label="Shuffle">
+        <I.Shuffle size={big ? 24 : 16} />
+      </button>
+      <button className="icon-btn" onClick={() => cmd({ type: 'prev' })} aria-label="Previous">
+        <I.Prev size={big ? 24 : 16} />
+      </button>
+      <button className="play-btn" onClick={() => cmd({ type: 'toggle' })} aria-label={p?.playing ? 'Pause' : 'Play'}>
+        {p?.playing ? <I.Pause size={big ? 24 : 16} /> : <I.Play size={big ? 24 : 16} />}
+      </button>
+      <button className="icon-btn" onClick={() => cmd({ type: 'next' })} aria-label="Next">
+        <I.Next size={big ? 24 : 16} />
+      </button>
+      <button
+        className={`icon-btn repeat ${p && p.repeat !== 'NONE' ? 'green dot' : ''}`}
+        onClick={() => cmd({ type: 'repeat' })}
+        aria-label="Repeat"
+      >
+        <I.Repeat size={big ? 24 : 16} />
+        {p?.repeat === 'ONE' && <span className="one">1</span>}
+      </button>
+    </div>
+  )
+}
+
+function Progress() {
+  const { player: p } = useApp()
+  const time = useTime()
+  return (
+    <div className="pb-progress">
+      <span className="time">{fmt(time)}</span>
+      <Slider value={time} max={p?.duration ?? 0} onChange={(s) => window.ytm.cmd({ type: 'seek', seconds: s })} />
+      <span className="time">{fmt(p?.duration ?? 0)}</span>
+    </div>
+  )
+}
+
+function VolumeControl() {
+  const { player: p } = useApp()
+  return (
+    <>
+      <button className="icon-btn" onClick={() => window.ytm.cmd({ type: 'mute' })} aria-label="Mute">
+        {p?.muted || p?.volume === 0 ? <I.VolumeMute /> : <I.Volume />}
+      </button>
+      <Slider
+        className="volume"
+        value={p?.muted ? 0 : (p?.volume ?? 0)}
+        max={100}
+        onChange={(v) => window.ytm.cmd({ type: 'volume', value: v })}
+      />
+    </>
+  )
+}
+
+// Drag handle in the gap beside a sidebar (Spotify's LayoutResizer): invisible until hovered.
+function Resizer({ side, width, onResize, label }: { side: 'left' | 'right'; width: () => number; onResize: (w: number) => void; label: string }) {
+  const [drag, setDrag] = useState<{ x: number; w: number } | null>(null)
+  return (
+    <div
+      className={`resizer ${side} ${drag ? 'resizing' : ''}`}
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={label}
+      onPointerDown={(e) => {
+        e.currentTarget.setPointerCapture(e.pointerId)
+        setDrag({ x: e.clientX, w: width() })
+      }}
+      onPointerMove={(e) => drag && onResize(drag.w + (side === 'left' ? 1 : -1) * (e.clientX - drag.x))}
+      onPointerUp={() => setDrag(null)}
+      onLostPointerCapture={() => setDrag(null)}
+    />
+  )
+}
+
+// Spotify's full-screen player: blurred artwork behind, big cover and title bottom-left, controls
+// along the bottom. Puts the window itself into full screen while open.
+function FullScreenView({ onClose, onLike, onShuffle, covered }: { onClose: () => void; onLike: () => void; onShuffle: () => void; covered: boolean }) {
+  const { player: p, prefs, route } = useApp()
+  const tint = useColor(p?.thumb)
+  useEffect(() => {
+    window.ytm.fullscreen(true)
+    // Leaving full screen from the window's own controls closes this view too.
+    const off = window.ytm.onFullscreen((on) => !on && onClose())
+    return () => {
+      off()
+      window.ytm.fullscreen(false)
+    }
+  }, [onClose])
+  if (!p) return null
+  return (
+    <div className="fs" style={{ '--tint': tint } as React.CSSProperties}>
+      <div className="fs-bg" style={{ backgroundImage: `url(${p.thumb})` }} />
+      <div className="fs-top">
+        <span>Playing from</span>
+        <b>{p.album || (route.name === 'lyrics' ? 'Lyrics' : 'YouTube Music')}</b>
+      </div>
+      <div className="fs-now">
+        {prefs.videoMode && p.isVideo && !covered ? <VideoSlot poster={p.thumb} /> : <img className="fs-art" src={p.thumb} />}
+        <div className="fs-text">
+          <div className="fs-title">{p.title}</div>
+          <div className="fs-artist">{p.artist}</div>
+        </div>
+      </div>
+      <div className="fs-bottom">
+        <Progress />
+        <div className="fs-row">
+          <div className="fs-side">
+            <button className={`icon-btn ${p.liked ? 'green' : ''}`} onClick={onLike} aria-label="Like">
+              {p.liked ? <I.CheckCircle size={24} /> : <I.PlusCircle size={24} />}
+            </button>
+          </div>
+          <Controls onShuffle={onShuffle} big />
+          <div className="fs-side right">
+            <VolumeControl />
+            <button className="icon-btn" onClick={onClose} aria-label="Exit full screen" title="Exit full screen">
+              <I.ExitFullScreen size={24} />
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function PlayerBar(props: {
+  rightOpen: boolean
+  onToggleRight: () => void
+  onLike: () => void
+  onShuffle: () => void
+  onLyrics: () => void
+  onFull: () => void
+}) {
+  const { rightOpen, onToggleRight } = props
+  const { player: p, openQueue, route } = useApp()
   return (
     <footer className="player-bar">
       <div className="pb-left">
@@ -629,55 +822,28 @@ function PlayerBar(props: { rightOpen: boolean; onToggleRight: () => void; onLik
         )}
       </div>
       <div className="pb-center">
-        <div className="pb-controls">
-          <button className="icon-btn" onClick={props.onShuffle} aria-label="Shuffle">
-            <I.Shuffle />
-          </button>
-          <button className="icon-btn" onClick={() => cmd({ type: 'prev' })} aria-label="Previous">
-            <I.Prev />
-          </button>
-          <button className="play-btn" onClick={() => cmd({ type: 'toggle' })} aria-label="Play">
-            {p?.playing ? <I.Pause /> : <I.Play />}
-          </button>
-          <button className="icon-btn" onClick={() => cmd({ type: 'next' })} aria-label="Next">
-            <I.Next />
-          </button>
-          <button
-            className={`icon-btn repeat ${p && p.repeat !== 'NONE' ? 'green dot' : ''}`}
-            onClick={() => cmd({ type: 'repeat' })}
-            aria-label="Repeat"
-          >
-            <I.Repeat />
-            {p?.repeat === 'ONE' && <span className="one">1</span>}
-          </button>
-        </div>
-        <div className="pb-progress">
-          <span className="time">{fmt(time)}</span>
-          <Slider value={time} max={p?.duration ?? 0} onChange={(s) => cmd({ type: 'seek', seconds: s })} />
-          <span className="time">{fmt(p?.duration ?? 0)}</span>
-        </div>
+        <Controls onShuffle={props.onShuffle} />
+        <Progress />
       </div>
       <div className="pb-right">
-        <button className={`icon-btn ${rightOpen ? 'green dot' : ''}`} onClick={onToggleRight} aria-label="Now playing view">
+        <button className={`icon-btn ${rightOpen ? 'green dot' : ''}`} onClick={onToggleRight} aria-label="Now playing view" title="Now playing view">
           <I.NowPlaying />
         </button>
         <button
-          className="icon-btn"
-          onClick={openQueue}
-          title="Queue"
-          aria-label="Queue"
+          className={`icon-btn ${route.name === 'lyrics' ? 'green dot' : ''}`}
+          onClick={props.onLyrics}
+          aria-label="Lyrics"
+          title="Lyrics"
         >
+          <I.Lyrics />
+        </button>
+        <button className="icon-btn" onClick={openQueue} title="Queue" aria-label="Queue">
           <I.Queue />
         </button>
-        <button className="icon-btn" onClick={() => cmd({ type: 'mute' })} aria-label="Mute">
-          {p?.muted || p?.volume === 0 ? <I.VolumeMute /> : <I.Volume />}
+        <VolumeControl />
+        <button className="icon-btn" onClick={props.onFull} aria-label="Full screen" title="Full screen" disabled={!p?.videoId}>
+          <I.FullScreen />
         </button>
-        <Slider
-          className="volume"
-          value={p?.muted ? 0 : (p?.volume ?? 0)}
-          max={100}
-          onChange={(v) => cmd({ type: 'volume', value: v })}
-        />
       </div>
     </footer>
   )

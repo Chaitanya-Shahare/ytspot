@@ -3,12 +3,21 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as yt from './api'
+import { lyrics } from './lyrics'
 import { buildMenu } from './menu'
 import { command, createPlayerWindow, placeVideo, rateVideo, getState, onLoggedIn, setVideoMode, applyYtmSetting, showLogin, signOut, ytmSession, ytmSettings } from './player'
 import { bindings, DEFAULT_PREFS, type Action } from '../shared/shortcuts'
 import type { PlayerState } from '../shared/types'
 
 const dir = fileURLToPath(new URL('.', import.meta.url))
+// Test runs (YTSPOT_PROFILE=<dir>) get their own profile so they never share data, the keychain
+// entry or the media keys with an installed copy; YTSPOT_MUTE=1 silences the player.
+const testProfile = process.env.YTSPOT_PROFILE
+if (testProfile) {
+  app.setPath('userData', testProfile)
+  app.commandLine.appendSwitch('use-mock-keychain')
+  app.commandLine.appendSwitch('disable-features', 'HardwareMediaKeyHandling,MediaSessionService')
+}
 const boundsFile = join(app.getPath('userData'), 'window.json')
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 
@@ -43,6 +52,8 @@ function createMain(): BrowserWindow {
     minWidth: 900,
     minHeight: 600,
     backgroundColor: '#000000',
+    // A test run opens behind whatever the user is doing instead of taking focus.
+    show: !testProfile,
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 16, y: 20 },
     webPreferences: { preload: join(dir, '../preload/index.mjs'), sandbox: false, spellcheck: false }
@@ -57,6 +68,9 @@ function createMain(): BrowserWindow {
     if (!quitting && !keepPlaying) app.quit()
   })
   win.on('closed', () => (main = null))
+  if (testProfile) win.once('ready-to-show', () => win.showInactive())
+  win.on('enter-full-screen', () => win.webContents.send('fullscreen', true))
+  win.on('leave-full-screen', () => win.webContents.send('fullscreen', false))
   // A reloading UI can't report that the video slot went away; put the video back out of sight.
   win.webContents.on('did-start-loading', () => placeVideo(null, null))
   sent = null
@@ -159,6 +173,7 @@ app.whenReady().then(() => {
   ipcMain.handle('yt:album', data(yt.album))
   ipcMain.handle('yt:artist', data(yt.artist))
   ipcMain.handle('yt:search', data(yt.search))
+  ipcMain.handle('yt:lyrics', data(lyrics))
   ipcMain.handle('player:cmd', async (_, c) => {
     await command(c)
     setTimeout(pushState, 150)
@@ -169,7 +184,8 @@ app.whenReady().then(() => {
   ipcMain.handle('ui:copy', (_, text: string) => clipboard.writeText(text))
   ipcMain.handle('ui:log', (_, msg: string) => console.error('[ui]', msg))
   ipcMain.handle('ui:videoRect', (_, r: Electron.Rectangle | null) => placeVideo(main, r))
-  ipcMain.handle('ui:fullscreen', () => main?.setFullScreen(!main.isFullScreen()))
+  // A test run stays in its window: native full screen would take over the user's screen.
+  ipcMain.handle('ui:fullscreen', (_, on?: boolean) => !testProfile && main?.setFullScreen(on ?? !main.isFullScreen()))
   ipcMain.handle('ui:bindings', (_, b: Record<Action, string[]>) => {
     keys = b
     rebuildMenu()

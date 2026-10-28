@@ -2,7 +2,7 @@ import type { Card, Shelf, Track } from '../../../shared/types'
 import { Component, memo, useCallback, useRef, type ReactNode } from 'react'
 import { sized, useApp, type AppCtx } from '../lib'
 import { Clock, More, Pause, Play } from './icons'
-import { songMenu } from './menus'
+import { cardMenu, songMenu } from './menus'
 
 export function GreenPlay({ size = 48, playing, onClick }: { size?: number; playing?: boolean; onClick: () => void }) {
   return (
@@ -21,9 +21,10 @@ export function GreenPlay({ size = 48, playing, onClick }: { size?: number; play
 }
 
 export function CardTile({ card }: { card: Card }) {
-  const { openCard, playCard } = useApp()
+  const ctx = useApp()
+  const { openCard, playCard } = ctx
   return (
-    <div className="card" onClick={() => openCard(card)}>
+    <div className="card" onClick={() => openCard(card)} onContextMenu={(e) => (e.preventDefault(), cardMenu(card, ctx))}>
       <div className="card-img">
         <img src={sized(card.thumb, 180)} className={card.kind === 'artist' ? 'round' : ''} loading="lazy" />
         <GreenPlay onClick={() => playCard(card)} />

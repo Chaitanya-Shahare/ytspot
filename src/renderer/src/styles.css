@@ -128,11 +128,12 @@ img { display: block; object-fit: cover; background: #282828; }
 .liked-art { display: grid; place-items: center; background: linear-gradient(135deg, #450af5, #c4efd9); }
 .lib-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .t1 { font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.t2 { font-size: 14px; color: var(--text-subdued); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 6px; }
+.t2 { font-size: 14px; color: var(--text-subdued); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lib-text .t2 { display: flex; align-items: center; gap: 6px; }
 .pin { flex: none; }
 
 /* ---------- main view ---------- */
-.main-view { grid-area: main; position: relative; }
+.main-view { grid-area: main; position: relative; container: main / inline-size; }
 .main-scroll { height: 100%; overflow-y: auto; overflow-x: hidden; }
 .page { --tint: rgb(83, 83, 83); min-height: 100%; padding: 0 24px 32px; background: linear-gradient(var(--tint) 0, var(--background-base) 332px) no-repeat, var(--background-base); }
 .page.home { background: linear-gradient(rgba(70, 70, 90, .6) 0, var(--background-base) 240px), var(--background-base); padding-top: 16px; }
@@ -150,7 +151,9 @@ img { display: block; object-fit: cover; background: #282828; }
 .card-img img { width: 100%; aspect-ratio: 1; border-radius: var(--radius-larger); box-shadow: 0 8px 24px #00000080; }
 .card-img .green-play { position: absolute; right: 8px; bottom: 8px; opacity: 0; transform: translateY(8px); transition: all .3s; box-shadow: 0 8px 8px #0000004d; }
 .card:hover .green-play { opacity: 1; transform: none; }
-.card-title { font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px; }
+.card-title { font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px; line-height: 1.25; height: 1.25em; }
+/* Fixed height: a title in another script or with emoji falls back to a font with taller metrics,
+   which otherwise pushes that card's text below its neighbours'. */
 .card-sub { font-size: 14px; color: var(--text-subdued); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.4; }
 .green-play {
   border-radius: 50%; background: var(--green); color: #000; display: grid; place-items: center; flex: none;
@@ -214,7 +217,9 @@ img { display: block; object-fit: cover; background: #282828; }
 .np-title-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 16px 0; }
 .np-title { font-size: 24px; font-weight: 700; letter-spacing: -.01em; }
 .np-card { background: var(--background-elevated-base); border-radius: var(--radius-larger-2); padding: 16px; }
-.np-card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; font-size: 16px; }
+.np-card-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; font-size: 16px; }
+.np-card-head b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.np-card-head .sub { flex: none; font-size: 14px; }
 .np-next { display: flex; gap: 12px; align-items: center; padding: 8px; margin: 0 -8px; border-radius: var(--radius-base); cursor: pointer; }
 .np-next:hover { background: var(--background-tinted-base); }
 .np-next img { width: 48px; height: 48px; border-radius: var(--radius-base); flex: none; }
@@ -350,3 +355,74 @@ kbd { font-family: inherit; font-size: 12px; background: var(--background-tinted
 .mood-title { font-size: clamp(2rem, 5vw, 5rem); font-weight: 900; letter-spacing: -.04em; padding: 48px 0 16px; }
 .search .track-row.head { top: 56px; }
 .set-section .skeleton, .browse .skeleton { background: none; padding: 0; min-height: 0; }
+
+/* ---------- search: plain background (as in Spotify) so the sticky filter pills don't cut a band
+   out of a gradient; the pill bar spans the full width so results never show beside it ---------- */
+.page.search { background: var(--background-base); }
+.search-chips { margin: 0 -24px; padding: 8px 36px; }
+.search-top { padding: 0 12px; margin-top: 8px; }
+.card-grid { margin-top: 8px; }
+.top-more { position: absolute; top: 16px; right: 16px; color: var(--text-subdued); opacity: 0; display: grid; place-items: center; transition: opacity .2s; }
+.top-more:hover { color: var(--text-base); }
+.top-card:hover .top-more, .top-more:focus-visible { opacity: 1; }
+.top-title { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.15; padding-right: 24px; }
+.top-card .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 64px; }
+
+/* ---------- home mood pills ---------- */
+.home-chips { padding: 0 12px 8px; overflow-x: auto; scrollbar-width: none; }
+.home-chips::-webkit-scrollbar { display: none; }
+
+/* ---------- sidebar resizers (Spotify LayoutResizer) ---------- */
+.resizer { width: var(--gap); z-index: 3; cursor: col-resize; display: flex; justify-content: center; align-items: center; opacity: 0; transition: opacity .15s ease-out; touch-action: none; }
+.resizer.left { grid-area: left; justify-self: end; margin-right: calc(-1 * var(--gap)); }
+.resizer.right { grid-area: right; justify-self: start; margin-left: calc(-1 * var(--gap)); }
+.resizer::after { content: ''; width: 1px; height: calc(100% - 16px); border-radius: 1px; background: var(--essential-subdued); }
+.resizer:hover, .resizer.resizing { opacity: 1; }
+.resizer.resizing::after { background: var(--text-base); }
+
+/* ---------- lyrics (sizes and colours from Spotify's lyrics view) ---------- */
+.lyrics-page { --lyrics-bg: #535353; background: var(--lyrics-bg); transition: background-color .25s ease-out; container-type: inline-size; padding: 0; }
+.lyrics-wrap { display: flex; flex-direction: column; align-items: center; padding: 64px 0 96px; }
+.lyrics { width: min(100% - 128px, 1024px); font-size: 1.5rem; font-weight: 700; letter-spacing: -.01em; line-height: 1.3; text-wrap: balance; user-select: text; }
+@container (width > 800px) { .lyrics { font-size: 2rem; } }
+@container (width > 1600px) { .lyrics { font-size: 2.5rem; } }
+.lyric { color: #fff; margin-bottom: .6em; }
+.lyrics.synced .lyric { color: #000; cursor: pointer; transition: color .1s ease-out; }
+.lyrics.synced .lyric.passed { color: #ffffffb3; }
+.lyrics.synced .lyric.active { color: #fff; }
+.lyrics.synced .lyric:hover { color: #fff; text-decoration: underline; }
+.lyrics-unsynced { width: min(100% - 128px, 1024px); color: #000; font-size: 14px; font-weight: 700; margin-bottom: 24px; }
+.lyrics-source { width: min(100% - 128px, 1024px); color: #000; font-size: 14px; font-weight: 700; margin-top: 32px; opacity: .7; }
+.lyrics-note { padding: 96px 64px; font-size: 24px; font-weight: 700; text-align: center; }
+
+/* ---------- full-screen player ---------- */
+.fs { position: fixed; inset: 0; z-index: 30; background: var(--tint); display: flex; flex-direction: column; justify-content: space-between; padding: 40px 48px 32px; overflow: hidden; }
+.fs-bg { position: absolute; inset: -80px; background: center / cover no-repeat; filter: blur(80px) brightness(.55) saturate(1.3); }
+.fs::before { content: ''; position: absolute; inset: 0; z-index: 1; background: linear-gradient(transparent 40%, #000000b3); }
+.fs > :not(.fs-bg) { position: relative; z-index: 2; }
+.fs-top { display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+.fs-top span { text-transform: uppercase; letter-spacing: .1em; font-size: 12px; font-weight: 700; color: #ffffffb3; }
+.fs-now { display: flex; align-items: flex-end; gap: 32px; margin-top: auto; margin-bottom: 32px; min-width: 0; }
+.fs-art, .fs .np-video-slot { width: clamp(160px, 26vh, 320px); height: clamp(160px, 26vh, 320px); border-radius: var(--radius-larger-2); box-shadow: 0 8px 48px #00000080; flex: none; }
+.fs .np-video-slot { width: clamp(284px, 46vh, 568px); height: auto; }
+.fs-text { min-width: 0; padding-bottom: 8px; }
+.fs-title { font-size: clamp(2rem, 6vh, 4.5rem); font-weight: 900; letter-spacing: -.04em; line-height: 1.05; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.fs-artist { font-size: clamp(1rem, 2.4vh, 1.5rem); color: #ffffffb3; margin-top: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fs-bottom { display: flex; flex-direction: column; gap: 16px; }
+.fs-bottom .time { color: #ffffffb3; }
+.fs-row { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; }
+.fs-side { display: flex; align-items: center; gap: 16px; }
+.fs-side.right { justify-content: flex-end; }
+.fs .icon-btn { color: #ffffffb3; }
+.fs .icon-btn:hover { color: #fff; }
+.fs .icon-btn.green { color: var(--green); }
+.pb-controls.big { gap: 24px; }
+.pb-controls.big .icon-btn { width: 40px; height: 40px; }
+.pb-controls.big .play-btn { width: 56px; height: 56px; }
+.icon-btn:disabled { opacity: .4; cursor: default; transform: none; }
+
+/* A narrow main view (sidebars open on a small window) stacks the top result above the songs,
+   as Spotify does, instead of squeezing song titles to a few letters. */
+@container main (width < 760px) {
+  .search-top { grid-template-columns: minmax(0, 1fr); }
+}

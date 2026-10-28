@@ -5,7 +5,7 @@ export type Action =
   | 'toggle' | 'next' | 'prev' | 'seekFwd' | 'seekBack' | 'seekFwdSmall' | 'seekBackSmall'
   | 'shuffle' | 'repeat' | 'volUp' | 'volDown' | 'mute' | 'like' | 'dislike'
   | 'search' | 'home' | 'explore' | 'library' | 'settings' | 'back' | 'forward' | 'liked'
-  | 'queue' | 'toggleLeft' | 'toggleRight' | 'fullscreen' | 'help'
+  | 'queue' | 'lyrics' | 'toggleLeft' | 'toggleRight' | 'fullscreen' | 'help'
 
 export interface ShortcutDef {
   action: Action
@@ -39,9 +39,10 @@ export const SHORTCUTS: ShortcutDef[] = [
   { section: 'Navigation', action: 'back', label: 'Back in history', spotify: ['Cmd+['], ytm: [] },
   { section: 'Navigation', action: 'forward', label: 'Forward in history', spotify: ['Cmd+]'], ytm: [] },
   { section: 'Layout', action: 'queue', label: 'Queue', spotify: ['Alt+Shift+Q'], ytm: ['Q'] },
+  { section: 'Layout', action: 'lyrics', label: 'Lyrics', spotify: [], ytm: [] },
   { section: 'Layout', action: 'toggleLeft', label: 'Toggle left sidebar', spotify: ['Alt+Shift+L'], ytm: [] },
   { section: 'Layout', action: 'toggleRight', label: 'Toggle right sidebar', spotify: ['Alt+Shift+R'], ytm: [] },
-  { section: 'Layout', action: 'fullscreen', label: 'Toggle full screen', spotify: [], ytm: ['F'] },
+  { section: 'Layout', action: 'fullscreen', label: 'Full screen', spotify: [], ytm: ['F'] },
   { section: 'Basic', action: 'help', label: 'Keyboard shortcuts', spotify: ['Cmd+/'], ytm: ['?'] }
 ]
 

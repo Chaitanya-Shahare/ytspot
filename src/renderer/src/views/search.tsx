@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { SearchFilter, SearchResult, Shelf } from '../../../shared/types'
-import { Close } from '../components/icons'
+import { Close, More } from '../components/icons'
+import { cardMenu } from '../components/menus'
 import { CardTile, ErrorBox, GreenPlay, Loading, ShelfRow, TrackTable } from '../components/ui'
 import { sized, useApp, useCached } from '../lib'
 
@@ -40,7 +41,8 @@ export function SearchView({ q }: { q: string }) {
 }
 
 function Results({ query, filter }: { query: string; filter: SearchFilter }) {
-  const { playTrack, openCard, playCard } = useApp()
+  const ctx = useApp()
+  const { playTrack, openCard, playCard } = ctx
   const { data, error, retry } = useCached<SearchResult>(`search:${filter}:${query}`, () => window.ytm.search(query, filter))
   // Keep the previous results on screen (dimmed) while the next query loads, like Spotify.
   const last = useRef<SearchResult | undefined>(undefined)
@@ -73,7 +75,16 @@ function Results({ query, filter }: { query: string; filter: SearchFilter }) {
                       ? playTrack({ videoId: top.id, title: top.title, artists: top.subtitle, duration: '', thumb: top.thumb })
                       : openCard(top)
                   }
+                  onContextMenu={(e) => (e.preventDefault(), cardMenu(top, ctx))}
                 >
+                  <button
+                    className="top-more"
+                    onClick={(e) => (e.stopPropagation(), cardMenu(top, ctx))}
+                    aria-label={`More options for ${top.title}`}
+                    title="More options"
+                  >
+                    <More size={24} />
+                  </button>
                   <img src={sized(top.thumb, 92)} className={top.kind === 'artist' ? 'round' : ''} />
                   <div className="top-title">{top.title}</div>
                   <div className="sub">{top.subtitle}</div>

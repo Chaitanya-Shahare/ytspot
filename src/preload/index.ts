@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { Action } from '../shared/shortcuts'
-import type { PlayerCommand, PlayerState, LibraryFilter, SearchFilter, YtmSetting } from '../shared/types'
+import type { HomeData, LibraryFilter, Lyrics, PlayerCommand, PlayerState, SearchFilter, YtmSetting } from '../shared/types'
+import type { LyricsQuery } from '../main/lyrics'
 
 export interface PopupItem {
   id: string
@@ -14,7 +15,7 @@ const bridge = {
   login: () => ipcRenderer.invoke('auth:login'),
   logout: () => ipcRenderer.invoke('auth:logout'),
   account: (): Promise<{ name: string; photo: string } | null> => ipcRenderer.invoke('yt:account'),
-  home: () => ipcRenderer.invoke('yt:home'),
+  home: (chip?: string): Promise<HomeData> => ipcRenderer.invoke('yt:home', chip),
   explore: () => ipcRenderer.invoke('yt:explore'),
   moods: () => ipcRenderer.invoke('yt:moods'),
   mood: (params: string) => ipcRenderer.invoke('yt:mood', params),
@@ -31,13 +32,14 @@ const bridge = {
   album: (id: string) => ipcRenderer.invoke('yt:album', id),
   artist: (id: string) => ipcRenderer.invoke('yt:artist', id),
   search: (q: string, filter?: SearchFilter) => ipcRenderer.invoke('yt:search', q, filter),
+  lyrics: (q: LyricsQuery): Promise<Lyrics | null> => ipcRenderer.invoke('yt:lyrics', q),
   cmd: (c: PlayerCommand) => ipcRenderer.invoke('player:cmd', c),
   state: (): Promise<PlayerState | null> => ipcRenderer.invoke('player:get'),
   popup: (items: PopupItem[]): Promise<string | null> =>
     ipcRenderer.invoke('ui:popup', items),
   open: (url: string) => ipcRenderer.invoke('ui:open', url),
   copy: (text: string) => ipcRenderer.invoke('ui:copy', text),
-  fullscreen: () => ipcRenderer.invoke('ui:fullscreen'),
+  fullscreen: (on?: boolean) => ipcRenderer.invoke('ui:fullscreen', on),
   log: (msg: string) => ipcRenderer.invoke('ui:log', msg),
   videoRect: (r: { x: number; y: number; width: number; height: number } | null) => ipcRenderer.invoke('ui:videoRect', r),
   setBindings: (b: Record<Action, string[]>) => ipcRenderer.invoke('ui:bindings', b),
@@ -56,6 +58,11 @@ const bridge = {
     const fn = (_: unknown, a: Action) => cb(a)
     ipcRenderer.on('menu:action', fn)
     return () => void ipcRenderer.removeListener('menu:action', fn)
+  },
+  onFullscreen: (cb: (on: boolean) => void) => {
+    const fn = (_: unknown, on: boolean) => cb(on)
+    ipcRenderer.on('fullscreen', fn)
+    return () => void ipcRenderer.removeListener('fullscreen', fn)
   },
   onAuth: (cb: (ok: boolean) => void) => {
     const fn = (_: unknown, ok: boolean) => cb(ok)

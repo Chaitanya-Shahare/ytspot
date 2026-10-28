@@ -8,6 +8,7 @@ import type {
   ArtistPage,
   Card,
   Collection,
+  HomeData,
   Kind,
   LibraryFilter,
   SearchFilter,
@@ -22,6 +23,7 @@ let yt: Innertube | null = null
 
 export async function connect(cookie?: string): Promise<void> {
   yt = await Innertube.create({ cookie, retrieve_player: false })
+  homeFeed = null
 }
 
 export const ready = () => yt !== null
@@ -118,13 +120,19 @@ function shelfOf(s: any): Shelf | null {
   return c.length ? { title, cards: c } : null
 }
 
-export async function home(): Promise<Shelf[]> {
-  const feed = await api().music.getHomeFeed()
+// The unfiltered feed, kept so a mood chip ("Relax", "Workout", …) can be applied to it.
+let homeFeed: YTMusic.HomeFeed | null = null
+
+export async function home(chip?: string): Promise<HomeData> {
+  if (!chip || !homeFeed) homeFeed = await api().music.getHomeFeed()
+  const feed = chip ? await homeFeed.applyFilter(chip) : homeFeed
   // The second page is optional; YTM sometimes returns it empty, which youtubei.js throws on.
   const more = feed.has_continuation ? await feed.getContinuation().catch(() => null) : null
-  return [...(feed.sections ?? []), ...(more?.sections ?? [])]
-    .map(shelfOf)
-    .filter((s): s is Shelf => !!s)
+  return {
+    // Podcasts aren't playable here, so that chip is left out.
+    chips: homeFeed.filters.filter((f) => f !== 'Podcasts'),
+    shelves: [...(feed.sections ?? []), ...(more?.sections ?? [])].map(shelfOf).filter((s): s is Shelf => !!s)
+  }
 }
 
 export async function explore(): Promise<Shelf[]> {
@@ -291,4 +299,11 @@ function guessKind(browseId: string): Kind {
   if (browseId.startsWith('UC')) return 'artist'
   if (browseId.startsWith('VL')) return 'playlist'
   return 'other'
+}
+
+// YTM's own lyrics (Musixmatch/LyricFind): plain text, no timings.
+export async function ytmLyrics(videoId: string): Promise<{ text: string; source: string } | null> {
+  const shelf: any = await api().music.getLyrics(videoId).catch(() => undefined)
+  const body = text(shelf?.description).trim()
+  return body ? { text: body, source: text(shelf?.footer).replace(/^Source:\s*/, '') } : null
 }

@@ -48,6 +48,7 @@ export function createPlayerWindow(): BaseWindow {
   ytmSession().clearStorageData({ storages: ['serviceworkers'] })
   // YTM's "Leave site?" beforeunload handler would otherwise silently block quitting and reloads.
   p.on('will-prevent-unload', (e) => e.preventDefault())
+  if (process.env.YTSPOT_MUTE) p.setAudioMuted(true)
   p.on('dom-ready', () => {
     p.insertCSS(VIDEO_CSS)
     run(SETUP_JS(videoMode))
@@ -286,7 +287,7 @@ export async function command(c: PlayerCommand): Promise<void> {
         const pos = ${c.next} ? 'INSERT_AFTER_CURRENT_VIDEO' : 'INSERT_AT_END'
         app.networkManager.fetch('/music/get_queue', {
           queueContextParams: store.getState().queue.queueContextParams,
-          queueInsertPosition: pos, videoIds: [${JSON.stringify(c.videoId)}]
+          queueInsertPosition: pos, videoIds: ${JSON.stringify(c.videoIds)}
         }).then((res) => {
           const items = store.getState().queue.items
           const sel = items.findIndex((e) => (e.playlistPanelVideoRenderer || e.playlistPanelVideoWrapperRenderer?.primaryRenderer.playlistPanelVideoRenderer)?.selected)

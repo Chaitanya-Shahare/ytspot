@@ -45,6 +45,18 @@ export interface ArtistPage {
   shelves: Shelf[]
 }
 
+export interface HomeData {
+  chips: string[]
+  shelves: Shelf[]
+}
+
+// Lyrics lines carry a start time (seconds) when synced.
+export interface Lyrics {
+  lines: { time?: number; text: string }[]
+  synced: boolean
+  source: string
+}
+
 export interface SearchResult {
   top?: Card
   songs: Track[]
@@ -90,7 +102,7 @@ export type PlayerCommand =
   | { type: 'seek'; seconds: number }
   | { type: 'volume'; value: number }
   | { type: 'jump' | 'jumpAuto'; index: number }
-  | { type: 'queueAdd'; videoId: string; next: boolean }
+  | { type: 'queueAdd'; videoIds: string[]; next: boolean }
   | { type: 'queueRemove'; index: number }
   | { type: 'queueMove' | 'autoplayMove'; from: number; to: number }
   | { type: 'videoMode'; on: boolean }

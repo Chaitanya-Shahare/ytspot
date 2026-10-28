@@ -1,18 +1,42 @@
-import { useEffect } from 'react'
-import type { ArtistPage, Collection, Shelf, Track } from '../../../shared/types'
+import { useEffect, useState } from 'react'
+import type { ArtistPage, Collection, HomeData, Shelf, Track } from '../../../shared/types'
 import { More, Shuffle } from '../components/icons'
+import { queue } from '../components/menus'
 import { ErrorBox, GreenPlay, Loading, ShelfRow, TrackTable } from '../components/ui'
 import { sized, useApp, useCached, useColor } from '../lib'
 
+// The chip picked on Home, kept while browsing elsewhere so Back returns to the same mood, and
+// the chip list, kept so it stays on screen while a mood's shelves load.
+let homeChip = ''
+let homeChips: string[] = []
+
 export function HomeView() {
-  const { data, error, retry } = useCached<Shelf[]>('home', () => window.ytm.home(), { persist: true })
-  if (error) return <ErrorBox error={error} onRetry={retry} />
-  if (!data) return <Loading />
+  const [chip, setChip] = useState(homeChip)
+  const pick = (c: string) => setChip((homeChip = c === chip ? '' : c))
+  const { data, error, retry } = useCached<HomeData>(`home:${chip}`, () => window.ytm.home(chip || undefined), { persist: !chip })
+  if (data?.chips.length) homeChips = data.chips
+  const chips = homeChips
   return (
     <div className="page home">
-      {data.map((s, i) => (
-        <ShelfRow key={s.title + i} shelf={s} />
-      ))}
+      {chips.length > 0 && (
+        <div className="chips home-chips">
+          <button className={`chip ${chip ? '' : 'on'}`} onClick={() => pick('')}>
+            All
+          </button>
+          {chips.map((c) => (
+            <button key={c} className={`chip ${chip === c ? 'on' : ''}`} onClick={() => pick(c)}>
+              {c}
+            </button>
+          ))}
+        </div>
+      )}
+      {error && !data ? (
+        <ErrorBox error={error} onRetry={retry} />
+      ) : !data ? (
+        <Loading />
+      ) : (
+        data.shelves.map((s, i) => <ShelfRow key={chip + s.title + i} shelf={s} />)
+      )}
     </div>
   )
 }
@@ -75,12 +99,16 @@ export function CollectionView({ kind, id }: { kind: 'playlist' | 'album'; id: s
     const pick = await window.ytm.popup([
       { id: 'play', label: 'Play' },
       { id: 'shuffle', label: 'Shuffle play' },
+      { id: 'next', label: 'Play next' },
+      { id: 'queue', label: 'Add to queue' },
       { id: '-', label: '-' },
       { id: 'copy', label: 'Copy link' },
       { id: 'open', label: 'Open in YouTube Music' }
     ])
     if (pick === 'play') play()
     if (pick === 'shuffle') shufflePlay()
+    if (pick === 'next' || pick === 'queue')
+      queue(data.tracks.map((t) => t.videoId), pick === 'next').then(() => toast(pick === 'next' ? 'Playing next' : 'Added to queue'))
     if (pick === 'copy') window.ytm.copy(url).then(() => toast('Link copied to clipboard'))
     if (pick === 'open') window.ytm.open(url)
   }
