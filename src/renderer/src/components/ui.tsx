@@ -148,9 +148,12 @@ export function TrackTable({
   from,
   showAlbum = true,
   showPlays = false,
-  showHeader = true
+  showHeader = true,
+  nums
 }: {
   tracks: Track[]
+  // Each row's number when the list is filtered or re-sorted (its place in the playlist).
+  nums?: number[]
   playlistId?: string
   // The user's own playlist page: its route id, and how to drop a removed row from the page.
   editable?: { id: string; onRemoved: (videoId: string) => void }
@@ -221,7 +224,7 @@ export function TrackTable({
     return () => scroller.removeEventListener('scroll', check)
   }, [showHeader])
   return (
-    <div ref={box} className={`tracks ${showAlbum || showPlays ? '' : 'no-album'}`} onKeyDown={onKey} role="grid">
+    <div ref={box} className={`tracks ${showPlays ? 'with-plays' : showAlbum ? '' : 'no-album'}`} onKeyDown={onKey} role="grid">
       {showHeader && (
         <div ref={head} className={`track-row head ${stuck ? 'stuck' : ''}`}>
           <span className="num">#</span>
@@ -238,6 +241,7 @@ export function TrackTable({
           key={t.videoId + i}
           t={t}
           i={i}
+          n={nums?.[i] ?? i + 1}
           showAlbum={showAlbum}
           showPlays={showPlays}
           state={player?.videoId !== t.videoId ? '' : player.playing ? 'playing' : 'current'}
@@ -257,6 +261,7 @@ export function TrackTable({
 const Row = memo(function Row({
   t,
   i,
+  n,
   showAlbum,
   showPlays,
   state,
@@ -269,6 +274,7 @@ const Row = memo(function Row({
 }: {
   t: Track
   i: number
+  n: number
   showAlbum: boolean
   showPlays?: boolean
   state: '' | 'current' | 'playing'
@@ -290,7 +296,7 @@ const Row = memo(function Row({
       onContextMenu={(e) => (e.preventDefault(), select(i), menu(t))}
     >
       <span className="num">
-        <span className="idx">{state === 'playing' ? <Bars /> : i + 1}</span>
+        <span className="idx">{state === 'playing' ? <Bars /> : n}</span>
         <button
           className="row-play"
           onClick={(e) => (e.stopPropagation(), play(t))}

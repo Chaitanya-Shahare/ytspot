@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ArtistPage, Card, LibraryFilter, PlayerState, QueueItem, Track } from '../../shared/types'
 import * as I from './components/icons'
 import { Ctx, fmt, getClock, libraryChanged, loadPrefs, onLibraryChange, playlistChanged, resetCache, routeFor, savePrefs, setClock, sized, useApp, useCached, useColor, useTime, type AppCtx, type Prefs, type Route, type SaveSong, type Source, type ToastAction, sameRoute } from './lib'
@@ -13,6 +13,9 @@ import { ArtistView, CollectionView, ExploreView, HomeView, MoreView, resetHome 
 
 const LIKED: Card = { kind: 'playlist', id: 'LM', title: 'Liked Songs', subtitle: 'Playlist', thumb: '' }
 type LibrarySort = 'Recents' | 'Alphabetical' | 'Creator'
+// Spotify's "View as": rows with artwork, text-only rows, or a grid of covers.
+type LibraryView = 'List' | 'Compact' | 'Grid'
+const VIEW_ICON = { List: I.ViewList, Compact: I.ViewCompact, Grid: I.ViewGrid }
 
 // Sidebar widths the user dragged to (px); null keeps the right panel's default responsive width.
 interface Layout {
@@ -25,6 +28,9 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
 // icon rail when dragged narrower than COLLAPSE_AT.
 const MAIN_MIN = 400
 const COLLAPSE_AT = 200
+// Where typing happens (keys are text there), and what can be pressed.
+const TEXT_ENTRY = 'input:not([type=button], [type=checkbox], [type=radio], [type=range], [type=file]), textarea, select, [contenteditable=""], [contenteditable="true"]'
+const CONTROL = 'button, a[href], summary, [role=button], [role=switch], [role=slider], [role=menuitem], [role=tab], [role=option]'
 const REPEATABLE = new Set<Action>(['seekFwd', 'seekBack', 'seekFwdSmall', 'seekBackSmall', 'volUp', 'volDown', 'back', 'forward'])
 const OVERLAY_ACTIONS = new Set<Action>(['toggle', 'next', 'prev', 'seekFwd', 'seekBack', 'seekFwdSmall', 'seekBackSmall', 'shuffle', 'repeat', 'volUp', 'volDown', 'mute', 'like', 'dislike', 'fullscreen', 'help'])
 
@@ -62,10 +68,19 @@ export default function App() {
   const keys = useMemo(() => bindings(prefs.shortcuts), [prefs.shortcuts])
   useEffect(() => void window.ytm.setBindings(keys), [keys])
   useEffect(() => {
-    window.ytm.setPrefs({ keepPlaying: prefs.keepPlaying, videoMode: prefs.videoMode, openAtLogin: prefs.openAtLogin })
-  }, [prefs.keepPlaying, prefs.videoMode, prefs.openAtLogin])
+    window.ytm.setPrefs({ keepPlaying: prefs.keepPlaying, videoMode: prefs.videoMode, openAtLogin: prefs.openAtLogin, menuBar: prefs.menuBar })
+  }, [prefs.keepPlaying, prefs.videoMode, prefs.openAtLogin, prefs.menuBar])
   const searchRef = useRef<HTMLInputElement>(null)
   const route = history[pos]
+
+  // The page zoom (View → Zoom In/Out), for the parts of the title bar that must not scale with it.
+  // Zooming resizes the viewport, so a resize is when to look again.
+  useEffect(() => {
+    const apply = () => document.documentElement.style.setProperty('--zoom', String(window.ytm.zoom()))
+    apply()
+    window.addEventListener('resize', apply)
+    return () => window.removeEventListener('resize', apply)
+  }, [])
 
   // Collapse the library when the window gets narrow (and reopen it when it widens again), but only
   // when crossing that width, so a resize doesn't undo the user's own toggle.
@@ -291,7 +306,12 @@ export default function App() {
     let timer: ReturnType<typeof setTimeout>
     const onKey = (e: KeyboardEvent) => {
       const el = e.target instanceof HTMLElement ? e.target : null
-      const typing = !!el?.matches('input, textarea, select')
+      const typing = !!el?.matches(TEXT_ENTRY)
+      const control = !typing && !!el?.closest(CONTROL)
+      // With keyboard navigation on, a control reached from the keyboard keeps the keys it uses. A
+      // control merely clicked never does: Space stays play/pause wherever you last clicked.
+      const ownsKeys = control && prefs.keyboardNav && el === keyboardFocus
+      if (e.key === 'Tab' && !prefs.keyboardNav && !el?.closest('.modal, .save-pop')) return e.preventDefault()
       if (e.key === 'Escape') {
         if (help) return setHelp(false)
         if (full) return setFull(false)
@@ -300,8 +320,9 @@ export default function App() {
       const combo = comboOf(e)
       if (!combo) return
       if (typing && (!e.metaKey || /Left|Right|Up|Down/.test(combo))) return
-      // Space / Enter on a focused button, switch or link press it rather than play/pause.
-      if ((e.key === ' ' || e.key === 'Enter') && el?.closest('button, a, [role=switch], [role=slider], select')) return
+      if (ownsKeys && (e.key === ' ' || e.key === 'Enter' || (/^Arrow/.test(e.key) && el?.closest('[role=slider]')))) return
+      // A clicked button must not be pressed again by Space or Return (the browser's default).
+      if (control && (e.key === ' ' || e.key === 'Enter')) e.preventDefault()
       const seq = pending ? `${pending} ${combo}` : combo
       clearTimeout(timer)
       pending = ''
@@ -311,6 +332,8 @@ export default function App() {
       if (a && (help || full) && !OVERLAY_ACTIONS.has(a)) return e.preventDefault()
       if (a) {
         e.preventDefault()
+        // The shortcut wins over whatever is focused (a slider's own arrow keys, a row's Return).
+        e.stopPropagation()
         // Holding a key repeats seeking and volume, not toggles like play/pause or shuffle.
         if (e.repeat && !REPEATABLE.has(a)) return
         return run(a)
@@ -321,10 +344,37 @@ export default function App() {
         timer = setTimeout(() => (pending = ''), 1200)
       }
     }
-    window.addEventListener('keydown', onKey)
+    // Buttons are pressed by Space on key *up*; a clicked one mustn't be.
+    const onKeyUp = (e: KeyboardEvent) => {
+      const el = e.target instanceof HTMLElement ? e.target : null
+      if (e.key !== ' ' || !el || el.matches(TEXT_ENTRY) || !el.closest(CONTROL)) return
+      if (!(prefs.keyboardNav && el === keyboardFocus)) e.preventDefault()
+    }
+    // Which element got focus from the keyboard (Tab) rather than a click. Tracked here because
+    // the browser's :focus-visible can stay on after a mouse click once a key has been pressed.
+    // Focus follows whichever came last: a click, or a key (Tab).
+    let keyboardFocus: Element | null = null
+    let byKeyboard = false
+    const onPointer = () => ((byKeyboard = false), (keyboardFocus = null))
+    const onAnyKey = () => (byKeyboard = true)
+    const onFocus = (e: FocusEvent) => (keyboardFocus = byKeyboard ? (e.target as Element) : null)
+    window.addEventListener('pointerdown', onPointer, true)
+    window.addEventListener('keydown', onAnyKey, true)
+    document.addEventListener('focusin', onFocus)
+    // Capture phase: decided before any focused element or React handler sees the key.
+    window.addEventListener('keydown', onKey, true)
+    window.addEventListener('keyup', onKeyUp, true)
     const offMenu = window.ytm.onMenu(run)
-    return () => (window.removeEventListener('keydown', onKey), offMenu(), clearTimeout(timer))
-  }, [run, keys, help, full])
+    return () => {
+      window.removeEventListener('keydown', onKey, true)
+      window.removeEventListener('keyup', onKeyUp, true)
+      window.removeEventListener('pointerdown', onPointer, true)
+      window.removeEventListener('keydown', onAnyKey, true)
+      document.removeEventListener('focusin', onFocus)
+      offMenu()
+      clearTimeout(timer)
+    }
+  }, [run, keys, help, full, prefs.keyboardNav])
 
   // "Playing from" holds only while one of its songs is playing (not after radio or autoplay).
   const liveSource = source && (!source.ids || !player?.videoId || source.ids.includes(player.videoId)) ? source : null
@@ -431,7 +481,7 @@ export default function App() {
         </div>
       )}
       {save && <SavePopover key={save.song.videoId} song={save.song} anchor={save.anchor} onClose={closeSave} />}
-      <Tooltips />
+      <Tooltips keys={keys} />
     </Ctx.Provider>
   )
 }
@@ -483,15 +533,15 @@ function TopBar(p: {
   return (
     <header className="topbar">
       <div className="nav-arrows">
-        <button className="circle-btn" disabled={!p.canBack} onClick={p.onBack} aria-label="Go back" title="Go back">
+        <button className="circle-btn" disabled={!p.canBack} onClick={p.onBack} aria-label="Go back" title="Go back" data-shortcut="back">
           <I.ChevronLeft />
         </button>
-        <button className="circle-btn" disabled={!p.canFwd} onClick={p.onFwd} aria-label="Go forward" title="Go forward">
+        <button className="circle-btn" disabled={!p.canFwd} onClick={p.onFwd} aria-label="Go forward" title="Go forward" data-shortcut="forward">
           <I.ChevronRight />
         </button>
       </div>
       <div className="center">
-        <button className="home-btn" onClick={() => go({ name: 'home' })} aria-label="Home" title="Home">
+        <button className="home-btn" onClick={() => go({ name: 'home' })} aria-label="Home" title="Home" data-shortcut="home">
           {route.name === 'home' ? <I.Home size={24} /> : <I.HomeOutline size={24} />}
         </button>
         <label className="search-box">
@@ -527,7 +577,7 @@ function TopBar(p: {
               go({ name: 'search', q: (typed.current = '') })
             }}
           >
-            <I.Browse size={20} />
+            {route.name === 'search' && !route.q ? <I.BrowseFill size={20} /> : <I.Browse size={20} />}
           </button>
         </label>
       </div>
@@ -546,11 +596,22 @@ function TopBar(p: {
 
 function LibraryPanel({ authed, collapsed, onToggle }: { authed: boolean; collapsed: boolean; onToggle: () => void }) {
   const ctx = useApp()
-  const { go, route, player, toast, source } = ctx
+  const { go, route, player, toast, source, playCard } = ctx
   // No chip picked shows everything, as in Spotify; clicking the picked chip clears it.
   const [filter, setFilter] = useState<LibraryFilter | null>(null)
   const [sort, setSortState] = useState<LibrarySort>(() => (localStorage.getItem('library-sort') as LibrarySort) || 'Recents')
   const setSort = (s: LibrarySort) => (localStorage.setItem('library-sort', s), setSortState(s))
+  const [pins, setPinsState] = useState<string[]>(() => JSON.parse(localStorage.getItem('library-pins') ?? '[]'))
+  const togglePin = (c: Card) =>
+    setPinsState((p) => {
+      const key = c.kind + c.id
+      const next = p.includes(key) ? p.filter((x) => x !== key) : [...p, key]
+      localStorage.setItem('library-pins', JSON.stringify(next))
+      toast(p.includes(key) ? `Unpinned ${c.title}` : `Pinned ${c.title}`)
+      return next
+    })
+  const [view, setViewState] = useState<LibraryView>(() => (localStorage.getItem('library-view') as LibraryView) || 'List')
+  const setView = (v: LibraryView) => (localStorage.setItem('library-view', v), setViewState(v))
   const [find, setFind] = useState<string | null>(null)
   const [version, setVersion] = useState(0)
   useEffect(() => onLibraryChange(() => setVersion((v) => v + 1)), [])
@@ -597,21 +658,35 @@ function LibraryPanel({ authed, collapsed, onToggle }: { authed: boolean; collap
     const key = (c: Card) => (sort === 'Creator' ? creator(c) || c.title : c.title).toLowerCase()
     list = [...list.filter((c) => c.id === 'LM'), ...list.filter((c) => c.id !== 'LM').sort((a, b) => key(a).localeCompare(key(b)))]
   }
+  // Pinned items follow Liked Songs, in the order they were pinned (Spotify's pins).
+  const isPinned = (c: Card) => c.id === 'LM' || pins.includes(c.kind + c.id)
+  const pinRank = (c: Card) => (c.id === 'LM' ? -1 : pins.indexOf(c.kind + c.id))
+  list = [...list.filter(isPinned).sort((a, b) => pinRank(a) - pinRank(b)), ...list.filter((c) => !isPinned(c))]
   const sortMenu = async () => {
     const pick = await window.ytm.popup([
       { id: 'head', label: 'Sort by', enabled: false },
-      ...(['Recents', 'Alphabetical', 'Creator'] as LibrarySort[]).map((s) => ({ id: s, label: s, checked: s === sort }))
+      ...(['Recents', 'Alphabetical', 'Creator'] as LibrarySort[]).map((s) => ({ id: s, label: s, checked: s === sort })),
+      { id: '-', label: '-' },
+      { id: 'head', label: 'View as', enabled: false },
+      ...(['Compact', 'List', 'Grid'] as LibraryView[]).map((v) => ({ id: `view:${v}`, label: v, checked: v === view }))
     ])
-    if (pick && pick !== 'head') setSort(pick as LibrarySort)
+    if (pick?.startsWith('view:')) setView(pick.slice(5) as LibraryView)
+    else if (pick && pick !== 'head') setSort(pick as LibrarySort)
   }
+  const ViewIcon = VIEW_ICON[view]
+  const shownView: LibraryView = collapsed ? 'List' : view
   return (
     <nav className="library panel">
       <div className="lib-head">
-        <button className="lib-title" onClick={onToggle} title="Collapse Your Library">
+        <button className="lib-title" onClick={onToggle} title={collapsed ? 'Open Your Library' : 'Collapse Your Library'} data-shortcut="toggleLeft">
           <I.Library size={24} />
           {!collapsed && <span>Your Library</span>}
         </button>
-        {!collapsed && (
+        {collapsed ? (
+          <button className="create-btn icon" onClick={create} aria-label="Create" title="Create">
+            <I.Plus />
+          </button>
+        ) : (
           <button className="create-btn" onClick={create}>
             <I.Plus /> Create
           </button>
@@ -661,12 +736,12 @@ function LibraryPanel({ authed, collapsed, onToggle }: { authed: boolean; collap
               />
             </label>
           )}
-          <button className="lib-sort" onClick={sortMenu} title="Sort by">
-            {sort} <I.Queue size={14} />
+          <button className="lib-sort" onClick={sortMenu} title="Sort and view">
+            {sort} <ViewIcon size={16} />
           </button>
         </div>
       )}
-      <div className="lib-list">
+      <div className={`lib-list ${shownView.toLowerCase()}`}>
         {authed && find && !list.length && (
           <div className="lib-empty">
             <b>Couldn’t find “{find}”</b>
@@ -677,31 +752,44 @@ function LibraryPanel({ authed, collapsed, onToggle }: { authed: boolean; collap
           const r = routeFor(c)
           const active = r && JSON.stringify(r) === JSON.stringify(route)
           const playing = !!player?.playing && (sameRoute(r, source?.route) || (c.kind === 'album' && c.title === player.album))
+          const current = !!player?.videoId && sameRoute(r, source?.route)
+          // Play from the sidebar without opening the page (pause if it's what's playing).
+          const play = (e: React.MouseEvent) => (e.stopPropagation(), current ? window.ytm.cmd({ type: 'toggle' }) : playCard(c))
+          const grid = shownView === 'Grid'
           return (
             <div
               key={c.kind + c.id}
               className={`lib-item ${active ? 'active' : ''}`}
               onClick={() => r && go(r)}
-              onContextMenu={(e) => (e.preventDefault(), c.id !== 'LM' && cardMenu(c, ctx))}
+              onContextMenu={(e) => (e.preventDefault(), c.id !== 'LM' && cardMenu(c, ctx, { pinned: isPinned(c), onPin: () => togglePin(c) }))}
               title={collapsed ? c.title : undefined}
             >
-              {c.id === 'LM' ? (
-                <div className="liked-art">
-                  <I.HeartFill size={collapsed ? 20 : 16} />
-                </div>
-              ) : (
-                <Img src={sized(c.thumb, 48)} artist={c.kind === 'artist'} />
+              {shownView !== 'Compact' && (
+                <span className={`lib-art ${c.kind === 'artist' ? 'round' : ''}`}>
+                  {c.id === 'LM' ? (
+                    <span className="liked-art">
+                      <I.HeartFill size={grid ? 40 : collapsed ? 20 : 16} />
+                    </span>
+                  ) : (
+                    <Img src={sized(c.thumb, grid ? 160 : 48)} artist={c.kind === 'artist'} />
+                  )}
+                  {!collapsed && r && (
+                    <button className={`lib-play ${playing ? 'on' : ''}`} onClick={play} aria-label={playing ? `Pause ${c.title}` : `Play ${c.title}`} title={playing ? 'Pause' : 'Play'}>
+                      {playing ? <I.Pause size={grid ? 18 : 16} /> : <I.Play size={grid ? 18 : 16} />}
+                    </button>
+                  )}
+                </span>
               )}
               {!collapsed && (
                 <div className="lib-text">
                   <span className={`t1 ${playing ? 'green' : ''}`}>{c.title}</span>
                   <span className="t2">
-                    {c.id === 'LM' && <I.Pin size={12} className="green pin" />}
+                    {isPinned(c) && <I.Pin size={12} className="green pin" aria-label="Pinned" />}
                     <span className="ellipsis">{c.subtitle}</span>
                   </span>
                 </div>
               )}
-              {playing && !collapsed && <I.Volume size={16} className="green lib-playing" aria-label="Playing" />}
+              {playing && !collapsed && !grid && <I.Volume size={16} className="green lib-playing" aria-label="Playing" />}
             </div>
           )
         })}
@@ -1061,8 +1149,27 @@ function restoreScroll(el: HTMLDivElement | null, top: number | undefined): void
 
 // Spotify-style tooltips for everything with a `title`: the title moves to `data-tip` (so the
 // native one doesn't also show) and a dark label appears after a short delay.
-function Tooltips() {
-  const [tip, setTip] = useState<{ text: string; x: number; y: number; below: boolean } | null>(null)
+function Tooltips({ keys }: { keys: Record<Action, string[]> }) {
+  // `at` is the element's box; where the tip goes is worked out once its own size is known.
+  const [tip, setTip] = useState<{ text: string; key?: string; at: DOMRect; side: 'above' | 'below' | 'right' } | null>(null)
+  const box = useRef<HTMLDivElement>(null)
+  // Keep the whole tip inside the window: centred on the element when there's room, otherwise
+  // pushed in from the edge.
+  useLayoutEffect(() => {
+    const el = box.current
+    if (!el || !tip) return
+    const { at, side } = tip
+    const w = el.offsetWidth, h = el.offsetHeight, m = 8
+    let left = side === 'right' ? at.right + m : at.left + at.width / 2 - w / 2
+    let top = side === 'right' ? at.top + at.height / 2 - h / 2 : side === 'below' ? at.bottom + m : at.top - h - m
+    left = Math.min(Math.max(m, left), window.innerWidth - w - m)
+    top = Math.min(Math.max(m, top), window.innerHeight - h - m)
+    el.style.left = `${left}px`
+    el.style.top = `${top}px`
+    el.style.visibility = 'visible'
+  }, [tip])
+  const keysRef = useRef(keys)
+  keysRef.current = keys
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>
     let target: HTMLElement | null = null
@@ -1080,8 +1187,11 @@ function Tooltips() {
       timer = setTimeout(() => {
         if (!el.isConnected || !el.dataset.tip) return
         const r = el.getBoundingClientRect()
-        const below = r.top < 48
-        setTip({ text: el.dataset.tip, x: r.left + r.width / 2, y: below ? r.bottom + 8 : r.top - 8, below })
+        // In the collapsed library rail tips open to the side, as Spotify's do.
+        const side = el.closest('.left-collapsed .library') ? 'right' : r.top < 48 ? 'below' : 'above'
+        // Controls with a keyboard shortcut show it beside the label (from the user's bindings).
+        const combo = keysRef.current[el.dataset.shortcut as Action]?.[0]
+        setTip({ text: el.dataset.tip, key: combo && comboLabel(combo), at: r, side })
       }, 500)
     }
     const hide = () => (clearTimeout(timer), setTip(null), (target = null))
@@ -1099,8 +1209,9 @@ function Tooltips() {
   }, [])
   if (!tip) return null
   return (
-    <div className={`tooltip ${tip.below ? 'below' : ''}`} style={{ left: tip.x, top: tip.y }} role="tooltip">
+    <div ref={box} className="tooltip" style={{ visibility: 'hidden' }} role="tooltip">
       {tip.text}
+      {tip.key && <span className="tip-key">{tip.key}</span>}
     </div>
   )
 }
@@ -1130,16 +1241,16 @@ function Controls({ onShuffle, big }: { onShuffle: () => void; big?: boolean }) 
   const off = !p?.videoId
   return (
     <div className={`pb-controls ${big ? 'big' : ''}`}>
-      <button className="icon-btn" disabled={off} onClick={onShuffle} aria-label="Shuffle queue" title="Shuffle queue">
+      <button className="icon-btn" disabled={off} onClick={onShuffle} aria-label="Shuffle queue" title="Shuffle queue" data-shortcut="shuffle">
         <I.Shuffle size={big ? 24 : 16} />
       </button>
-      <button className="icon-btn" disabled={off} onClick={() => cmd({ type: 'prev' })} aria-label="Previous" title="Previous">
+      <button className="icon-btn" disabled={off} onClick={() => cmd({ type: 'prev' })} aria-label="Previous" title="Previous" data-shortcut="prev">
         <I.Prev size={big ? 24 : 16} />
       </button>
-      <button className="play-btn" disabled={off} onClick={() => cmd({ type: 'toggle' })} aria-label={p?.playing ? 'Pause' : 'Play'} title={p?.playing ? 'Pause' : 'Play'}>
+      <button className="play-btn" disabled={off} onClick={() => cmd({ type: 'toggle' })} aria-label={p?.playing ? 'Pause' : 'Play'} title={p?.playing ? 'Pause' : 'Play'} data-shortcut="toggle">
         {p?.playing ? <I.Pause size={big ? 24 : 16} /> : <I.Play size={big ? 24 : 16} />}
       </button>
-      <button className="icon-btn" disabled={off} onClick={() => cmd({ type: 'next' })} aria-label="Next" title="Next">
+      <button className="icon-btn" disabled={off} onClick={() => cmd({ type: 'next' })} aria-label="Next" title="Next" data-shortcut="next">
         <I.Next size={big ? 24 : 16} />
       </button>
       <button
@@ -1148,6 +1259,7 @@ function Controls({ onShuffle, big }: { onShuffle: () => void; big?: boolean }) 
         onClick={() => cmd({ type: 'repeat' })}
         aria-label={REPEAT_LABEL[p?.repeat ?? 'NONE']}
         title={REPEAT_LABEL[p?.repeat ?? 'NONE']}
+        data-shortcut="repeat"
       >
         <I.Repeat size={big ? 24 : 16} />
         {p?.repeat === 'ONE' && <span className="one">1</span>}
@@ -1195,6 +1307,7 @@ function VolumeControl() {
         onClick={() => window.ytm.cmd({ type: 'mute' })}
         aria-label={level === 0 ? 'Unmute' : 'Mute'}
         title={level === 0 ? 'Unmute' : 'Mute'}
+        data-shortcut="mute"
       >
         {level === 0 ? <I.VolumeMute /> : level < 50 ? <I.VolumeLow /> : <I.Volume />}
       </button>
@@ -1340,7 +1453,7 @@ function PlayerBar(props: {
         <Progress />
       </div>
       <div className="pb-right">
-        <button className={`icon-btn ${rightOpen ? 'green dot' : ''}`} onClick={onToggleRight} aria-label="Now playing view" title="Now playing view">
+        <button className={`icon-btn ${rightOpen ? 'green dot' : ''}`} onClick={onToggleRight} aria-label="Now playing view" title="Now playing view" data-shortcut="toggleRight">
           <I.NowPlaying />
         </button>
         <button
@@ -1348,14 +1461,15 @@ function PlayerBar(props: {
           onClick={props.onLyrics}
           aria-label="Lyrics"
           title="Lyrics"
+          data-shortcut="lyrics"
         >
           <I.Lyrics />
         </button>
-        <button className={`icon-btn ${props.queueOpen ? 'green dot' : ''}`} onClick={openQueue} title="Queue" aria-label="Queue">
+        <button className={`icon-btn ${props.queueOpen ? 'green dot' : ''}`} onClick={openQueue} title="Queue" aria-label="Queue" data-shortcut="queue">
           <I.Queue />
         </button>
         <VolumeControl />
-        <button className="icon-btn" onClick={props.onFull} aria-label="Full screen" title="Full screen" disabled={!p?.videoId}>
+        <button className="icon-btn" onClick={props.onFull} aria-label="Full screen" title="Full screen" disabled={!p?.videoId} data-shortcut="fullscreen">
           <I.FullScreen />
         </button>
       </div>

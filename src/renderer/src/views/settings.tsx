@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { bindings, comboLabel, comboOf, conflicts, SHORTCUTS, type Action } from '../../../shared/shortcuts'
-import type { YtmSetting } from '../../../shared/types'
+import type { MenuBarMode, YtmSetting } from '../../../shared/types'
 import { Close, Plus } from '../components/icons'
-import { ErrorBox, Loading } from '../components/ui'
+import { ErrorBox } from '../components/ui'
 import { useApp, useCached } from '../lib'
 
 export function SettingsView({ authed }: { authed: boolean }) {
@@ -25,6 +25,24 @@ export function SettingsView({ authed }: { authed: boolean }) {
         </Row>
         <Row title="Open ytspot when you log in to your Mac">
           <Toggle on={prefs.openAtLogin} onChange={(v) => setPrefs({ openAtLogin: v })} />
+        </Row>
+        <Row
+          title="Now playing in the menu bar"
+          desc="Shows the song next to a ♫ icon at the top of your screen; click it for playback controls. On a Mac with a notch, macOS hides it when the menu bar is full, so pick a shorter option if it doesn’t show."
+        >
+          <select className="select" value={prefs.menuBar} onChange={(e) => setPrefs({ menuBar: e.target.value as MenuBarMode })}>
+            <option value="both">Song and artist</option>
+            <option value="song">Song</option>
+            <option value="artist">Artist</option>
+            <option value="icon">Icon only</option>
+            <option value="off">Off</option>
+          </select>
+        </Row>
+        <Row
+          title="Keyboard navigation"
+          desc="Move between buttons with Tab and press them with Space or Return. When off, Space always plays and pauses, wherever you last clicked."
+        >
+          <Toggle on={prefs.keyboardNav} onChange={(v) => setPrefs({ keyboardNav: v })} />
         </Row>
       </section>
 
@@ -88,7 +106,7 @@ function YtmSettings() {
   if (!data) return (
     <section className="set-section">
       <h2>YouTube Music</h2>
-      {error ? <ErrorBox error={error} onRetry={retry} /> : <Loading kind="rows" />}
+      {error ? <ErrorBox error={error} onRetry={retry} /> : <SettingsSkeleton />}
     </section>
   )
   const tabs = [...new Set(data.map((s) => s.tab))]
@@ -112,7 +130,7 @@ function YtmSettings() {
                 )}
                 {s.kind === 'action' && (
                   <button className="outline-btn" onClick={() => change(s, null)}>
-                    {s.title.replace(/ history$/, '')}
+                    {/^clear\b/i.test(s.title) ? 'Clear' : s.title.replace(/ history$/, '')}
                   </button>
                 )}
                 {s.kind === 'link' && s.url && (
@@ -125,6 +143,23 @@ function YtmSettings() {
         </section>
       ))}
     </>
+  )
+}
+
+// Placeholder rows shaped like settings rows (title, description, control on the right).
+function SettingsSkeleton() {
+  return (
+    <div aria-busy="true" aria-label="Loading">
+      {[0, 1, 2, 3].map((i) => (
+        <div key={i} className="set-row">
+          <div className="set-text sk-set-text">
+            <div className="sk sk-line" style={{ width: `${30 + ((i * 13) % 25)}%` }} />
+            <div className="sk sk-line short" />
+          </div>
+          <div className="sk sk-toggle" />
+        </div>
+      ))}
+    </div>
   )
 }
 

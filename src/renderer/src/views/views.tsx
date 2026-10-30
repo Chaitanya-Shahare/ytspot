@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ArtistPage, Card, Collection, HomeData, Shelf, Track } from '../../../shared/types'
-import { Edit, HeartFill, More, Shuffle } from '../components/icons'
+import { CheckCircle, Close, Edit, HeartFill, More, PlusCircle, Search, Shuffle, ViewList } from '../components/icons'
 import { cardMenu, queue } from '../components/menus'
 import { CardTile, ErrorBox, GreenPlay, Img, Loading, ShelfRow, StickyHead, TrackTable } from '../components/ui'
 import { DeletePlaylist, EditDetails, PlaylistExtras } from './playlist'
@@ -106,6 +106,9 @@ export function ExploreView() {
   )
 }
 
+const SORT_ORDERS = ['Custom order', 'Title', 'Artist', 'Album', 'Duration'] as const
+type SortOrder = (typeof SORT_ORDERS)[number]
+
 const shuffled = (tracks: Track[]) => tracks[Math.floor(Math.random() * tracks.length)]
 
 // YTM can only shuffle a queue once it has loaded, so wait for the picked song to be playing with
@@ -121,6 +124,22 @@ async function shuffleWhenLoaded(videoId: string): Promise<void> {
 export function CollectionView({ kind, id }: { kind: 'playlist' | 'album'; id: string }) {
   const { player, playTrack, toast, go, source } = useApp()
   const [dialog, setDialog] = useState<'edit' | 'delete' | null>(null)
+  // Spotify's "Search in playlist" and sort ("Custom order" is the playlist's own order).
+  const [find, setFind] = useState<string | null>(null)
+  const [order, setOrder] = useState<SortOrder>('Custom order')
+  const findRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (kind !== 'playlist') return
+    // Cmd+F searches the playlist, as in Spotify.
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.metaKey || e.key.toLowerCase() !== 'f') return
+      e.preventDefault()
+      setFind((f) => f ?? '')
+      setTimeout(() => findRef.current?.focus())
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [kind])
   const actions = useRef<HTMLDivElement>(null)
   const key = `${kind}:${id}`
   const { data, error, set, retry } = useCached<Collection>(
@@ -157,6 +176,22 @@ export function CollectionView({ kind, id }: { kind: 'playlist' | 'album'; id: s
   const isCurrent =
     !!player?.videoId && (source ? sameRoute(source.route, from.route) : data.tracks.some((t) => t.videoId === player.videoId))
   const editable = kind === 'playlist' && !!data.editable
+  // What the table shows: matching songs in the chosen order, numbered by their place in the playlist.
+  const q = (find ?? '').trim().toLowerCase()
+  let rows = data.tracks.map((t, i) => ({ t, n: i + 1 }))
+  if (q) rows = rows.filter(({ t }) => `${t.title} ${t.artists} ${t.album ?? ''}`.toLowerCase().includes(q))
+  if (order !== 'Custom order') {
+    const key = (t: Track) => (order === 'Title' ? t.title : order === 'Artist' ? t.artists : order === 'Album' ? (t.album ?? '') : '')
+    const secs = (d: string) => d.split(':').reduce((a, x) => a * 60 + Number(x), 0)
+    rows = [...rows].sort((a, b) => (order === 'Duration' ? secs(a.t.duration) - secs(b.t.duration) : key(a.t).localeCompare(key(b.t))))
+  }
+  const sortMenu = async () => {
+    const pick = await window.ytm.popup([
+      { id: 'head', label: 'Sort by', enabled: false },
+      ...SORT_ORDERS.map((o) => ({ id: o, label: o, checked: o === order }))
+    ])
+    if (pick && pick !== 'head') setOrder(pick as SortOrder)
+  }
   const play = () =>
     isCurrent ? window.ytm.cmd({ type: 'toggle' }) : data.tracks[0] && playTrack(data.tracks[0], data.playlistId, from)
   const shufflePlay = () => {
@@ -174,6 +209,20 @@ export function CollectionView({ kind, id }: { kind: 'playlist' | 'album'; id: s
     kind === 'album'
       ? `https://music.youtube.com/browse/${id}`
       : `https://music.youtube.com/playlist?list=${data.playlistId}`
+  // Spotify's +/✓: save the album or someone else's playlist to Your Library (on YouTube Music).
+  const saveToggle = async () => {
+    if (!data.saveId) return
+    const on = !data.saved
+    set({ ...data, saved: on })
+    try {
+      await window.ytm.saveToLibrary(data.saveId, on)
+      libraryChanged()
+      toast(on ? 'Added to Your Library' : 'Removed from Your Library')
+    } catch {
+      set({ ...data, saved: !on })
+      toast('That didn’t work — try again')
+    }
+  }
   const more = async () => {
     const pick = await window.ytm.popup([
       { id: 'play', label: 'Play' },
@@ -220,7 +269,10 @@ export function CollectionView({ kind, id }: { kind: 'playlist' | 'album'; id: s
         )}
         <div className="hero-text">
           <span className="hero-kind">{heroKind}</span>
-          <h1 className={`hero-title ${editable ? 'clickable' : ''}`} onClick={() => editable && setDialog('edit')}>
+          <h1
+            className={`hero-title ${editable ? 'clickable' : ''} ${data.title.length > 40 ? 'longer' : data.title.length > 22 ? 'long' : ''}`}
+            onClick={() => editable && setDialog('edit')}
+          >
             {data.title}
           </h1>
           {data.description && <p className="hero-desc sub">{data.description}</p>}
@@ -248,12 +300,59 @@ export function CollectionView({ kind, id }: { kind: 'playlist' | 'album'; id: s
         <button className="icon-btn big" aria-label="Shuffle play" title="Shuffle play" onClick={shufflePlay}>
           <Shuffle size={28} />
         </button>
+        {data.saved !== undefined && data.saveId && (
+          <button
+            className={`icon-btn big ${data.saved ? 'green' : ''}`}
+            aria-label={data.saved ? 'Remove from Your Library' : 'Save to Your Library'}
+            title={data.saved ? 'Remove from Your Library' : 'Save to Your Library'}
+            onClick={saveToggle}
+          >
+            {data.saved ? <CheckCircle size={28} /> : <PlusCircle size={28} />}
+          </button>
+        )}
         <button className="icon-btn big" aria-label="More options" title="More options" onClick={more}>
           <More size={24} />
         </button>
+        {kind === 'playlist' && data.tracks.length > 0 && (
+          <div className="pl-tools">
+            {find === null ? (
+              <button className="icon-btn pl-find-btn" onClick={() => setFind('')} aria-label="Search in playlist" title="Search in playlist">
+                <Search size={16} />
+              </button>
+            ) : (
+              <label className="pl-find">
+                <Search size={16} />
+                <input
+                  ref={findRef}
+                  autoFocus
+                  placeholder="Search in playlist"
+                  value={find}
+                  onChange={(e) => setFind(e.target.value)}
+                  onBlur={() => !find && setFind(null)}
+                  onKeyDown={(e) => e.key === 'Escape' && (setFind(null), e.currentTarget.blur())}
+                />
+                {find && (
+                  <button className="pl-find-clear" onMouseDown={(e) => e.preventDefault()} onClick={() => (setFind(''), findRef.current?.focus())} aria-label="Clear search" title="Clear search">
+                    <Close size={14} />
+                  </button>
+                )}
+              </label>
+            )}
+            <button className="lib-sort" onClick={sortMenu} title="Sort">
+              {order} <ViewList size={16} />
+            </button>
+          </div>
+        )}
       </div>
-      {data.tracks.length > 0 && <TrackTable
-        tracks={data.tracks}
+      {q && !rows.length && (
+        <div className="pl-none">
+          <b>Couldn’t find “{find?.trim()}”</b>
+          <span className="sub">Try searching again using a different spelling or keyword.</span>
+        </div>
+      )}
+      {rows.length > 0 && <TrackTable
+        tracks={q || order !== 'Custom order' ? rows.map((r) => r.t) : data.tracks}
+        nums={q || order !== 'Custom order' ? rows.map((r) => r.n) : undefined}
         playlistId={data.playlistId}
         from={from}
         editable={
@@ -283,7 +382,7 @@ export function CollectionView({ kind, id }: { kind: 'playlist' | 'album'; id: s
           <h2>Nothing to play here yet</h2>
         </div>
       )}
-      {editable && !data.more && <PlaylistExtras key={id} data={data} />}
+      {editable && !data.more && !q && <PlaylistExtras key={id} data={data} />}
       {dialog === 'edit' && <EditDetails data={data} onClose={() => setDialog(null)} />}
       {dialog === 'delete' && <DeletePlaylist data={data} onClose={() => setDialog(null)} />}
     </div>

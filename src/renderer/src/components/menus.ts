@@ -66,10 +66,41 @@ export async function cardSongs(c: Card): Promise<string[]> {
   return col.tracks.map((t: { videoId: string }) => t.videoId)
 }
 
+// Extra entries when the card is in Your Library (the sidebar): pinning it, and taking it out.
+export interface InLibrary {
+  pinned: boolean
+  onPin: () => void
+}
+
+// A YouTube video that always exists, for asking YTM which playlists are yours (it lists the same
+// ones whatever the song).
+const ANY_VIDEO = 'jNQXAC9IVRw'
+
+// Takes a card out of Your Library on YouTube Music: unfollows an artist, unsaves an album or
+// someone else's playlist, deletes a playlist you own.
+async function removeFromLibrary(c: Card, own: boolean, ctx: AppCtx): Promise<void> {
+  const bareId = c.id.replace(/^VL/, '')
+  try {
+    if (own) {
+      if (!confirm(`Delete “${c.title}” from YouTube Music? This can’t be undone.`)) return
+      await window.ytm.deletePlaylist(c.id)
+    } else if (c.kind === 'artist') await window.ytm.subscribe(c.id, false)
+    else if (c.kind === 'album') await window.ytm.saveToLibrary(c.playlistId ?? (await window.ytm.album(c.id)).saveId, false)
+    else await window.ytm.saveToLibrary(bareId, false)
+    libraryChanged()
+    ctx.toast(own ? `Deleted ${c.title}` : 'Removed from Your Library')
+    if (JSON.stringify(ctx.route) === JSON.stringify(routeFor(c))) ctx.go({ name: 'home' })
+  } catch {
+    ctx.toast('That didn’t work — try again')
+  }
+}
+
 // Right-click / "…" menu for a card: songs get the song menu; albums and playlists can be queued.
-export async function cardMenu(c: Card, ctx: AppCtx): Promise<void> {
+export async function cardMenu(c: Card, ctx: AppCtx, lib?: InLibrary): Promise<void> {
   if (c.kind === 'song' || c.kind === 'video') return songMenu({ videoId: c.id, title: c.title }, ctx)
   const { go, toast, playCard } = ctx
+  const own = !!lib && c.kind === 'playlist' && (await savablePlaylists(ANY_VIDEO).catch(() => [])).some((p) => p.id === c.id)
+  const kindName = c.kind === 'album' ? 'album' : c.kind === 'artist' ? 'artist' : 'playlist'
   const r = routeFor(c)
   const url =
     c.kind === 'artist' ? `https://music.youtube.com/channel/${c.id}`
@@ -84,13 +115,33 @@ export async function cardMenu(c: Card, ctx: AppCtx): Promise<void> {
           { id: 'queue', label: 'Add to queue' }
         ]
       : []),
+    ...(lib
+      ? [
+          { id: '-', label: '-' },
+          { id: 'pin', label: `${lib.pinned ? 'Unpin' : 'Pin'} ${kindName}` },
+          { id: 'remove', label: own ? 'Delete' : c.kind === 'artist' ? 'Unfollow' : 'Remove from Your Library' }
+        ]
+      : []),
     { id: '-', label: '-' },
+    ...(songs ? [{ id: 'radio', label: `Go to ${kindName} radio` }] : []),
     { id: 'go', label: `Go to ${c.kind}`, enabled: !!r },
     { id: '-', label: '-' },
     { id: 'share', label: 'Share', submenu: [{ id: 'copy', label: `Copy link to ${c.kind === 'album' ? 'Album' : c.kind}` }] },
     { id: 'open', label: 'Open in YouTube Music' }
   ])
   if (pick === 'play') playCard(c)
+  if (pick === 'pin') lib?.onPin()
+  if (pick === 'remove') removeFromLibrary(c, own, ctx)
+  // YTM's radio for a list: its first song, continuing as a mix built from the whole list.
+  if (pick === 'radio')
+    (c.kind === 'album' ? window.ytm.album(c.id) : window.ytm.playlist(c.id, true)).then(
+      (col: { tracks: { videoId: string; title: string }[]; playlistId?: string }) => {
+        const first = col.tracks[0]
+        const list = col.playlistId ?? c.id.replace(/^VL/, '')
+        if (first) ctx.playTrack({ ...first, artists: '', duration: '', thumb: '' }, `RDAMPL${list}`)
+      },
+      () => toast('That didn’t work — try again')
+    )
   if (pick === 'next' || pick === 'queue')
     cardSongs(c)
       .then((ids) => queue(ids, pick === 'next'))

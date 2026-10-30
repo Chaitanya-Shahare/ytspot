@@ -94,11 +94,13 @@ function toCard(n: any): Card | null {
     const id = n.id ?? findKey(n.endpoint, 'videoId') ?? findKey(n.endpoint, 'browseId')
     if (!id) return null
     const song = kind === 'song' || kind === 'video'
+    const sub = text(n.subtitle)
     return {
       kind,
       id,
       title: text(n.title),
-      subtitle: song ? `${kind === 'video' ? 'Video' : 'Song'} • ${text(n.subtitle)}` : text(n.subtitle),
+      // Some shelves already say "Song • …" themselves.
+      subtitle: song && !/^(Song|Video)\b/.test(sub) ? `${kind === 'video' ? 'Video' : 'Song'} • ${sub}` : sub,
       thumb: thumb(n.thumbnail),
       playlistId: findKey(n.thumbnail_overlay, 'playlistId') ?? findKey(n.endpoint, 'playlistId')
     }
@@ -309,7 +311,10 @@ export async function library(filter: LibraryFilter): Promise<Card[]> {
     if (!page) break
     items.push(...(page.contents?.contents ?? page.contents?.items ?? []))
   }
-  return cards(items).filter((c) => c.kind !== 'other' && c.kind !== 'song')
+  // An artist's song count in your library isn't how Spotify describes an artist.
+  return cards(items)
+    .filter((c) => c.kind !== 'other' && c.kind !== 'song')
+    .map((c) => (c.kind === 'artist' ? { ...c, subtitle: 'Artist' } : c))
 }
 
 function header(h: any): { title: string; subtitle: string; meta: string; thumb: string; owner?: string; ownerId?: string } {
@@ -324,6 +329,13 @@ function header(h: any): { title: string; subtitle: string; meta: string; thumb:
     owner: owner || undefined,
     ownerId: findKey(h?.strapline_text_one, 'browseId')
   }
+}
+
+// The "Save to library" toggle in an album or playlist header: whether it's saved, and the playlist
+// id YTM saves (an album saves its audio playlist). Playlists you own have no such toggle.
+function librarySave(h: any): Pick<Collection, 'saved' | 'saveId'> {
+  const b = (h?.buttons ?? []).find((x: any) => x?.type === 'ToggleButton' && findKey(x, 'playlistId'))
+  return b ? { saved: !!b.is_toggled, saveId: findKey(b, 'playlistId') } : {}
 }
 
 // Long playlists (Liked Songs can be 1000+) return their first page immediately; the renderer
@@ -341,13 +353,20 @@ export async function playlist(id: string, peek = false): Promise<Collection> {
   // Only playlists you own come with YTM's edit header (title, description, privacy).
   const edit = (pl.page.contents_memo?.get('MusicEditablePlaylistDetailHeader')?.[0] as any)?.edit_header
   const h: any = pl.header
+  const base = header(pl.header)
+  const liked = id === 'LM' || id === 'VLLM'
   return {
     kind: 'playlist',
     id,
     playlistId: bare(id),
-    ...header(pl.header),
-    description: text(h?.description?.description ?? h?.description).replace(/^N\/A$/, '') || undefined,
-    editable: !!edit && id !== 'LM' && id !== 'VLLM',
+    ...base,
+    // YTM calls it "Liked Music" with a settings blurb; the sidebar (and Spotify) say Liked Songs.
+    ...(liked ? { title: 'Liked Songs', subtitle: 'Playlist' } : {}),
+    // YTM's own mixes ("RDCLAK…") have no owner line in their header.
+    owner: base.owner ?? (/^(VL)?RDCLAK/.test(id) ? 'YouTube Music' : undefined),
+    description: liked ? undefined : text(h?.description?.description ?? h?.description).replace(/^N\/A$/, '') || undefined,
+    ...librarySave(h),
+    editable: !!edit && !liked,
     privacy: edit?.privacy,
     tracks: first,
     more: pl.has_continuation
@@ -395,6 +414,7 @@ export async function album(id: string): Promise<Collection> {
     id,
     ...h,
     playlistId: findKey(al.contents?.[0], 'playlistId') ?? findKey(al.header, 'playlistId'),
+    ...librarySave(al.header),
     // Album rows usually leave out the artist when it's the album's own.
     tracks: tracks(al.contents).map((t) => ({
       ...t,
@@ -418,7 +438,16 @@ export async function artist(id: string): Promise<ArtistPage> {
     subscribed: !!h?.subscription_button?.subscribed,
     songs: tracks(songShelf?.contents),
     songsMore: songShelf ? moreOf(songShelf) : undefined,
-    shelves: ar.sections.map(shelfOf).filter((s): s is Shelf => !!s && s.title !== text(songShelf?.title))
+    shelves: ar.sections
+      .map(shelfOf)
+      .filter((s): s is Shelf => !!s && s.title !== text(songShelf?.title))
+      // Release cards only give the year; Spotify reads "2021 • Album".
+      .map((s) => {
+        const kind = /\b(singles?|eps?)\b/i.test(s.title) ? 'Single' : /\balbums?\b/i.test(s.title) ? 'Album' : ''
+        const label = (sub: string) =>
+          /^\d{4}$/.test(sub) ? `${sub} • ${kind}` : sub.replace(/^(Single|EP|Album) • (\d{4})$/, '$2 • $1')
+        return kind ? { ...s, cards: s.cards.map((c) => ({ ...c, subtitle: label(c.subtitle) })) } : s
+      })
   }
 }
 
@@ -427,8 +456,11 @@ export async function search(query: string, filter: SearchFilter = 'all'): Promi
   const out: SearchResult = { songs: [], shelves: [] }
   // YTM returns a top-result card plus either titled shelves or a flat mixed list of single-item sections.
   const items: any[] = []
+  // Songs listed under an artist's top-result card leave the artist out (it's the card's).
+  const cardSongs = new Set<any>()
   for (const s of (res.contents ?? []) as any[]) {
     if (s.type === 'MusicCardShelf') {
+      for (const n of s.contents ?? []) cardSongs.add(n)
       const id = findKey(s.on_tap, 'videoId') ?? findKey(s.on_tap, 'browseId')
       if (id)
         out.top = {
@@ -441,7 +473,12 @@ export async function search(query: string, filter: SearchFilter = 'all'): Promi
     }
     items.push(...(s.contents ?? []))
   }
-  out.songs = tracks(items.filter((n) => n.item_type === 'song' || n.item_type === 'video'))
+  const songs = items.filter((n) => n.item_type === 'song' || n.item_type === 'video')
+  out.songs = songs.map(toTrack).flatMap((t, i) => {
+    if (!t) return []
+    if (!t.artists && cardSongs.has(songs[i]) && out.top?.kind === 'artist') return [{ ...t, artists: out.top.title, artistId: out.top.id }]
+    return [t]
+  })
   const groups: [string, Kind][] = [['Artists', 'artist'], ['Albums', 'album'], ['Playlists', 'playlist']]
   const all = cards(items)
   for (const [title, kind] of groups) {
