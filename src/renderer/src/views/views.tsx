@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ArtistPage, Card, Collection, HomeData, Shelf, Track } from '../../../shared/types'
-import { HeartFill, More, Shuffle } from '../components/icons'
+import { Edit, HeartFill, More, Shuffle } from '../components/icons'
 import { cardMenu, queue } from '../components/menus'
 import { CardTile, ErrorBox, GreenPlay, Img, Loading, ShelfRow, StickyHead, TrackTable } from '../components/ui'
-import { moreRoute, routeFor, sameRoute, sized, useApp, useCached, useColor } from '../lib'
+import { DeletePlaylist, EditDetails, PlaylistExtras } from './playlist'
+import { libraryChanged, moreRoute, routeFor, sameRoute, sized, useApp, useCached, useColor } from '../lib'
 
 // "55 songs • 3 hours, 9 minutes" -> "55 songs, 3 hr 9 min", as Spotify writes it.
 const spotifyMeta = (m: string) =>
@@ -118,7 +119,8 @@ async function shuffleWhenLoaded(videoId: string): Promise<void> {
 }
 
 export function CollectionView({ kind, id }: { kind: 'playlist' | 'album'; id: string }) {
-  const { player, playTrack, toast, go } = useApp()
+  const { player, playTrack, toast, go, source } = useApp()
+  const [dialog, setDialog] = useState<'edit' | 'delete' | null>(null)
   const actions = useRef<HTMLDivElement>(null)
   const key = `${kind}:${id}`
   const { data, error, set, retry } = useCached<Collection>(
@@ -149,8 +151,12 @@ export function CollectionView({ kind, id }: { kind: 'playlist' | 'album'; id: s
 
   if (error) return <ErrorBox error={error} onRetry={retry} />
   if (!data) return <Loading kind="collection" />
-  const from = { route: { name: kind, id } as const, title: data.title, ids: data.tracks.map((t) => t.videoId) }
-  const isCurrent = !!player && data.tracks.some((t) => t.videoId === player.videoId)
+  // While the rest of a long playlist is still loading, its later songs still count as "from" it.
+  const from = { route: { name: kind, id } as const, title: data.title, ids: data.more ? undefined : data.tracks.map((t) => t.videoId) }
+  // Playing from this page (not just the same song started somewhere else).
+  const isCurrent =
+    !!player?.videoId && (source ? sameRoute(source.route, from.route) : data.tracks.some((t) => t.videoId === player.videoId))
+  const editable = kind === 'playlist' && !!data.editable
   const play = () =>
     isCurrent ? window.ytm.cmd({ type: 'toggle' }) : data.tracks[0] && playTrack(data.tracks[0], data.playlistId, from)
   const shufflePlay = () => {
@@ -174,10 +180,18 @@ export function CollectionView({ kind, id }: { kind: 'playlist' | 'album'; id: s
       { id: 'shuffle', label: 'Shuffle play' },
       { id: 'next', label: 'Play next' },
       { id: 'queue', label: 'Add to queue' },
+      ...(editable
+        ? [
+            { id: '-', label: '-' },
+            { id: 'edit', label: 'Edit details' },
+            { id: 'delete', label: 'Delete' }
+          ]
+        : []),
       { id: '-', label: '-' },
       { id: 'share', label: 'Share', submenu: [{ id: 'copy', label: `Copy link to ${kind === 'album' ? 'Album' : 'playlist'}` }] },
       { id: 'open', label: 'Open in YouTube Music' }
     ])
+    if (pick === 'edit' || pick === 'delete') setDialog(pick)
     if (pick === 'play') play()
     if (pick === 'shuffle') shufflePlay()
     if (pick === 'next' || pick === 'queue')
@@ -193,12 +207,23 @@ export function CollectionView({ kind, id }: { kind: 'playlist' | 'album'; id: s
           <div className="hero-art liked-art">
             <HeartFill size={64} />
           </div>
+        ) : editable ? (
+          <button className="hero-art hero-edit" onClick={() => setDialog('edit')} aria-label="Edit details" title="Edit details">
+            <Img src={data.thumb} className="hero-art" />
+            <span className="hero-edit-hover">
+              <Edit size={48} />
+              <span>Choose photo</span>
+            </span>
+          </button>
         ) : (
           <Img src={data.thumb} className="hero-art" />
         )}
         <div className="hero-text">
           <span className="hero-kind">{heroKind}</span>
-          <h1 className="hero-title">{data.title}</h1>
+          <h1 className={`hero-title ${editable ? 'clickable' : ''}`} onClick={() => editable && setDialog('edit')}>
+            {data.title}
+          </h1>
+          {data.description && <p className="hero-desc sub">{data.description}</p>}
           <div className="hero-meta">
             {[
               data.owner && (
@@ -227,12 +252,12 @@ export function CollectionView({ kind, id }: { kind: 'playlist' | 'album'; id: s
           <More size={24} />
         </button>
       </div>
-      <TrackTable
+      {data.tracks.length > 0 && <TrackTable
         tracks={data.tracks}
         playlistId={data.playlistId}
         from={from}
         editable={
-          kind === 'playlist'
+          editable
             ? {
                 id,
                 onRemoved: (v) => {
@@ -243,7 +268,7 @@ export function CollectionView({ kind, id }: { kind: 'playlist' | 'album'; id: s
             : undefined
         }
         showAlbum={kind === 'playlist' && data.tracks.some((t) => t.album)}
-      />
+      />}
       {data.more && !moreFailed && <div className="loading">Loading more songs…</div>}
       {data.more && moreFailed && (
         <div className="loading">
@@ -253,22 +278,20 @@ export function CollectionView({ kind, id }: { kind: 'playlist' | 'album'; id: s
           </button>
         </div>
       )}
-      {!data.tracks.length && !data.more && (
+      {!editable && !data.tracks.length && !data.more && (
         <div className="empty-collection">
-          <h2>{kind === 'playlist' ? 'Let’s find something for your playlist' : 'Nothing to play here yet'}</h2>
-          {kind === 'playlist' && (
-            <button className="pill-btn" onClick={() => go({ name: 'search', q: '' })}>
-              Search for songs
-            </button>
-          )}
+          <h2>Nothing to play here yet</h2>
         </div>
       )}
+      {editable && !data.more && <PlaylistExtras key={id} data={data} />}
+      {dialog === 'edit' && <EditDetails data={data} onClose={() => setDialog(null)} />}
+      {dialog === 'delete' && <DeletePlaylist data={data} onClose={() => setDialog(null)} />}
     </div>
   )
 }
 
 export function ArtistView({ id }: { id: string }) {
-  const { playTrack, player, toast, go } = useApp()
+  const { playTrack, player, toast, go, source } = useApp()
   const actions = useRef<HTMLDivElement>(null)
   const { data, error, retry, set } = useCached<ArtistPage>(`artist:${id}`, () => window.ytm.artist(id), { revalidate: false })
   const color = useColor(data?.thumb)
@@ -278,7 +301,8 @@ export function ArtistView({ id }: { id: string }) {
   // Playing an artist plays their top songs as a list, like Spotify.
   const list = data.songsMore?.browseId.replace(/^VL/, '')
   const from = { route: { name: 'artist', id } as const, title: data.title, ids: data.songs.map((t) => t.videoId) }
-  const isCurrent = !!player && data.songs.some((t) => t.videoId === player.videoId)
+  const isCurrent =
+    !!player?.videoId && (source ? sameRoute(source.route, from.route) : data.songs.some((t) => t.videoId === player.videoId))
   const play = () => (isCurrent ? window.ytm.cmd({ type: 'toggle' }) : data.songs[0] && playTrack(data.songs[0], list, from))
   const shufflePlay = () => {
     const t = shuffled(data.songs)
@@ -292,7 +316,7 @@ export function ArtistView({ id }: { id: string }) {
     const on = !data.subscribed
     set({ ...data, subscribed: on })
     window.ytm.subscribe(id, on).then(
-      () => toast(on ? `Following ${data.title}` : `Unfollowed ${data.title}`),
+      () => (libraryChanged(), toast(on ? `Following ${data.title}` : `Unfollowed ${data.title}`)),
       () => (set({ ...data }), toast('That didn’t work — try again'))
     )
   }

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import * as yt from './api'
 import { lyrics } from './lyrics'
 import { buildMenu } from './menu'
-import { command, createPlayerWindow, placeVideo, rateVideo, subscribe, getState, onLoggedIn, setVideoMode, applyYtmSetting, showLogin, signOut, ytmSession, ytmSettings } from './player'
+import { command, createPlayerWindow, placeVideo, rateVideo, subscribe, getState, onLoggedIn, setVideoMode, applyYtmSetting, showLogin, signOut, uploadImage, ytmSession, ytmSettings } from './player'
 import { bindings, DEFAULT_PREFS, type Action } from '../shared/shortcuts'
 import type { PlayerState } from '../shared/types'
 
@@ -32,7 +32,9 @@ async function syncAuth(): Promise<void> {
   const cookies = await ytmSession().cookies.get({ url: 'https://music.youtube.com' })
   const now = cookies.some((c) => c.name === 'SAPISID')
   try {
-    if (now !== loggedIn || !yt.ready()) await yt.connect(now ? cookies.map((c) => `${c.name}=${c.value}`).join('; ') : undefined)
+    const jar = (list: Electron.Cookie[]) => list.map((c) => `${c.name}=${c.value}`).join('; ')
+    const fresh = async () => jar(await ytmSession().cookies.get({ url: 'https://music.youtube.com' }))
+    if (now !== loggedIn || !yt.ready()) await yt.connect(now ? jar(cookies) : undefined, now ? fresh : undefined)
   } catch (e) {
     // Offline: the window still opens, and data calls try to connect again (see `data` below).
     console.error('[auth]', (e as Error).message)
@@ -60,7 +62,7 @@ function createMain(): BrowserWindow {
     // A test run opens behind whatever the user is doing instead of taking focus.
     show: !testProfile,
     titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 16, y: 20 },
+    trafficLightPosition: { x: 16, y: 25 },
     webPreferences: { preload: join(dir, '../preload/index.mjs'), sandbox: false, spellcheck: false }
   }))
   // Like Spotify, closing the window keeps the music playing (the hidden player window lives on).
@@ -184,6 +186,11 @@ app.whenReady().then(() => {
   ipcMain.handle('yt:mood', data(yt.mood))
   ipcMain.handle('yt:addToPlaylist', data(yt.addToPlaylist))
   ipcMain.handle('yt:removeFromPlaylist', data(yt.removeFromPlaylist))
+  ipcMain.handle('yt:savablePlaylists', data(yt.savablePlaylists))
+  ipcMain.handle('yt:updatePlaylist', data(yt.updatePlaylist))
+  ipcMain.handle('yt:deletePlaylist', data(yt.deletePlaylist))
+  ipcMain.handle('yt:playlistSuggestions', data(yt.playlistSuggestions))
+  ipcMain.handle('yt:setPlaylistCover', data((id: string, image: { base64: string; mime: string }) => yt.setPlaylistCover(id, image, uploadImage)))
   ipcMain.handle('yt:rate', (_, videoId: string, like: boolean) => rateVideo(videoId, like))
   ipcMain.handle('yt:subscribe', (_, channelId: string, on: boolean) => subscribe(channelId, on))
   ipcMain.handle('yt:browseMore', data(yt.browseMore))

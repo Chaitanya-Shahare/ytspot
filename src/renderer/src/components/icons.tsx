@@ -139,10 +139,11 @@ export const More = svg(
   </>
 )
 export const Close = svg(<path d="m3 3 10 10M13 3 3 13" />, true)
+// A microphone.
 export const Lyrics = svg(
   <>
-    <circle cx="10.5" cy="5.5" r="3.5" />
-    <path d="m8 8-6 5.5L3 14.5l5.5-6M13 3 8 8" />
+    <rect x="5.25" y="1.5" width="5.5" height="8.5" rx="2.75" />
+    <path d="M2.75 7.75a5.25 5.25 0 0 0 10.5 0M8 13v1.75" />
   </>,
   true
 )
@@ -157,10 +158,18 @@ export const VolumeLow = svg(
   true
 )
 export const Note = svg(<path d="M6 2.5 14 1v9.5a2 2 0 1 1-1.5-1.94V4.2L7.5 5.2v7.3a2 2 0 1 1-1.5-1.94z" />)
+// A tray of cards (Spotify's "Browse").
 export const Browse = svg(
   <>
-    <rect x="1.5" y="4.5" width="13" height="10" rx="1.5" />
-    <path d="M3.5 2h9" />
+    <rect x="1.75" y="5.25" width="12.5" height="9" rx="1.5" />
+    <path d="M3.75 2.75h8.5M5.75 9.75h4.5" />
+  </>,
+  true
+)
+export const Edit = svg(
+  <>
+    <path d="M10.6 2.4a1.6 1.6 0 0 1 2.3 0l.7.7a1.6 1.6 0 0 1 0 2.3L6 13l-3.5.9.9-3.5z" />
+    <path d="m9.5 3.5 3 3" />
   </>,
   true
 )

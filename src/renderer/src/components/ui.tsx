@@ -197,6 +197,8 @@ export function TrackTable({
   }, [])
   const onKey = (e: React.KeyboardEvent) => {
     if (e.metaKey || e.altKey || e.ctrlKey) return
+    // A focused row button (play, "…") handles its own keys.
+    if ((e.target as HTMLElement).closest('button')) return
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault()
       select(Math.max(0, Math.min(tracks.length - 1, sel + (e.key === 'ArrowDown' ? 1 : -1))))

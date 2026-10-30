@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, useSyncExternalStore } from 'react'
+import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ShortcutPrefs } from '../../shared/shortcuts'
 import { DEFAULT_PREFS } from '../../shared/shortcuts'
 import type { Card, More, PlayerState, Track } from '../../shared/types'
@@ -33,10 +33,23 @@ export interface AppCtx {
   source: Source | null
   openCard: (c: Card) => void
   playCard: (c: Card) => void
-  toast: (msg: string) => void
+  toast: (msg: string, action?: ToastAction) => void
+  // Spotify's "Add to playlist" popover for a song, next to the button that opened it.
+  openSave: (song: SaveSong, from: HTMLElement) => void
   prefs: Prefs
   setPrefs: (p: Partial<Prefs>) => void
   openQueue: () => void
+}
+
+export interface ToastAction {
+  label: string
+  run: () => void
+}
+
+export interface SaveSong {
+  videoId: string
+  title: string
+  liked?: boolean // known like state (the playing song's is read live instead)
 }
 
 export interface Prefs {
@@ -105,24 +118,44 @@ const generation = new Map<string, number>()
 // Bumped on sign-in/out, so requests still on their way from the old session are dropped too.
 let session = 0
 const gen = (key: string) => `${session}:${generation.get(key) ?? 0}`
+// Pages showing a key reload it in place when it's invalidated (e.g. a song added to the open playlist).
+const keyWatchers = new Map<string, Set<() => void>>()
 export function invalidate(key: string): void {
   cache.delete(key)
   generation.set(key, (generation.get(key) ?? 0) + 1)
+  keyWatchers.get(key)?.forEach((f) => f())
+}
+// A playlist changed: its page reloads and the library's song counts follow.
+export function playlistChanged(id: string): void {
+  invalidate(`playlist:${id}`)
+  if (id === 'LM' || id === 'VLLM') invalidate(`playlist:${id === 'LM' ? 'VLLM' : 'LM'}`)
+  else libraryChanged()
 }
 // Signing in or out: nothing cached belongs to the new session.
 export function resetCache(): void {
   session++
+  ownPlaylists = null
   cache.clear()
   for (const k of Object.keys(localStorage)) if (k.startsWith('cache:')) localStorage.removeItem(k)
 }
 
 // Lets the library sidebar reload after a playlist is created elsewhere (e.g. a song's menu).
 const libraryWatchers = new Set<() => void>()
-export const libraryChanged = () => libraryWatchers.forEach((f) => f())
+export const libraryChanged = () => {
+  ownPlaylists = null
+  libraryWatchers.forEach((f) => f())
+}
 export const onLibraryChange = (f: () => void) => (libraryWatchers.add(f), () => void libraryWatchers.delete(f))
-// The user's playlists as last loaded by the library sidebar (for "Add to playlist").
-export const cachedPlaylists = (): Card[] =>
-  ([...cache].reverse().find(([k]) => k.startsWith('library:true:Playlists:'))?.[1] as Card[] | undefined) ?? []
+// The playlists you can add songs to (your own), for "Add to playlist"; YTM lists the same ones
+// whatever the song, so one fetch serves every menu until the library changes.
+let ownPlaylists: Promise<Card[]> | null = null
+export function savablePlaylists(videoId: string): Promise<Card[]> {
+  ownPlaylists ??= window.ytm.savablePlaylists(videoId).catch((e: Error) => {
+    ownPlaylists = null
+    throw e
+  })
+  return ownPlaylists
+}
 
 function read<T>(key: string, persist: boolean): T | undefined {
   if (cache.has(key) || !persist) return cache.get(key) as T | undefined
@@ -148,6 +181,30 @@ export function useCached<T>(
     if (gen(key) === loadedGen) store(data)
     setRes({ key, data })
   }
+  // Invalidated while on screen: fetch again and swap it in, keeping the current page up meanwhile.
+  const fnRef = useRef(fn)
+  fnRef.current = fn
+  useEffect(() => {
+    let live = true
+    const reload = () => {
+      const g = gen(key)
+      fnRef.current().then(
+        (data) => {
+          if (gen(key) === g) store(data)
+          if (live) (setLoadedGen(g), setRes({ key, data }))
+        },
+        () => undefined
+      )
+    }
+    let set = keyWatchers.get(key)
+    if (!set) keyWatchers.set(key, (set = new Set()))
+    set.add(reload)
+    return () => {
+      live = false
+      set.delete(reload)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key])
   useEffect(() => {
     let live = true
     const cached = read<T>(key, persist)

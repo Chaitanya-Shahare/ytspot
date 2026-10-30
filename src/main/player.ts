@@ -453,3 +453,33 @@ export async function applyYtmSetting(endpoint: unknown): Promise<void> {
     if (!before.playing) command({ type: 'toggle' })
   }, 3000)
 }
+
+// Uploads a playlist cover the way YTM's "Edit thumbnail" dialog does: a resumable Scotty upload
+// from the signed-in page itself (it authenticates with the page's cookies). Returns the blob id
+// that the playlist edit then points at.
+export async function uploadImage(url: string, base64: string, mime: string): Promise<string> {
+  if (!page) throw new Error('YouTube Music isn’t loaded yet')
+  const id = await page.executeJavaScript(
+    `(async (url, b64, mime) => {
+      const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+      const start = await fetch(url, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'X-Goog-Upload-Protocol': 'resumable', 'X-Goog-Upload-Command': 'start', 'X-Goog-Upload-Header-Content-Length': String(bytes.length) }
+      })
+      const to = start.headers.get('X-Goog-Upload-URL')
+      if (!start.ok || !to) throw new Error('Upload refused (' + start.status + ')')
+      const done = await fetch(to, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'X-Goog-Upload-Command': 'upload, finalize', 'X-Goog-Upload-Offset': '0', 'Content-Type': mime },
+        body: bytes
+      })
+      if (!done.ok) throw new Error('Upload failed (' + done.status + ')')
+      return (await done.json()).encryptedBlobId
+    })(${JSON.stringify(url)}, ${JSON.stringify(base64)}, ${JSON.stringify(mime)})`,
+    true
+  )
+  if (!id) throw new Error('YouTube Music didn’t accept the image')
+  return id as string
+}
