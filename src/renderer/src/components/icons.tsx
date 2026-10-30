@@ -52,13 +52,14 @@ export const Shuffle = svg(
   </>,
   true
 )
-// Spotify's Smart Shuffle icon: the shuffle arrows with a sparkle in place of the top-left end.
+// Spotify's Smart Shuffle icon: a sparkle top-left, the rising arrow whole and only the end of the
+// falling one, so the sparkle has room.
 export const ShuffleSmart = svg(
   <>
-    <path d="M5.4 4.3c.4.3.7.7.9 1.1l3.4 5.2c.6.9 1.5 1.4 2.6 1.4h2" />
-    <path d="M1.5 12h2.2c1.1 0 2-.5 2.6-1.4l.5-.8M9.2 6.2l.5-.8C10.3 4.5 11.2 4 12.3 4h2" />
+    <path d="M3.2 12h.5c1.1 0 2-.5 2.6-1.4l3.4-5.2C10.3 4.5 11.2 4 12.3 4h2" />
+    <path d="M9.2 9.8l.5.8c.6.9 1.5 1.4 2.6 1.4h2" />
     <path d="M12.7 2.3 14.4 4l-1.7 1.7M12.7 10.3l1.7 1.7-1.7 1.7" />
-    <path d="M2.8 1.2Q3.1 3 4.6 3.3 3.1 3.6 2.8 5.4 2.5 3.6 1 3.3 2.5 3 2.8 1.2Z" fill="currentColor" strokeWidth={0.8} />
+    <path d="M4.3.7Q4.8 3.8 7.9 4.3 4.8 4.8 4.3 7.9 3.8 4.8.7 4.3 3.8 3.8 4.3.7Z" fill="currentColor" strokeWidth={1} />
   </>,
   true
 )
