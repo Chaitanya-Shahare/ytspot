@@ -12,6 +12,7 @@ import type {
   Kind,
   More,
   LibraryFilter,
+  Privacy,
   SearchFilter,
   SearchResult,
   Shelf,
@@ -22,8 +23,16 @@ type Playlist = YTMusic.Playlist
 
 let yt: Innertube | null = null
 
-export async function connect(cookie?: string): Promise<void> {
-  yt = await Innertube.create({ cookie, retrieve_player: false })
+// `fresh` reads the signed-in page's cookies as they are now: the page rotates some of them
+// (__Secure-*PSIDTS) while the app runs for days, so each request sends the current set instead
+// of the snapshot taken at sign-in.
+export async function connect(cookie?: string, fresh?: () => Promise<string>): Promise<void> {
+  const send: typeof fetch = async (input, init) => {
+    const headers = init?.headers
+    if (fresh && headers instanceof Headers && headers.has('Cookie')) headers.set('Cookie', (await fresh()) || headers.get('Cookie')!)
+    return fetch(input, init)
+  }
+  yt = await Innertube.create({ cookie, retrieve_player: false, fetch: send })
   homeFeed = null
 }
 
@@ -34,19 +43,23 @@ function api(): Innertube {
   return yt
 }
 
+// Raw (unparsed) InnerTube text: { runs: [{ text }] } or { simpleText }.
+const runs = (t: any): string => t?.simpleText ?? (t?.runs ?? []).map((r: any) => r.text).join('')
 const text = (t: any): string => (t ? String(t.toString?.() ?? t.text ?? '') : '')
 
 function thumb(list: any): string {
-  const arr = Array.isArray(list) ? list : list?.contents
-  const url: string = arr?.length ? arr[arr.length - 1].url : ''
+  const arr: any[] = (Array.isArray(list) ? list : list?.contents) ?? []
+  // Usually smallest first, but custom playlist covers come largest first: take the widest.
+  const url: string = arr.reduce((best: any, t: any) => (!best || (t.width ?? 0) >= (best.width ?? 0) ? t : best), null)?.url ?? ''
   return url.replace(/=w\d+-h\d+/, '=w544-h544')
 }
 
-function findKey(obj: any, key: string, depth = 0): string | undefined {
-  if (!obj || typeof obj !== 'object' || depth > 8) return undefined
-  if (typeof obj[key] === 'string') return obj[key]
+// The first `key` found in a nested object: a string, or (with `any`) whatever value it holds.
+function findKey(obj: any, key: string, depth = 0, any = false): string | undefined {
+  if (!obj || typeof obj !== 'object' || depth > (any ? 40 : 8)) return undefined
+  if (typeof obj[key] === 'string' || (any && obj[key] !== undefined)) return obj[key]
   for (const v of Object.values(obj)) {
-    const hit = findKey(v, key, depth + 1)
+    const hit = findKey(v, key, depth + 1, any)
     if (hit) return hit
   }
   return undefined
@@ -193,19 +206,109 @@ export async function mood(params: string): Promise<Shelf[]> {
   return [...shelves, ...grids].filter((x): x is Shelf => !!x)
 }
 
-export async function addToPlaylist(playlistId: string, videoId: string): Promise<void> {
-  await api().playlist.addVideos(playlistId.replace(/^VL/, ''), [videoId])
+const bare = (playlistId: string) => playlistId.replace(/^VL/, '')
+
+// YTM's own playlist edit call. youtubei.js's wrappers send a few of these wrong (setName sends
+// `playlist_id`), so they're built here the way music.youtube.com sends them.
+async function editPlaylist(playlistId: string, actions: object[]): Promise<any> {
+  const res = await api().actions.execute('/browse/edit_playlist', { playlistId: bare(playlistId), actions, client: 'YTMUSIC' })
+  return res.data
 }
 
-// youtubei.js finds the entry by video id and refuses playlists you can't edit.
+// Adds a song unless it's already there, like YTM's own "Save to playlist" (which offers "Add anyway").
+export async function addToPlaylist(playlistId: string, videoId: string, force = false): Promise<'added' | 'duplicate'> {
+  const res = await editPlaylist(playlistId, [
+    { action: 'ACTION_ADD_VIDEO', addedVideoId: videoId, dedupeOption: force ? 'DEDUPE_OPTION_SKIP' : 'DEDUPE_OPTION_CHECK' }
+  ])
+  if (res?.status === 'STATUS_SUCCEEDED') return 'added'
+  if (JSON.stringify(res?.actions ?? '').includes('DEDUPE_OPTION_SKIP')) return 'duplicate'
+  throw new Error('YouTube Music didn’t add the song')
+}
+
 export async function removeFromPlaylist(playlistId: string, videoId: string): Promise<void> {
-  await api().playlist.removeVideos(playlistId.replace(/^VL/, ''), [videoId])
+  const res = await editPlaylist(playlistId, [{ action: 'ACTION_REMOVE_VIDEO_BY_VIDEO_ID', removedVideoId: videoId }])
+  if (res?.status !== 'STATUS_SUCCEEDED') throw new Error('You can only remove songs from your own playlists')
+}
+
+// The playlists a song can be saved to (the user's own), as YTM's "Save to playlist" lists them.
+export async function savablePlaylists(videoId: string): Promise<Card[]> {
+  const res: any = await api().actions.execute('/playlist/get_add_to_playlist', { videoIds: [videoId], client: 'YTMUSIC' })
+  const list: any[] = res.data?.contents?.[0]?.addToPlaylistRenderer?.playlists ?? []
+  return list
+    .map((x) => x.playlistAddToOptionRenderer)
+    .filter((p) => p?.playlistId && p.playlistId !== 'LM')
+    .map((p) => ({
+      kind: 'playlist' as const,
+      id: `VL${p.playlistId}`,
+      title: runs(p.title),
+      subtitle: runs(p.shortBylineText),
+      thumb: thumb(p.thumbnailRenderer?.musicThumbnailRenderer?.thumbnail?.thumbnails ?? [])
+    }))
+}
+
+export interface PlaylistEdit {
+  title?: string
+  description?: string
+  privacy?: Privacy
+}
+
+export async function updatePlaylist(playlistId: string, e: PlaylistEdit): Promise<void> {
+  const actions = [
+    e.title !== undefined && { action: 'ACTION_SET_PLAYLIST_NAME', playlistName: e.title },
+    e.description !== undefined && { action: 'ACTION_SET_PLAYLIST_DESCRIPTION', playlistDescription: e.description },
+    e.privacy && { action: 'ACTION_SET_PLAYLIST_PRIVACY', playlistPrivacy: e.privacy }
+  ].filter(Boolean) as object[]
+  if (!actions.length) return
+  const res = await editPlaylist(playlistId, actions)
+  if (res?.status !== 'STATUS_SUCCEEDED') throw new Error('YouTube Music didn’t save the changes')
+}
+
+// A custom cover, as YTM's "Edit thumbnail" sets it: upload the (already square-cropped) image,
+// then point the playlist at it. The upload URL and action come from the playlist page itself.
+export async function setPlaylistCover(
+  playlistId: string,
+  image: { base64: string; mime: string },
+  upload: (url: string, base64: string, mime: string) => Promise<string>
+): Promise<void> {
+  const res: any = await api().actions.execute('/browse', { browseId: `VL${bare(playlistId)}`, client: 'YTMUSIC' })
+  const json = JSON.stringify(res.data)
+  const url = json.match(/"scottyUploadUrl":"([^"]+)"/)?.[1] ?? 'https://music.youtube.com/playlist_image_upload/playlist_custom_thumbnail'
+  const key = findKey(res.data, 'addedCustomThumbnail', 0, true) as any
+  const blob = await upload(url, image.base64, image.mime)
+  const done = await editPlaylist(playlistId, [
+    {
+      action: 'ACTION_SET_CUSTOM_THUMBNAIL',
+      addedCustomThumbnail: {
+        imageKey: key?.imageKey ?? { type: 'PLAYLIST_IMAGE_TYPE_CUSTOM_THUMBNAIL', name: 'studio_square_thumbnail' },
+        playlistScottyEncryptedBlobId: blob
+      }
+    }
+  ])
+  if (done?.status !== 'STATUS_SUCCEEDED') throw new Error('YouTube Music didn’t change the cover')
+}
+
+export async function deletePlaylist(playlistId: string): Promise<void> {
+  await api().actions.execute('/playlist/delete', { playlistId: bare(playlistId), client: 'YTMUSIC' })
+}
+
+// YTM's "Suggestions" under a playlist you own. Each call returns the next batch (its Refresh).
+const suggestionPages = new Map<string, Playlist>()
+export async function playlistSuggestions(id: string, refresh = false): Promise<Track[]> {
+  let pl = suggestionPages.get(id)
+  if (!pl || !refresh) suggestionPages.set(id, (pl = await api().music.getPlaylist(id)))
+  return tracks((await pl.getSuggestions(true)) as any[])
 }
 
 export async function library(filter: LibraryFilter): Promise<Card[]> {
-  let lib = await api().music.getLibrary()
+  let lib: any = await api().music.getLibrary()
   if (lib.filters.includes(filter)) lib = await lib.applyFilter(filter)
   const items = (lib.contents ?? []).flatMap((s: any) => s.items ?? s.contents ?? [])
+  // Big libraries come in pages; follow them (with a cap, in case YTM keeps offering more).
+  for (let page = lib, n = 0; page.has_continuation && n < 20; n++) {
+    page = await page.getContinuation().catch(() => null)
+    if (!page) break
+    items.push(...(page.contents?.contents ?? page.contents?.items ?? []))
+  }
   return cards(items).filter((c) => c.kind !== 'other' && c.kind !== 'song')
 }
 
@@ -228,16 +331,24 @@ function header(h: any): { title: string; subtitle: string; meta: string; thumb:
 // accumulated here, so a repeated or concurrent call never skips or duplicates tracks.
 const pending = new Map<string, { pl: Playlist; tracks: Track[]; busy?: Promise<void> }>()
 
-export async function playlist(id: string): Promise<Collection> {
+// `peek` (playing or queueing a card) reads the first page without disturbing a playlist page
+// that's still loading the rest of the same playlist.
+export async function playlist(id: string, peek = false): Promise<Collection> {
   const pl = await api().music.getPlaylist(id)
   const first = tracks(pl.items as any[])
   if (!pl.header && !first.length) throw new Error('Couldn’t find that playlist. It may have been deleted or made private.')
-  pending.set(id, { pl, tracks: [...first] })
+  if (!peek) pending.set(id, { pl, tracks: [...first] })
+  // Only playlists you own come with YTM's edit header (title, description, privacy).
+  const edit = (pl.page.contents_memo?.get('MusicEditablePlaylistDetailHeader')?.[0] as any)?.edit_header
+  const h: any = pl.header
   return {
     kind: 'playlist',
     id,
-    playlistId: id.replace(/^VL/, ''),
+    playlistId: bare(id),
     ...header(pl.header),
+    description: text(h?.description?.description ?? h?.description).replace(/^N\/A$/, '') || undefined,
+    editable: !!edit && id !== 'LM' && id !== 'VLLM',
+    privacy: edit?.privacy,
     tracks: first,
     more: pl.has_continuation
   }
@@ -270,10 +381,10 @@ export async function account(): Promise<{ name: string; photo: string } | null>
   return me ? { name: text(me.account_name), photo: thumb(me.account_photo) } : null
 }
 
-export async function createPlaylist(title: string): Promise<string> {
-  const res = await api().playlist.create(title, [], 'PRIVATE')
-  if (!res.playlist_id) throw new Error('YouTube did not return a playlist id')
-  return `VL${res.playlist_id}`
+export async function createPlaylist(title: string, videoIds: string[] = [], privacy: Privacy = 'PRIVATE'): Promise<string> {
+  const res: any = await api().actions.execute('/playlist/create', { title, privacyStatus: privacy, videoIds, client: 'YTMUSIC' })
+  if (!res.data?.playlistId) throw new Error('YouTube Music didn’t create the playlist')
+  return `VL${res.data.playlistId}`
 }
 
 export async function album(id: string): Promise<Collection> {

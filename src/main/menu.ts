@@ -39,7 +39,8 @@ export function buildMenu(
           item('home'), item('explore'), item('search'), item('liked'), item('library'), sep,
           item('back', 'Back'), item('forward', 'Forward'), sep,
           item('queue'), item('lyrics'), item('toggleLeft'), item('toggleRight'), sep,
-          { role: 'reload' }, { role: 'toggleDevTools' }, sep,
+          // Cmd+R is Spotify's Repeat, so Reload keeps no shortcut of its own.
+          { label: 'Reload', click: (_i, win) => (win as BrowserWindow | undefined)?.webContents.reload() }, { role: 'toggleDevTools' }, sep,
           { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, sep,
           item('fullscreen')
         ]

@@ -43,6 +43,9 @@ export interface Collection {
   owner?: string // album artist or playlist owner
   ownerId?: string
   playlistId?: string
+  description?: string
+  editable?: boolean // a playlist you own (rename, cover, remove songs, suggestions)
+  privacy?: Privacy
   tracks: Track[]
   more?: boolean
   loaded?: number // songs fetched so far, counting ones since removed (the next page starts here)
@@ -141,3 +144,5 @@ export interface YtmSetting {
 export type SearchFilter = 'all' | 'song' | 'video' | 'album' | 'artist' | 'playlist'
 
 export type LibraryFilter = 'Playlists' | 'Albums' | 'Artists'
+
+export type Privacy = 'PUBLIC' | 'UNLISTED' | 'PRIVATE'

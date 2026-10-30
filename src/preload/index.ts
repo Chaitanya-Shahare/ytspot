@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { Action } from '../shared/shortcuts'
-import type { Card, HomeData, LibraryFilter, Lyrics, More, PlayerCommand, PlayerState, SearchFilter, YtmSetting } from '../shared/types'
+import type { Card, HomeData, LibraryFilter, Lyrics, More, PlayerCommand, PlayerState, Privacy, SearchFilter, Track, YtmSetting } from '../shared/types'
 import type { LyricsQuery } from '../main/lyrics'
 
 export interface PopupItem {
@@ -20,18 +20,26 @@ const bridge = {
   explore: () => ipcRenderer.invoke('yt:explore'),
   moods: () => ipcRenderer.invoke('yt:moods'),
   mood: (params: string) => ipcRenderer.invoke('yt:mood', params),
-  addToPlaylist: (playlistId: string, videoId: string) => ipcRenderer.invoke('yt:addToPlaylist', playlistId, videoId),
+  // 'duplicate' when the song is already there (pass `force` to add it again anyway).
+  addToPlaylist: (playlistId: string, videoId: string, force?: boolean): Promise<'added' | 'duplicate'> =>
+    ipcRenderer.invoke('yt:addToPlaylist', playlistId, videoId, force),
   removeFromPlaylist: (playlistId: string, videoId: string) =>
     ipcRenderer.invoke('yt:removeFromPlaylist', playlistId, videoId),
+  savablePlaylists: (videoId: string): Promise<Card[]> => ipcRenderer.invoke('yt:savablePlaylists', videoId),
+  updatePlaylist: (id: string, e: { title?: string; description?: string; privacy?: Privacy }) => ipcRenderer.invoke('yt:updatePlaylist', id, e),
+  deletePlaylist: (id: string) => ipcRenderer.invoke('yt:deletePlaylist', id),
+  playlistSuggestions: (id: string, refresh?: boolean): Promise<Track[]> => ipcRenderer.invoke('yt:playlistSuggestions', id, refresh),
+  setPlaylistCover: (id: string, image: { base64: string; mime: string }) => ipcRenderer.invoke('yt:setPlaylistCover', id, image),
   rate: (videoId: string, like: boolean) => ipcRenderer.invoke('yt:rate', videoId, like),
   subscribe: (channelId: string, on: boolean) => ipcRenderer.invoke('yt:subscribe', channelId, on),
   browseMore: (more: More): Promise<Card[]> => ipcRenderer.invoke('yt:browseMore', more),
   ytmSettings: (): Promise<YtmSetting[]> => ipcRenderer.invoke('ytm:settings'),
   applyYtmSetting: (endpoint: unknown) => ipcRenderer.invoke('ytm:applySetting', endpoint),
   library: (f: LibraryFilter) => ipcRenderer.invoke('yt:library', f),
-  playlist: (id: string) => ipcRenderer.invoke('yt:playlist', id),
+  playlist: (id: string, peek?: boolean) => ipcRenderer.invoke('yt:playlist', id, peek),
   playlistMore: (id: string, have: number) => ipcRenderer.invoke('yt:playlistMore', id, have),
-  createPlaylist: (title: string): Promise<string> => ipcRenderer.invoke('yt:createPlaylist', title),
+  createPlaylist: (title: string, videoIds?: string[], privacy?: Privacy): Promise<string> =>
+    ipcRenderer.invoke('yt:createPlaylist', title, videoIds, privacy),
   album: (id: string) => ipcRenderer.invoke('yt:album', id),
   artist: (id: string) => ipcRenderer.invoke('yt:artist', id),
   search: (q: string, filter?: SearchFilter) => ipcRenderer.invoke('yt:search', q, filter),

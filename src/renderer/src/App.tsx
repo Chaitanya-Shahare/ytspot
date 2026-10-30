@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ArtistPage, Card, LibraryFilter, PlayerState, QueueItem, Track } from '../../shared/types'
 import * as I from './components/icons'
-import { cachedPlaylists, Ctx, fmt, getClock, invalidate, loadPrefs, onLibraryChange, resetCache, routeFor, savePrefs, setClock, sized, useApp, useCached, useColor, useTime, type AppCtx, type Prefs, type Route, type Source, sameRoute } from './lib'
+import { Ctx, fmt, getClock, libraryChanged, loadPrefs, onLibraryChange, playlistChanged, resetCache, routeFor, savePrefs, setClock, sized, useApp, useCached, useColor, useTime, type AppCtx, type Prefs, type Route, type SaveSong, type Source, type ToastAction, sameRoute } from './lib'
 import { bindings, comboLabel, comboOf, SHORTCUTS, type Action } from '../../shared/shortcuts'
 import { cardMenu, songMenu } from './components/menus'
 import { Boundary, Img } from './components/ui'
+import { SavePopover } from './components/save'
 import { SettingsView } from './views/settings'
 import { LyricsCard, LyricsView } from './views/lyrics'
 import { MoodView, SearchView } from './views/search'
@@ -24,6 +25,7 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
 // icon rail when dragged narrower than COLLAPSE_AT.
 const MAIN_MIN = 400
 const COLLAPSE_AT = 200
+const REPEATABLE = new Set<Action>(['seekFwd', 'seekBack', 'seekFwdSmall', 'seekBackSmall', 'volUp', 'volDown', 'back', 'forward'])
 const OVERLAY_ACTIONS = new Set<Action>(['toggle', 'next', 'prev', 'seekFwd', 'seekBack', 'seekFwdSmall', 'seekBackSmall', 'shuffle', 'repeat', 'volUp', 'volDown', 'mute', 'like', 'dislike', 'fullscreen', 'help'])
 
 export default function App() {
@@ -35,7 +37,10 @@ export default function App() {
   const forward = useCallback(() => setNav((n) => ({ ...n, pos: Math.min(n.history.length - 1, n.pos + 1) })), [])
   const [player, setPlayer] = useState<PlayerState | null>(null)
   // A repeated message restarts the timer (each toast has its own id); `out` plays the fade-out.
-  const [toastMsg, setToastMsg] = useState<{ id: number; msg: string; out?: boolean } | null>(null)
+  const [toastMsg, setToastMsg] = useState<{ id: number; msg: string; action?: ToastAction; out?: boolean } | null>(null)
+  const [save, setSave] = useState<{ song: SaveSong; anchor: DOMRect } | null>(null)
+  const openSave = useCallback((song: SaveSong, from: HTMLElement) => setSave({ song, anchor: from.getBoundingClientRect() }), [])
+  const closeSave = useCallback(() => setSave(null), [])
   const [left, setLeft] = useState(window.innerWidth > 1100)
   const [right, setRight] = useState(true)
   // The right sidebar shows either Now Playing or the Queue, as in Spotify.
@@ -125,19 +130,30 @@ export default function App() {
     lastAuth.current = authed
   }, [authed])
 
-  const toast = useCallback((msg: string) => setToastMsg({ id: Date.now(), msg }), [])
+  const toast = useCallback((msg: string, action?: ToastAction) => setToastMsg({ id: Date.now(), msg, action }), [])
   useEffect(() => {
     if (!toastMsg || toastMsg.out) return
-    const t = setTimeout(() => setToastMsg((m) => m && { ...m, out: true }), 3000)
+    // One with a button stays long enough to reach it.
+    const t = setTimeout(() => setToastMsg((m) => m && { ...m, out: true }), toastMsg.action ? 5000 : 3000)
     return () => clearTimeout(t)
   }, [toastMsg])
 
   const like = useCallback(() => {
     if (!player?.videoId) return
     window.ytm.cmd({ type: 'like' })
-    invalidate('playlist:LM')
+    playlistChanged('LM')
     toast(player?.liked ? 'Removed from Liked Songs' : 'Added to Liked Songs')
   }, [player?.videoId, player?.liked, toast])
+  // Spotify's + button: saves the song to Liked Songs and opens "Add to playlist" for anything else;
+  // once saved (a green tick) it just opens the popover, where Liked Songs can be unticked.
+  const plus = useCallback(
+    (from: HTMLElement) => {
+      if (!player?.videoId) return
+      if (!player.liked) like()
+      openSave({ videoId: player.videoId, title: player.title }, from)
+    },
+    [player?.videoId, player?.liked, player?.title, like, openSave]
+  )
   const closeFull = useCallback(() => setFull(false), [])
   // The song went away (e.g. the player page reloaded): leave full screen rather than leave it
   // armed for whatever plays next.
@@ -201,7 +217,7 @@ export default function App() {
           window.ytm.cmd({ type: 'play', videoId: a.songs[0].videoId, playlistId: a.songsMore?.browseId.replace(/^VL/, '') })
           return
         }
-        const col = c.kind === 'album' ? await window.ytm.album(c.id) : await window.ytm.playlist(c.id)
+        const col = c.kind === 'album' ? await window.ytm.album(c.id) : await window.ytm.playlist(c.id, true)
         if (!col.tracks[0]) return
         setSource({ route: r, title: c.title, ids: col.tracks.map((t: Track) => t.videoId) })
         window.ytm.cmd({ type: 'play', videoId: col.tracks[0].videoId, playlistId: col.playlistId })
@@ -284,6 +300,8 @@ export default function App() {
       const combo = comboOf(e)
       if (!combo) return
       if (typing && (!e.metaKey || /Left|Right|Up|Down/.test(combo))) return
+      // Space / Enter on a focused button, switch or link press it rather than play/pause.
+      if ((e.key === ' ' || e.key === 'Enter') && el?.closest('button, a, [role=switch], [role=slider], select')) return
       const seq = pending ? `${pending} ${combo}` : combo
       clearTimeout(timer)
       pending = ''
@@ -293,6 +311,8 @@ export default function App() {
       if (a && (help || full) && !OVERLAY_ACTIONS.has(a)) return e.preventDefault()
       if (a) {
         e.preventDefault()
+        // Holding a key repeats seeking and volume, not toggles like play/pause or shuffle.
+        if (e.repeat && !REPEATABLE.has(a)) return
         return run(a)
       }
       if ([...byCombo.keys()].some((k) => k.startsWith(`${seq} `))) {
@@ -309,8 +329,8 @@ export default function App() {
   // "Playing from" holds only while one of its songs is playing (not after radio or autoplay).
   const liveSource = source && (!source.ids || !player?.videoId || source.ids.includes(player.videoId)) ? source : null
   const ctx: AppCtx = useMemo(
-    () => ({ route, go, player, playTrack, source: liveSource, openCard, playCard, toast, prefs, setPrefs, openQueue }),
-    [route, go, player, playTrack, liveSource, openCard, playCard, toast, prefs, setPrefs, openQueue]
+    () => ({ route, go, player, playTrack, source: liveSource, openCard, playCard, toast, openSave, prefs, setPrefs, openQueue }),
+    [route, go, player, playTrack, liveSource, openCard, playCard, toast, openSave, prefs, setPrefs, openQueue]
   )
 
   if (authed === null) return <div className="splash" />
@@ -374,7 +394,7 @@ export default function App() {
               {panel === 'queue' ? (
                 <QueuePanel onClose={() => setRight(false)} />
               ) : (
-                <NowPlayingPanel onClose={() => setRight(false)} onLike={like} onQueue={openQueue} covered={help || full} />
+                <NowPlayingPanel onClose={() => setRight(false)} onPlus={plus} onQueue={openQueue} covered={help || full} />
               )}
             </Boundary>
           </>
@@ -383,7 +403,7 @@ export default function App() {
           rightOpen={rightShown && panel === 'np'}
           queueOpen={rightShown && panel === 'queue'}
           onToggleRight={() => showPanel('np')}
-          onLike={like}
+          onPlus={plus}
           onShuffle={shuffle}
           onLyrics={toggleLyrics}
           onFull={() => setFull(true)}
@@ -391,7 +411,7 @@ export default function App() {
       </div>
       {full && player?.videoId && (
         <Boundary resetKey={player.videoId}>
-          <FullScreenView onClose={closeFull} onLike={like} onShuffle={shuffle} covered={help} />
+          <FullScreenView onClose={closeFull} onPlus={plus} onShuffle={shuffle} covered={help} />
         </Boundary>
       )}
       {help && <ShortcutsModal keys={keys} onClose={() => setHelp(false)} />}
@@ -403,8 +423,14 @@ export default function App() {
           onAnimationEnd={() => toastMsg.out && setToastMsg(null)}
         >
           {toastMsg.msg}
+          {toastMsg.action && (
+            <button className="toast-action" onClick={() => (toastMsg.action!.run(), setToastMsg({ ...toastMsg, out: true }))}>
+              {toastMsg.action.label}
+            </button>
+          )}
         </div>
       )}
+      {save && <SavePopover key={save.song.videoId} song={save.song} anchor={save.anchor} onClose={closeSave} />}
       <Tooltips />
     </Ctx.Provider>
   )
@@ -539,21 +565,26 @@ function LibraryPanel({ authed, collapsed, onToggle }: { authed: boolean; collap
     return data ?? (authed ? (last.current[f] ?? []) : [])
   }
   const lists = { Playlists: load('Playlists'), Artists: load('Artists'), Albums: load('Albums') }
+  // Playlists made here show at the top right away; YTM's library can take a moment to list them.
+  const [made, setMade] = useState<Card[]>([])
   const create = async () => {
     if (!authed) return window.ytm.login()
     const pick = await window.ytm.popup([{ id: 'playlist', label: 'Playlist' }])
     if (pick !== 'playlist') return
-    const n = cachedPlaylists().filter((c) => c.title.startsWith('My Playlist #')).length + 1
+    // "My Playlist #N", numbered after the highest one so far, as in Spotify.
+    const n = Math.max(0, ...[...made, ...lists.Playlists].map((c) => Number(c.title.match(/^My Playlist #(\d+)$/)?.[1] ?? 0))) + 1
+    const title = `My Playlist #${n}`
     try {
-      const id = await window.ytm.createPlaylist(`My Playlist #${n}`)
-      toast(`Created My Playlist #${n}`)
-      setVersion((v) => v + 1)
+      const id = await window.ytm.createPlaylist(title)
+      setMade((m) => [{ kind: 'playlist', id, title, subtitle: 'Playlist • You', thumb: '' }, ...m])
+      libraryChanged()
       go({ name: 'playlist', id })
     } catch {
       toast('Couldn’t create the playlist')
     }
   }
-  const playlists = [LIKED, ...lists.Playlists.filter((c) => c.id !== 'VLLM')]
+  const listed = new Set(lists.Playlists.map((c) => c.id))
+  const playlists = [LIKED, ...made.filter((c) => !listed.has(c.id)), ...lists.Playlists.filter((c) => c.id !== 'VLLM')]
   let list = filter === 'Artists' ? lists.Artists : filter === 'Albums' ? lists.Albums : filter ? playlists : [...playlists, ...lists.Albums, ...lists.Artists]
   if (find) list = list.filter((c) => `${c.title} ${c.subtitle}`.toLowerCase().includes(find.toLowerCase()))
   // "Recents" keeps YouTube Music's own order (most recent first); Liked Songs stays pinned on top.
@@ -738,7 +769,7 @@ function upcomingOf(player: PlayerState) {
   return player.queue.map((q, i) => ({ q, i })).slice(idx + 1).filter(({ q }) => q.videoId)
 }
 
-function NowPlayingPanel({ onClose, onLike, onQueue, covered }: { onClose: () => void; onLike: () => void; onQueue: () => void; covered: boolean }) {
+function NowPlayingPanel({ onClose, onPlus, onQueue, covered }: { onClose: () => void; onPlus: (from: HTMLElement) => void; onQueue: () => void; covered: boolean }) {
   const ctx = useApp()
   const { player, go, prefs, setPrefs } = ctx
   if (!player) return null
@@ -786,14 +817,7 @@ function NowPlayingPanel({ onClose, onLike, onQueue, covered }: { onClose: () =>
               {player.artist}
             </div>
           </div>
-          <button
-            className={`icon-btn ${player.liked ? 'green' : ''}`}
-            onClick={onLike}
-            aria-label={player.liked ? 'Remove from Liked Songs' : 'Add to Liked Songs'}
-            title={player.liked ? 'Remove from Liked Songs' : 'Add to Liked Songs'}
-          >
-            {player.liked ? <I.CheckCircle size={24} /> : <I.PlusCircle size={24} />}
-          </button>
+          <PlusButton liked={player.liked} onPlus={onPlus} size={24} />
         </div>
         <div className="np-video">
           <button className="outline-btn small" onClick={switchVideo}>
@@ -1081,6 +1105,21 @@ function Tooltips() {
   )
 }
 
+// The + / green tick next to the playing song (player bar, Now Playing, full screen).
+function PlusButton({ liked, onPlus, size = 16 }: { liked: boolean; onPlus: (from: HTMLElement) => void; size?: number }) {
+  return (
+    <button
+      className={`icon-btn plus-btn ${liked ? 'green' : ''}`}
+      style={{ width: size + 16, height: size + 16 }}
+      onClick={(e) => onPlus(e.currentTarget)}
+      aria-label={liked ? 'Add to playlist' : 'Add to Liked Songs'}
+      title={liked ? 'Add to playlist' : 'Add to Liked Songs'}
+    >
+      {liked ? <I.CheckCircle size={size} /> : <I.PlusCircle size={size} />}
+    </button>
+  )
+}
+
 const REPEAT_LABEL = { NONE: 'Enable repeat', ALL: 'Enable repeat one', ONE: 'Disable repeat' } as const
 
 // Shuffle / previous / play / next / repeat, shared by the player bar and the full-screen view.
@@ -1194,7 +1233,7 @@ function Resizer({ side, width, onResize, label }: { side: 'left' | 'right'; wid
 
 // Spotify's full-screen player: blurred artwork behind, big cover and title bottom-left, controls
 // along the bottom. Puts the window itself into full screen while open.
-function FullScreenView({ onClose, onLike, onShuffle, covered }: { onClose: () => void; onLike: () => void; onShuffle: () => void; covered: boolean }) {
+function FullScreenView({ onClose, onPlus, onShuffle, covered }: { onClose: () => void; onPlus: (from: HTMLElement) => void; onShuffle: () => void; covered: boolean }) {
   const { player: p, prefs, source } = useApp()
   const tint = useColor(p?.thumb)
   const close = useRef(onClose)
@@ -1237,9 +1276,7 @@ function FullScreenView({ onClose, onLike, onShuffle, covered }: { onClose: () =
         <Progress />
         <div className="fs-row">
           <div className="fs-side">
-            <button className={`icon-btn ${p.liked ? 'green' : ''}`} onClick={onLike} aria-label="Like">
-              {p.liked ? <I.CheckCircle size={24} /> : <I.PlusCircle size={24} />}
-            </button>
+            <PlusButton liked={p.liked} onPlus={onPlus} size={24} />
           </div>
           <Controls onShuffle={onShuffle} big />
           <div className="fs-side right">
@@ -1258,13 +1295,14 @@ function PlayerBar(props: {
   rightOpen: boolean
   queueOpen: boolean
   onToggleRight: () => void
-  onLike: () => void
+  onPlus: (from: HTMLElement) => void
   onShuffle: () => void
   onLyrics: () => void
   onFull: () => void
 }) {
   const { rightOpen, onToggleRight } = props
-  const { player: p, openQueue, route, go } = useApp()
+  const ctx = useApp()
+  const { player: p, openQueue, route, go } = ctx
   return (
     <footer className="player-bar">
       <div className="pb-left">
@@ -1285,13 +1323,14 @@ function PlayerBar(props: {
                 {p.artist}
               </span>
             </div>
+            <PlusButton liked={p.liked} onPlus={props.onPlus} />
             <button
-              className={`icon-btn ${p.liked ? 'green' : ''}`}
-              onClick={props.onLike}
-              aria-label={p.liked ? 'Remove from Liked Songs' : 'Add to Liked Songs'}
-              title={p.liked ? 'Remove from Liked Songs' : 'Add to Liked Songs'}
+              className="icon-btn pb-more"
+              onClick={() => songMenu({ videoId: p.videoId, title: p.title, artistId: p.artistId, albumId: p.albumId }, ctx, { liked: p.liked })}
+              aria-label={`More options for ${p.title}`}
+              title="More options"
             >
-              {p.liked ? <I.CheckCircle /> : <I.PlusCircle />}
+              <I.More />
             </button>
           </>
         )}

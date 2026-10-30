@@ -1,6 +1,6 @@
 import type { PopupItem } from '../../../preload'
 import type { Card } from '../../../shared/types'
-import { cachedPlaylists, invalidate, libraryChanged, routeFor, type AppCtx } from '../lib'
+import { libraryChanged, playlistChanged, routeFor, savablePlaylists, type AppCtx } from '../lib'
 
 export interface MenuSong {
   videoId: string
@@ -10,17 +10,59 @@ export interface MenuSong {
 }
 
 interface Where {
-  playlistId?: string // the playlist page (route id) the row is on (enables "Remove from this playlist")
+  playlistId?: string // your own playlist page (route id) the row is on (enables "Remove from this playlist")
   onRemoved?: (videoId: string) => void // drop the row from that page once YouTube confirms
   liked?: boolean // known like state (current song, or rows of Liked Songs)
   queueIndex?: number // row in the Now Playing queue (enables "Remove from queue")
+}
+
+// Adds a song to one of your playlists. YTM won't add a song twice unless asked, so a repeat offers
+// "Add anyway" instead. Resolves with whether the song is now in the playlist.
+export async function addSong(ctx: AppCtx, pl: { id: string; title: string }, videoId: string, force = false): Promise<boolean> {
+  try {
+    if ((await window.ytm.addToPlaylist(pl.id, videoId, force)) === 'duplicate') {
+      ctx.toast(`Already in ${pl.title}`, { label: 'Add anyway', run: () => void addSong(ctx, pl, videoId, true) })
+      return true
+    }
+    playlistChanged(pl.id)
+    ctx.toast(`Added to ${pl.title}`)
+    return true
+  } catch {
+    ctx.toast('That didn’t work — try again')
+    return false
+  }
+}
+
+// Spotify names a playlist made from a song's menu after the song; the song goes straight in.
+export async function newPlaylistWith(ctx: AppCtx, song: { videoId: string; title: string }): Promise<void> {
+  try {
+    const id = await window.ytm.createPlaylist(song.title, [song.videoId])
+    libraryChanged()
+    ctx.toast(`Added to ${song.title}`, { label: 'View', run: () => ctx.go({ name: 'playlist', id }) })
+  } catch {
+    ctx.toast('Couldn’t create the playlist')
+  }
+}
+
+// Saves a song to / removes it from Liked Songs. The playing song goes through the player's own
+// like button so its heart updates too.
+export function setLiked(ctx: AppCtx, videoId: string, like: boolean): Promise<void> {
+  const done = () => {
+    playlistChanged('LM')
+    ctx.toast(like ? 'Added to Liked Songs' : 'Removed from Liked Songs')
+  }
+  if (videoId === ctx.player?.videoId) {
+    if (ctx.player.liked !== like) window.ytm.cmd({ type: 'like' })
+    return Promise.resolve(done())
+  }
+  return window.ytm.rate(videoId, like).then(done, () => ctx.toast('That didn’t work — try again'))
 }
 
 export const queue = (videoIds: string[], next: boolean) => window.ytm.cmd({ type: 'queueAdd', videoIds, next })
 
 // The songs of an album or playlist card (a playlist's first page), for queueing it whole.
 export async function cardSongs(c: Card): Promise<string[]> {
-  const col = c.kind === 'album' ? await window.ytm.album(c.id) : await window.ytm.playlist(c.id)
+  const col = c.kind === 'album' ? await window.ytm.album(c.id) : await window.ytm.playlist(c.id, true)
   return col.tracks.map((t: { videoId: string }) => t.videoId)
 }
 
@@ -61,7 +103,8 @@ export async function cardMenu(c: Card, ctx: AppCtx): Promise<void> {
 // Spotify-style "…" / right-click menu for a song, shared by track rows, the queue and Now Playing.
 export async function songMenu(song: MenuSong, ctx: AppCtx, where: Where = {}): Promise<void> {
   const { go, toast } = ctx
-  const playlists = cachedPlaylists().filter((p) => p.id !== 'VLLM' && p.id !== 'LM')
+  // Only your own playlists take songs; the list comes from YTM's "Save to playlist".
+  const playlists = await savablePlaylists(song.videoId).catch(() => [])
   const ownPlaylist = where.playlistId && !/^(VL)?LM$/.test(where.playlistId) ? where.playlistId : undefined
   const items: PopupItem[] = [
     {
@@ -95,34 +138,17 @@ export async function songMenu(song: MenuSong, ctx: AppCtx, where: Where = {}): 
   if (!pick) return
   const url = `https://music.youtube.com/watch?v=${song.videoId}`
   const done = (msg: string) => () => toast(msg)
-  const failed = () => toast('That didn’t work — try again')
   if (pick.startsWith('pl:')) {
-    const id = pick.slice(3)
-    const name = playlists.find((p) => p.id === id)?.title ?? 'playlist'
-    window.ytm.addToPlaylist(id, song.videoId).then(() => (invalidate(`playlist:${id}`), toast(`Added to ${name}`)), failed)
+    const pl = playlists.find((p) => p.id === pick.slice(3))
+    if (pl) addSong(ctx, pl, song.videoId)
   }
-  if (pick === 'new') {
-    const n = playlists.filter((p) => p.title.startsWith('My Playlist #')).length + 1
-    window.ytm
-      .createPlaylist(`My Playlist #${n}`)
-      .then((id) => window.ytm.addToPlaylist(id, song.videoId))
-      .then(() => (libraryChanged(), toast(`Added to My Playlist #${n}`)), failed)
-  }
+  if (pick === 'new') newPlaylistWith(ctx, song)
   if (pick === 'remove-pl' && ownPlaylist)
     window.ytm.removeFromPlaylist(ownPlaylist, song.videoId).then(
-      () => (invalidate(`playlist:${ownPlaylist}`), where.onRemoved?.(song.videoId), toast('Removed from this playlist')),
+      () => (where.onRemoved?.(song.videoId), playlistChanged(ownPlaylist), toast('Removed from this playlist')),
       () => toast('You can only remove songs from your own playlists')
     )
-  // The playing song goes through the player's own like button so its heart updates too.
-  if ((pick === 'like' || pick === 'unlike') && song.videoId === ctx.player?.videoId) {
-    if (ctx.player.liked !== (pick === 'like')) window.ytm.cmd({ type: 'like' })
-    invalidate('playlist:LM')
-    toast(pick === 'like' ? 'Added to Liked Songs' : 'Removed from Liked Songs')
-  } else if (pick === 'like' || pick === 'unlike')
-    window.ytm.rate(song.videoId, pick === 'like').then(() => {
-      invalidate('playlist:LM')
-      toast(pick === 'like' ? 'Added to Liked Songs' : 'Removed from Liked Songs')
-    }, failed)
+  if (pick === 'like' || pick === 'unlike') setLiked(ctx, song.videoId, pick === 'like')
   if (pick === 'next') queue([song.videoId], true).then(done('Playing next'))
   if (pick === 'queue') queue([song.videoId], false).then(done('Added to queue'))
   if (pick === 'remove-q' && where.queueIndex !== undefined)

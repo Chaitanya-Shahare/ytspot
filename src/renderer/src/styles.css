@@ -72,7 +72,9 @@ input:focus-visible { outline: none; }
   align-items: center;
   justify-content: space-between;
   -webkit-app-region: drag;
-  padding-left: 72px;
+  /* Clears the traffic lights (placed in main/index.ts to share this bar's centre line) with the
+     same breathing room Spotify leaves before its arrows. */
+  padding-left: 80px;
 }
 .topbar button, .topbar input, .topbar label { -webkit-app-region: no-drag; }
 .nav-arrows { display: flex; gap: 8px; width: 120px; }
@@ -613,3 +615,86 @@ kbd { font-family: inherit; font-size: 12px; color: var(--text-base); padding: 2
 .np-lyrics-body .lyric:hover { text-decoration: underline; }
 .np-lyrics-foot { position: absolute; left: 0; right: 0; bottom: 0; margin: 16px; display: flex; justify-content: flex-end; opacity: 0; transform: translateY(80%); transition: opacity .2s, transform .2s; z-index: 1; }
 .np-lyrics:hover .np-lyrics-foot, .np-lyrics:focus-within .np-lyrics-foot { opacity: 1; transform: none; }
+
+/* ---------- + / tick and the "Add to playlist" popover (Spotify's) ---------- */
+.plus-btn { flex: none; }
+.pb-more { width: 32px; height: 32px; flex: none; margin-left: -8px; }
+.toast { display: flex; align-items: center; gap: 16px; text-align: left; }
+.toast-action { font-weight: 700; white-space: nowrap; flex: none; }
+.toast-action:hover { text-decoration: underline; }
+.save-pop { position: fixed; z-index: 45; width: 320px; max-height: min(520px, calc(100vh - 32px)); display: flex; flex-direction: column; background: #282828; border-radius: var(--radius-base); box-shadow: 0 16px 24px #0000004d, 0 6px 8px #0003; padding: 4px; animation: tip-in .12s cubic-bezier(0, 0, .2, 1); }
+.save-title { font-size: 14px; font-weight: 700; padding: 12px 12px 8px; }
+.save-find { display: flex; align-items: center; gap: 8px; height: 32px; margin: 0 8px 4px; padding: 0 8px; border-radius: var(--radius-base); background: #3e3e3e; color: var(--text-subdued); }
+.save-find:focus-within { box-shadow: inset 0 0 0 1px #ffffff80; }
+.save-find input { flex: 1; min-width: 0; background: none; border: 0; outline: 0; color: var(--text-base); font: inherit; font-size: 14px; }
+.save-list { overflow-y: auto; min-height: 0; flex: 1; border-top: 1px solid #ffffff1a; padding-top: 4px; margin-top: 4px; }
+.save-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 6px 8px; border-radius: 2px; text-align: left; }
+.save-row:hover, .save-row:focus-visible { background: #ffffff1a; }
+.save-row:disabled { opacity: .6; cursor: progress; }
+.save-art { width: 32px; height: 32px; border-radius: 2px; flex: none; }
+.save-art.plus { display: grid; place-items: center; background: #3e3e3e; }
+.save-art.liked-art { width: 32px; height: 32px; }
+.save-row .img-fallback { width: 32px; height: 32px; border-radius: 2px; }
+.save-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.save-name { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.save-sub { font-size: 12px; color: var(--text-subdued); }
+.save-tick { flex: none; }
+.save-tick.empty { width: 16px; height: 16px; border-radius: 50%; border: 1px solid #ffffff80; }
+.save-row:hover .save-tick.empty { border-color: #fff; }
+.save-empty { padding: 12px; color: var(--text-subdued); font-size: 14px; }
+.save-foot { display: flex; justify-content: flex-end; padding: 8px; border-top: 1px solid #ffffff1a; }
+.pill-btn.small { margin: 0; height: 32px; font-size: 14px; }
+
+/* ---------- your own playlist: edit, find songs, recommended ---------- */
+.hero-edit { position: relative; padding: 0; overflow: hidden; display: block; }
+.hero-edit .hero-art { width: 100%; box-shadow: none; }
+.hero-edit:hover { transform: none; }
+.hero-edit-hover, .edit-cover-hover { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; background: #000000b3; opacity: 0; transition: opacity .15s; font-size: 14px; font-weight: 700; }
+.hero-edit:hover .hero-edit-hover, .hero-edit:focus-visible .hero-edit-hover, .edit-cover:hover .edit-cover-hover, .edit-cover:focus-visible .edit-cover-hover { opacity: 1; }
+.hero-title.clickable { cursor: pointer; }
+.hero-desc { font-size: 14px; color: #ffffffb3; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.find-more { display: flex; justify-content: flex-end; padding: 16px 0 0; }
+.find-songs { border-top: 1px solid #ffffff1a; margin-top: 24px; padding-top: 8px; }
+.find-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.find-box { display: flex; align-items: center; gap: 8px; width: min(364px, 100%); height: 40px; padding: 0 12px; border-radius: var(--radius-base); background: #ffffff1a; color: var(--text-subdued); margin-bottom: 16px; }
+.find-box:focus-within { box-shadow: inset 0 0 0 1px #ffffff80; }
+.find-box input { flex: 1; min-width: 0; background: none; border: 0; outline: 0; color: var(--text-base); font: inherit; font-size: 14px; }
+.find-none { padding: 8px 0; }
+.recommended { margin-top: 40px; }
+.recommended .section-title { margin-bottom: 4px; }
+.recommended > .sub { margin-bottom: 16px; }
+.add-row { display: grid; grid-template-columns: minmax(120px, 4fr) minmax(120px, 2fr) auto; gap: 16px; align-items: center; height: 56px; padding: 0 16px; border-radius: var(--radius-base); }
+.add-row:hover { background: var(--background-tinted-base); }
+.add-row:hover .t2, .add-row:hover .album-cell { color: var(--text-base); }
+.add-row .album-cell { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 14px; }
+.add-row .title-cell .img-fallback { width: 40px; height: 40px; border-radius: var(--radius-base); }
+.refresh { float: right; margin-top: 16px; }
+.refresh:disabled { opacity: .6; }
+
+/* Spotify's "Edit details" dialog */
+.modal.edit-details { width: 524px; padding: 24px; }
+.edit-body { display: grid; grid-template-columns: 180px 1fr; gap: 16px; margin-top: 16px; }
+.edit-cover { position: relative; width: 180px; height: 180px; border-radius: var(--radius-base); overflow: hidden; box-shadow: 0 4px 60px #00000080; padding: 0; background: #282828; }
+.edit-cover img, .edit-cover .img-fallback { width: 100%; height: 100%; }
+.edit-cover-empty { display: grid; place-items: center; width: 100%; height: 100%; color: #7f7f7f; }
+.edit-fields { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.field { position: relative; display: flex; flex-direction: column; }
+.field.grow { flex: 1; }
+.field > span { position: absolute; top: -8px; left: 10px; font-size: 11px; font-weight: 700; color: var(--text-subdued); background: var(--background-elevated-base); padding: 0 4px; opacity: 0; transition: opacity .15s; }
+.field:focus-within > span { opacity: 1; }
+.field input, .field textarea, .field select { width: 100%; background: #ffffff1a; border: 1px solid transparent; border-radius: var(--radius-base); color: var(--text-base); font: inherit; font-size: 14px; padding: 8px 12px; outline: 0; }
+.field input { height: 40px; }
+.field textarea { flex: 1; min-height: 124px; resize: none; }
+.field input:focus, .field textarea:focus, .field select:focus { border-color: #535353; background: #333; }
+.field select { height: 40px; appearance: none; cursor: pointer; }
+.field.privacy > span { opacity: 1; background: transparent; position: static; padding: 0 0 4px; }
+.edit-foot { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin-top: 16px; }
+.edit-foot .privacy { flex: 1; max-width: 300px; }
+.edit-foot .pill-btn { margin: 0; height: 48px; padding: 0 32px; font-size: 16px; }
+.edit-foot .pill-btn:disabled { opacity: .6; transform: none; }
+.edit-error { margin-top: 12px; padding: 8px 12px; border-radius: var(--radius-base); background: #e91429; font-size: 14px; }
+.edit-note { margin-top: 12px; font-size: 11px; }
+.modal.confirm { width: 420px; padding: 32px; }
+.modal.confirm .sub { margin: 12px 0 24px; font-size: 14px; }
+.confirm-actions { display: flex; justify-content: flex-end; align-items: center; gap: 24px; }
+.confirm-actions .pill-btn { margin: 0; height: 40px; padding: 0 28px; }
