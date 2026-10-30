@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { ArtistPage, Card, LibraryFilter, PlayerState, QueueItem, Track } from '../../shared/types'
+import type { ArtistPage, Card, LibraryFilter, PlayerState, QueueItem, ShuffleMode, Track } from '../../shared/types'
 import * as I from './components/icons'
 import { Ctx, fmt, getClock, libraryChanged, loadPrefs, onLibraryChange, playlistChanged, resetCache, routeFor, savePrefs, setClock, sized, useApp, useCached, useColor, useTime, type AppCtx, type Prefs, type Route, type SaveSong, type Source, type ToastAction, sameRoute } from './lib'
 import { bindings, comboLabel, comboOf, SHORTCUTS, type Action } from '../../shared/shortcuts'
@@ -176,10 +176,17 @@ export default function App() {
     if (!player?.videoId) setFull(false)
   }, [player?.videoId])
 
-  const shuffle = useCallback(() => {
-    window.ytm.cmd({ type: 'shuffle' })
-    toast('Queue shuffled')
-  }, [toast])
+  // Off → shuffle → Smart Shuffle → off, like Spotify's button; `mode` picks one directly.
+  const shuffle = useCallback(
+    (mode?: ShuffleMode) => {
+      const from = player?.shuffle ?? 'off'
+      const to = mode ?? NEXT_SHUFFLE[from]
+      if (to === from) return
+      window.ytm.cmd({ type: 'shuffleMode', mode: to })
+      toast(SHUFFLE_TOAST[to])
+    },
+    [player?.shuffle, toast]
+  )
 
   // The Queue and Now Playing buttons each open their view, or close it when it's already showing.
   const showPanel = useCallback(
@@ -816,7 +823,14 @@ function QueueRow({ q, onPlay, menu, dnd, playing }: {
       <Img src={q.thumb || `https://i.ytimg.com/vi/${q.videoId}/mqdefault.jpg`} />
       <div className="np-next-text">
         <div className={`t1 ${playing ? 'green' : ''}`}>{q.title}</div>
-        <div className="t2">{q.artist}</div>
+        <div className="t2">
+          {q.rec && (
+            <span className="rec-mark" title="Smart Shuffle recommendation">
+              <I.Sparkle size={12} />
+            </span>
+          )}
+          {q.artist}
+        </div>
       </div>
       <button className="row-more" onClick={(e) => (e.stopPropagation(), menu())} aria-label={`More options for ${q.title}`} title={`More options for ${q.title}`}>
         <I.More />
@@ -1232,17 +1246,40 @@ function PlusButton({ liked, onPlus, size = 16 }: { liked: boolean; onPlus: (fro
 }
 
 const REPEAT_LABEL = { NONE: 'Enable repeat', ALL: 'Enable repeat one', ONE: 'Disable repeat' } as const
+const NEXT_SHUFFLE = { off: 'on', on: 'smart', smart: 'off' } as const
+// What the button does next, as Spotify labels it.
+const SHUFFLE_LABEL = { off: 'Enable shuffle', on: 'Enable Smart Shuffle', smart: 'Disable shuffle' } as const
+const SHUFFLE_TOAST = { off: 'Shuffle off', on: 'Shuffle on', smart: 'Added Smart Shuffle recommendations to your queue' } as const
 
 // Shuffle / previous / play / next / repeat, shared by the player bar and the full-screen view.
-function Controls({ onShuffle, big }: { onShuffle: () => void; big?: boolean }) {
+function Controls({ onShuffle, big }: { onShuffle: (mode?: ShuffleMode) => void; big?: boolean }) {
   const { player: p } = useApp()
   const cmd = window.ytm.cmd
   // Nothing loaded yet: the controls show but can't be used, as in Spotify.
   const off = !p?.videoId
+  const mode = p?.shuffle ?? 'off'
+  // Right-click picks a mode, like the menu on Spotify's shuffle button.
+  const shuffleMenu = async (e: React.MouseEvent) => {
+    e.preventDefault()
+    const pick = await window.ytm.popup([
+      { id: 'off', label: 'Play in order', checked: mode === 'off' },
+      { id: 'on', label: 'Shuffle', checked: mode === 'on' },
+      { id: 'smart', label: 'Smart Shuffle', checked: mode === 'smart' }
+    ])
+    if (pick) onShuffle(pick as ShuffleMode)
+  }
   return (
     <div className={`pb-controls ${big ? 'big' : ''}`}>
-      <button className="icon-btn" disabled={off} onClick={onShuffle} aria-label="Shuffle queue" title="Shuffle queue" data-shortcut="shuffle">
-        <I.Shuffle size={big ? 24 : 16} />
+      <button
+        className={`icon-btn ${mode !== 'off' ? 'green dot' : ''}`}
+        disabled={off}
+        onClick={() => onShuffle()}
+        onContextMenu={shuffleMenu}
+        aria-label={SHUFFLE_LABEL[mode]}
+        title={SHUFFLE_LABEL[mode]}
+        data-shortcut="shuffle"
+      >
+        {mode === 'smart' ? <I.ShuffleSmart size={big ? 24 : 16} /> : <I.Shuffle size={big ? 24 : 16} />}
       </button>
       <button className="icon-btn" disabled={off} onClick={() => cmd({ type: 'prev' })} aria-label="Previous" title="Previous" data-shortcut="prev">
         <I.Prev size={big ? 24 : 16} />
@@ -1346,7 +1383,7 @@ function Resizer({ side, width, onResize, label }: { side: 'left' | 'right'; wid
 
 // Spotify's full-screen player: blurred artwork behind, big cover and title bottom-left, controls
 // along the bottom. Puts the window itself into full screen while open.
-function FullScreenView({ onClose, onPlus, onShuffle, covered }: { onClose: () => void; onPlus: (from: HTMLElement) => void; onShuffle: () => void; covered: boolean }) {
+function FullScreenView({ onClose, onPlus, onShuffle, covered }: { onClose: () => void; onPlus: (from: HTMLElement) => void; onShuffle: (mode?: ShuffleMode) => void; covered: boolean }) {
   const { player: p, prefs, source } = useApp()
   const tint = useColor(p?.thumb)
   const close = useRef(onClose)
@@ -1409,7 +1446,7 @@ function PlayerBar(props: {
   queueOpen: boolean
   onToggleRight: () => void
   onPlus: (from: HTMLElement) => void
-  onShuffle: () => void
+  onShuffle: (mode?: ShuffleMode) => void
   onLyrics: () => void
   onFull: () => void
 }) {

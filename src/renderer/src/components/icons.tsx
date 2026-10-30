@@ -52,6 +52,18 @@ export const Shuffle = svg(
   </>,
   true
 )
+// Spotify's Smart Shuffle icon: the shuffle arrows with a sparkle in place of the top-left end.
+export const ShuffleSmart = svg(
+  <>
+    <path d="M5.4 4.3c.4.3.7.7.9 1.1l3.4 5.2c.6.9 1.5 1.4 2.6 1.4h2" />
+    <path d="M1.5 12h2.2c1.1 0 2-.5 2.6-1.4l.5-.8M9.2 6.2l.5-.8C10.3 4.5 11.2 4 12.3 4h2" />
+    <path d="M12.7 2.3 14.4 4l-1.7 1.7M12.7 10.3l1.7 1.7-1.7 1.7" />
+    <path d="M2.8 1.2Q3.1 3 4.6 3.3 3.1 3.6 2.8 5.4 2.5 3.6 1 3.3 2.5 3 2.8 1.2Z" fill="currentColor" strokeWidth={0.8} />
+  </>,
+  true
+)
+// Marks a song Smart Shuffle added.
+export const Sparkle = svg(<path d="M8 1.5Q8.9 7.1 14.5 8 8.9 8.9 8 14.5 7.1 8.9 1.5 8 7.1 7.1 8 1.5Z" />)
 export const Repeat = svg(
   <>
     <path d="M4.5 3.5h7a3 3 0 0 1 3 3v1.5M11.5 12.5h-7a3 3 0 0 1-3-3V8" />
