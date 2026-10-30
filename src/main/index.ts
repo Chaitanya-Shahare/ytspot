@@ -5,9 +5,10 @@ import { fileURLToPath } from 'node:url'
 import * as yt from './api'
 import { lyrics } from './lyrics'
 import { buildMenu } from './menu'
+import { createTray, updateTray } from './tray'
 import { command, createPlayerWindow, placeVideo, rateVideo, subscribe, getState, onLoggedIn, setVideoMode, applyYtmSetting, showLogin, signOut, uploadImage, ytmSession, ytmSettings } from './player'
 import { bindings, DEFAULT_PREFS, type Action } from '../shared/shortcuts'
-import type { PlayerState } from '../shared/types'
+import type { PlayerCommand, PlayerState } from '../shared/types'
 
 const dir = fileURLToPath(new URL('.', import.meta.url))
 // Test runs (YTSPOT_PROFILE=<dir>) get their own profile so they never share data, the keychain
@@ -100,13 +101,15 @@ function showMain(then?: (w: BrowserWindow) => void): void {
 // Push player state while someone can see it: the whole state when anything besides the clock
 // changed, otherwise just the time. Each push repaints the window, so once a second (an m:ss clock)
 // is enough; commands refresh right away so the controls still respond instantly.
+// The menu bar item needs the song even with the window closed, so the poll keeps running then;
+// the tray itself only redraws when the song or play state changes.
 // A track change briefly has no trustworthy title/artwork (see player.ts); hold the update back
 // for up to a second so the UI never shows the old song's art under the new song.
 let pendingSince: { id: string; at: number } | null = null
 async function pushState(): Promise<void> {
-  if (!main?.isVisible()) return
   const s = await getState()
-  if (!s || !main) return
+  updateTray(s)
+  if (!s || !main?.isVisible()) return
   if (s.pending) {
     if (pendingSince?.id !== s.videoId) pendingSince = { id: s.videoId, at: Date.now() }
     if (Date.now() - pendingSince.at < 1000) return void setTimeout(pushState, 200)
@@ -120,6 +123,11 @@ async function pushState(): Promise<void> {
     sent.time = time
     main.webContents.send('player:time', time)
   }
+}
+
+async function playerCommand(c: PlayerCommand): Promise<void> {
+  await command(c)
+  setTimeout(pushState, 150)
 }
 
 const rebuildMenu = () => buildMenu(() => main, showMain, keys)
@@ -204,10 +212,7 @@ app.whenReady().then(() => {
   ipcMain.handle('yt:artist', data(yt.artist))
   ipcMain.handle('yt:search', data(yt.search))
   ipcMain.handle('yt:lyrics', data(lyrics))
-  ipcMain.handle('player:cmd', async (_, c) => {
-    await command(c)
-    setTimeout(pushState, 150)
-  })
+  ipcMain.handle('player:cmd', (_, c: PlayerCommand) => playerCommand(c))
   ipcMain.handle('player:get', () => getState())
   ipcMain.handle('ui:popup', popup)
   ipcMain.handle('ui:open', (_, url: string) => shell.openExternal(url))
@@ -234,6 +239,7 @@ app.whenReady().then(() => {
   createPlayerWindow()
   createMain()
   rebuildMenu()
+  createTray({ command: playerCommand, show: () => showMain(), quit: () => app.quit() })
 
   let t: NodeJS.Timeout
   ses.cookies.on('changed', (_, cookie) => {

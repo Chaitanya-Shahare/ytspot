@@ -51,7 +51,8 @@
     "appId": "com.chaitanya.ytspot",
     "productName": "ytspot",
     "files": [
-      "out/**"
+      "out/**",
+      "resources/**"
     ],
     "directories": {
       "output": "dist"
