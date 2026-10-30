@@ -3,7 +3,10 @@ import type { SVGProps } from 'react'
 
 type P = SVGProps<SVGSVGElement> & { size?: number }
 
-const svg = (children: React.ReactNode, stroke = false) =>
+// Filled icons get a thin outline in their own colour with round joins, which softens every corner
+// to match the round-capped line icons (and Figtree's rounded letterforms). `sharp` skips that for
+// icons with cut-outs (a tick inside a circle) that the outline would fill in.
+const svg = (children: React.ReactNode, stroke = false, sharp = false) =>
   function Icon({ size = 16, ...rest }: P) {
     return (
       <svg
@@ -11,8 +14,8 @@ const svg = (children: React.ReactNode, stroke = false) =>
         height={size}
         viewBox="0 0 16 16"
         fill={stroke ? 'none' : 'currentColor'}
-        stroke={stroke ? 'currentColor' : 'none'}
-        strokeWidth={stroke ? 1.5 : undefined}
+        stroke={stroke || !sharp ? 'currentColor' : 'none'}
+        strokeWidth={stroke ? 1.5 : sharp ? undefined : 1.25}
         strokeLinecap="round"
         strokeLinejoin="round"
         {...rest}
@@ -22,23 +25,23 @@ const svg = (children: React.ReactNode, stroke = false) =>
     )
   }
 
-export const Play = svg(<path d="M4 2.3a.6.6 0 0 1 .9-.52l9.6 5.7a.6.6 0 0 1 0 1.04l-9.6 5.7A.6.6 0 0 1 4 13.7z" />)
+export const Play = svg(<path d="M4.6 2.9a.6.6 0 0 1 .9-.52l8.6 5.1a.6.6 0 0 1 0 1.04l-8.6 5.1a.6.6 0 0 1-.9-.52z" />)
 export const Pause = svg(
   <>
-    <rect x="3" y="2" width="3.4" height="12" rx=".7" />
-    <rect x="9.6" y="2" width="3.4" height="12" rx=".7" />
+    <rect x="3.6" y="2.6" width="2.4" height="10.8" rx=".6" />
+    <rect x="10" y="2.6" width="2.4" height="10.8" rx=".6" />
   </>
 )
 export const Next = svg(
   <>
-    <path d="M2.5 2.6a.6.6 0 0 1 .9-.5l8.1 5.4a.6.6 0 0 1 0 1L3.4 13.9a.6.6 0 0 1-.9-.5z" />
-    <rect x="12" y="2" width="1.6" height="12" rx=".6" />
+    <path d="M3 3.2a.6.6 0 0 1 .93-.5l7 4.8a.6.6 0 0 1 0 1l-7 4.8A.6.6 0 0 1 3 12.8z" />
+    <rect x="12.4" y="2.6" width=".9" height="10.8" rx=".45" />
   </>
 )
 export const Prev = svg(
   <>
-    <path d="M13.5 2.6a.6.6 0 0 0-.9-.5L4.5 7.5a.6.6 0 0 0 0 1l8.1 5.4a.6.6 0 0 0 .9-.5z" />
-    <rect x="2.4" y="2" width="1.6" height="12" rx=".6" />
+    <path d="M13 3.2a.6.6 0 0 0-.93-.5l-7 4.8a.6.6 0 0 0 0 1l7 4.8a.6.6 0 0 0 .93-.5z" />
+    <rect x="2.7" y="2.6" width=".9" height="10.8" rx=".45" />
   </>
 )
 export const Shuffle = svg(
@@ -74,9 +77,11 @@ export const CheckCircle = svg(
   <path
     fillRule="evenodd"
     d="M8 15A7 7 0 1 0 8 1a7 7 0 0 0 0 14zm3.3-9.4a.75.75 0 0 0-1.1-1L7 8.4 5.8 7.1a.75.75 0 1 0-1.1 1l1.8 1.9a.75.75 0 0 0 1.1 0z"
-  />
+  />,
+  false,
+  true
 )
-export const Home = svg(<path d="M8 1.2 1 6.6V15h4.5v-4.5h5V15H15V6.6z" />)
+export const Home = svg(<path d="M8 1.9 1.75 6.9v7.35H5.5V9.75h5v4.5h3.75V6.9z" />)
 export const HomeOutline = svg(<path d="M8 1.9 1.75 6.9v7.35h3.75V9.75h5v4.5h3.75V6.9z" />, true)
 export const Search = svg(
   <>
@@ -133,9 +138,9 @@ export const Clock = svg(
 )
 export const More = svg(
   <>
-    <circle cx="3" cy="8" r="1.5" />
-    <circle cx="8" cy="8" r="1.5" />
-    <circle cx="13" cy="8" r="1.5" />
+    <circle cx="3" cy="8" r="1" />
+    <circle cx="8" cy="8" r="1" />
+    <circle cx="13" cy="8" r="1" />
   </>
 )
 export const Close = svg(<path d="m3 3 10 10M13 3 3 13" />, true)
@@ -170,6 +175,32 @@ export const Edit = svg(
   <>
     <path d="M10.6 2.4a1.6 1.6 0 0 1 2.3 0l.7.7a1.6 1.6 0 0 1 0 2.3L6 13l-3.5.9.9-3.5z" />
     <path d="m9.5 3.5 3 3" />
+  </>,
+  true
+)
+export const BrowseFill = svg(
+  <>
+    <path d="M3.75 2h8.5a.75.75 0 0 1 0 1.5h-8.5a.75.75 0 0 1 0-1.5z" />
+    <path fillRule="evenodd" d="M3.25 4.5h9.5A2.25 2.25 0 0 1 15 6.75v6A2.25 2.25 0 0 1 12.75 15h-9.5A2.25 2.25 0 0 1 1 12.75v-6A2.25 2.25 0 0 1 3.25 4.5zm2.5 4.5a.75.75 0 0 0 0 1.5h4.5a.75.75 0 0 0 0-1.5z" />
+  </>,
+  false,
+  true
+)
+export const ViewList = svg(
+  <>
+    <rect x="1.75" y="2.25" width="3.5" height="3.5" rx="1" />
+    <rect x="1.75" y="10.25" width="3.5" height="3.5" rx="1" />
+    <path d="M8 4h6.25M8 12h6.25" />
+  </>,
+  true
+)
+export const ViewCompact = svg(<path d="M1.75 3h12.5M1.75 6.33h12.5M1.75 9.67h12.5M1.75 13h12.5" />, true)
+export const ViewGrid = svg(
+  <>
+    <rect x="1.75" y="1.75" width="5" height="5" rx="1.25" />
+    <rect x="9.25" y="1.75" width="5" height="5" rx="1.25" />
+    <rect x="1.75" y="9.25" width="5" height="5" rx="1.25" />
+    <rect x="9.25" y="9.25" width="5" height="5" rx="1.25" />
   </>,
   true
 )

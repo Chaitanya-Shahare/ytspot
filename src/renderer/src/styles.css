@@ -53,7 +53,9 @@ input:focus-visible { outline: none; }
   height: 100vh;
   display: grid;
   grid-template-columns: var(--left-w) 1fr var(--right-w);
-  grid-template-rows: 64px 1fr 72px;
+  /* The top row stays 64 screen points tall at any zoom level (View → Zoom), so it keeps sharing a
+     centre line with the traffic lights, which macOS draws at a fixed spot and never zooms. */
+  grid-template-rows: calc(64px / var(--zoom, 1)) 1fr 72px;
   grid-template-areas: 'top top top' 'left main right' 'bar bar bar';
   column-gap: var(--gap);
   padding: 0 var(--gap);
@@ -74,7 +76,7 @@ input:focus-visible { outline: none; }
   -webkit-app-region: drag;
   /* Clears the traffic lights (placed in main/index.ts to share this bar's centre line) with the
      same breathing room Spotify leaves before its arrows. */
-  padding-left: 80px;
+  padding-left: calc(80px / var(--zoom, 1));
 }
 .topbar button, .topbar input, .topbar label { -webkit-app-region: no-drag; }
 .nav-arrows { display: flex; gap: 8px; width: 120px; }
@@ -112,8 +114,7 @@ input:focus-visible { outline: none; }
 .toast.out { animation: toast-out .2s cubic-bezier(.8, 0, 1, 1) forwards; }
 @keyframes toast-out { to { opacity: 0; transform: translate(-50%, 8px); } }
 /* Tooltip (Spotify's encore tooltip). */
-.tooltip { position: fixed; z-index: 60; transform: translate(-50%, -100%); background: #282828; color: var(--text-base); font-size: 14px; padding: 4px 8px; border-radius: var(--radius-base); box-shadow: 0 16px 24px #0000004d, 0 6px 8px #0003; max-width: 50ch; pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; animation: tip-in .2s ease-out; }
-.tooltip.below { transform: translate(-50%, 0); }
+.tooltip { position: fixed; left: 0; top: 0; z-index: 60; background: #282828; color: var(--text-base); font-size: 14px; padding: 4px 8px; border-radius: var(--radius-base); box-shadow: 0 16px 24px #0000004d, 0 6px 8px #0003; max-width: 50ch; pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; animation: tip-in .2s ease-out; }
 @keyframes tip-in { from { opacity: 0; } }
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 8px); } }
 
@@ -143,8 +144,9 @@ input:focus-visible { outline: none; }
 .lib-item img, .liked-art { width: 48px; height: 48px; border-radius: var(--radius-base); flex: none; }
 .liked-art { display: grid; place-items: center; background: linear-gradient(135deg, #450af5, #c4efd9); color: #fff; }
 /* Artwork fade-in and the placeholder when there is none (Spotify's grey tile with a note). */
-.fade { opacity: 0; transition: opacity .25s cubic-bezier(0, 0, .2, 1); }
-.fade.loaded { opacity: 1; }
+/* The grey tile shows while artwork loads (img's own background); the picture then eases in over it. */
+.fade.loaded { animation: img-in .25s cubic-bezier(0, 0, .2, 1); }
+@keyframes img-in { from { opacity: .5; } }
 .img-fallback { display: grid; place-items: center; background: #282828; color: #7f7f7f; aspect-ratio: 1; flex: none; }
 .img-fallback svg { width: 40%; height: 40%; }
 .lib-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
@@ -222,6 +224,10 @@ input:focus-visible { outline: none; }
 /* track table */
 .tracks { --cols: 16px minmax(120px, 4fr) minmax(120px, 2fr) 56px 24px; }
 .tracks.no-album { --cols: 16px minmax(120px, 4fr) 56px 24px; }
+/* An artist's Popular songs: play counts in their own right-aligned column before the time. */
+.tracks.with-plays { --cols: 16px minmax(120px, 4fr) minmax(96px, 1fr) 56px 24px; }
+.tracks.with-plays .plays { text-align: right; }
+.track-row .album-cell { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .row-more { visibility: hidden; color: var(--text-subdued); display: grid; place-items: center; }
 .row-more:hover { color: var(--text-base); }
 .track-row:hover .row-more { visibility: visible; }
@@ -653,23 +659,26 @@ kbd { font-family: inherit; font-size: 12px; color: var(--text-base); padding: 2
 .hero-edit:hover .hero-edit-hover, .hero-edit:focus-visible .hero-edit-hover, .edit-cover:hover .edit-cover-hover, .edit-cover:focus-visible .edit-cover-hover { opacity: 1; }
 .hero-title.clickable { cursor: pointer; }
 .hero-desc { font-size: 14px; color: #ffffffb3; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.find-more { display: flex; justify-content: flex-end; padding: 16px 0 0; }
-.find-songs { border-top: 1px solid #ffffff1a; margin-top: 24px; padding-top: 8px; }
-.find-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
-.find-box { display: flex; align-items: center; gap: 8px; width: min(364px, 100%); height: 40px; padding: 0 12px; border-radius: var(--radius-base); background: #ffffff1a; color: var(--text-subdued); margin-bottom: 16px; }
-.find-box:focus-within { box-shadow: inset 0 0 0 1px #ffffff80; }
-.find-box input { flex: 1; min-width: 0; background: none; border: 0; outline: 0; color: var(--text-base); font: inherit; font-size: 14px; }
-.find-none { padding: 8px 0; }
+.find-more { display: flex; justify-content: flex-end; padding: 16px 16px 0; }
+.find-songs { border-top: 1px solid #ffffff1a; margin-top: 24px; }
+.find-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+/* The same pill as the top bar's search box. */
+.find-box { display: flex; align-items: center; gap: 12px; width: min(400px, 100%); height: 48px; padding: 0 16px; margin-bottom: 16px; border-radius: 500px; background: var(--background-elevated-base); color: var(--text-subdued); box-shadow: inset 0 0 0 1px transparent; transition: background .2s, box-shadow .2s; }
+.find-box:hover { background: var(--background-elevated-highlight); box-shadow: inset 0 0 0 1px #ffffff1a; }
+.find-box:focus-within { background: var(--background-elevated-highlight); box-shadow: inset 0 0 0 2px var(--text-base); color: var(--text-base); }
+.find-box input { flex: 1; min-width: 0; background: none; border: 0; outline: 0; color: var(--text-base); font: inherit; font-size: 16px; }
+.find-box input::placeholder { color: var(--text-subdued); }
+.find-none { padding: 8px 16px; }
 .recommended { margin-top: 40px; }
 .recommended .section-title { margin-bottom: 4px; }
 .recommended > .sub { margin-bottom: 16px; }
-.add-row { display: grid; grid-template-columns: minmax(120px, 4fr) minmax(120px, 2fr) auto; gap: 16px; align-items: center; height: 56px; padding: 0 16px; border-radius: var(--radius-base); }
-.add-row:hover { background: var(--background-tinted-base); }
-.add-row:hover .t2, .add-row:hover .album-cell { color: var(--text-base); }
-.add-row .album-cell { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 14px; }
-.add-row .title-cell .img-fallback { width: 40px; height: 40px; border-radius: var(--radius-base); }
-.refresh { float: right; margin-top: 16px; }
-.refresh:disabled { opacity: .6; }
+.add-rows .track-row .album-cell { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.add-rows .title-cell .img-fallback { width: 40px; height: 40px; border-radius: var(--radius-base); }
+.row-add { color: var(--text-subdued); display: grid; place-items: center; transition: transform .15s cubic-bezier(.3, 0, 0, 1), color .05s; }
+.row-add:hover { color: var(--text-base); transform: scale(1.06); }
+.track-row:hover .row-add { color: var(--text-base); }
+.recommended-foot { display: flex; justify-content: flex-end; padding: 16px 16px 0; }
+.recommended-foot .link-btn:disabled { opacity: .6; }
 
 /* Spotify's "Edit details" dialog */
 .modal.edit-details { width: 524px; padding: 24px; }
@@ -698,3 +707,80 @@ kbd { font-family: inherit; font-size: 12px; color: var(--text-base); padding: 2
 .modal.confirm .sub { margin: 12px 0 24px; font-size: 14px; }
 .confirm-actions { display: flex; justify-content: flex-end; align-items: center; gap: 24px; }
 .confirm-actions .pill-btn { margin: 0; height: 40px; padding: 0 28px; }
+
+/* Collapsed library: Create as a round "+" under the library icon. */
+.left-collapsed .lib-head { flex-direction: column; gap: 8px; }
+.create-btn.icon { width: 32px; height: 32px; padding: 0; justify-content: center; border-radius: 50%; }
+
+/* No lyrics: a quiet note in the middle of the page, not a lyric line. */
+.lyrics-empty { min-height: calc(100vh - 240px); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 32px; text-align: center; }
+.lyrics-empty-title { font-size: 24px; font-weight: 700; }
+.lyrics-empty-sub { font-size: 16px; color: #ffffffb3; }
+
+/* Settings skeleton rows */
+.sk-set-text { flex: 1; }
+.sk-toggle { width: 40px; height: 24px; border-radius: 500px; flex: none; }
+
+/* ---------- Your Library: cover with a hover play button, and the three "View as" layouts ---------- */
+.lib-art { position: relative; flex: none; width: 48px; height: 48px; border-radius: var(--radius-base); }
+.lib-art.round { border-radius: 50%; }
+.lib-item .lib-art img, .lib-item .lib-art .liked-art, .lib-item .lib-art .img-fallback { width: 100%; height: 100%; border-radius: inherit; }
+.lib-play { position: absolute; inset: 0; display: grid; place-items: center; border-radius: inherit; background: #00000080; color: #fff; opacity: 0; transition: opacity .15s; }
+.lib-item:hover .lib-play { opacity: 1; }
+.lib-play:hover svg { transform: scale(1.1); }
+.lib-list.compact { padding-top: 0; }
+.lib-list.compact .lib-item { padding: 6px 8px; min-height: 32px; }
+.lib-list.compact .lib-text { flex-direction: row; align-items: baseline; gap: 0; }
+.lib-list.compact .lib-text .t2 { gap: 0; }
+.lib-list.compact .t1 { font-size: 14px; flex: none; max-width: 65%; }
+.lib-list.compact .t2 { min-width: 0; font-size: 14px; }
+.lib-list.compact .t2::before { content: '•'; margin: 0 6px; }
+.lib-list.compact .pin { display: none; }
+.lib-list.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); align-content: start; }
+.lib-list.grid .lib-item { flex-direction: column; align-items: stretch; gap: 8px; padding: 8px; }
+.lib-list.grid .lib-art { width: 100%; height: auto; aspect-ratio: 1; box-shadow: 0 4px 16px #0006; }
+.lib-list.grid .lib-art.round { border-radius: 50%; }
+.lib-list.grid .lib-play { inset: auto 8px 8px auto; width: 40px; height: 40px; border-radius: 50%; background: var(--green); color: #000; box-shadow: 0 8px 8px #0000004d; transform: translateY(8px); transition: opacity .2s, transform .2s; }
+.lib-list.grid .lib-item:hover .lib-play { transform: none; }
+.lib-list.grid .lib-play:hover { background: var(--green-hover); transform: scale(1.04); }
+.lib-list.grid .t1 { font-size: 14px; }
+.lib-list.grid .t2 { font-size: 13px; }
+.lib-list.grid .lib-text { gap: 2px; }
+
+/* ---------- Search in playlist + sort (right end of the action bar, as in Spotify) ---------- */
+.pl-tools { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.pl-find-btn { width: 32px; height: 32px; border-radius: 50%; }
+.pl-find-btn:hover { background: var(--background-tinted-base); }
+/* The same field as "Search in Your Library". */
+.pl-find { display: flex; align-items: center; gap: 8px; width: 220px; height: 32px; padding: 0 8px 0 10px; border-radius: var(--radius-base); background: var(--background-tinted-highlight); color: var(--text-subdued); animation: pl-find-in .2s cubic-bezier(.3, 0, 0, 1); }
+@keyframes pl-find-in { from { width: 32px; } }
+.pl-find:focus-within { color: var(--text-base); }
+.pl-find input { flex: 1; min-width: 0; background: none; border: 0; outline: 0; color: var(--text-base); font: inherit; font-size: 14px; }
+.pl-find input::placeholder { color: var(--text-subdued); }
+.pl-find-clear { display: grid; place-items: center; color: var(--text-subdued); }
+.pl-find-clear:hover { color: var(--text-base); }
+.pl-tools .lib-sort { height: 32px; padding: 0 4px; }
+.pl-none { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 48px 16px; text-align: center; }
+.pl-none b { font-size: 18px; }
+
+/* ---------- spacing pass 2 (measured) ---------- */
+/* The three panel headers share one height and centre line (Your Library = 56px, title at 94px). */
+.np-head { min-height: 56px; padding: 12px 8px 8px 16px; }
+.np-head .icon-btn { width: 32px; height: 32px; border-radius: 50%; }
+.np-head .icon-btn:hover { background: var(--background-tinted-base); }
+/* Search's chips sit where Home's do, with the usual section gap below them. */
+.page.search { padding-top: 8px; }
+.search-top { margin-top: 16px; }
+/* The scrollbar takes the right inset, so rows end where the Create button does. */
+.lib-list { padding: 0 0 8px 8px; scrollbar-gutter: stable; }
+.lib-list::-webkit-scrollbar { width: 8px; }
+.select { height: 32px; padding: 0 12px; }
+.about-card { max-width: none; }
+/* Long titles step down so a header stays two lines at most (Spotify does the same). */
+.hero-title.long { font-size: clamp(2rem, 5cqw, 4rem); }
+.hero-title.longer { font-size: clamp(1.75rem, 3.6cqw, 3rem); }
+/* Mood chips fade out at the panel edge instead of being cut off. */
+.home-chips { mask-image: linear-gradient(90deg, #000 calc(100% - 48px), transparent); }
+.home-chips.scrolled { mask-image: none; }
+/* Keyboard shortcut beside a tooltip's label, as in Spotify ("Next  ⌘ →"). */
+.tip-key { margin-left: 8px; color: var(--text-subdued); font-size: 13px; }

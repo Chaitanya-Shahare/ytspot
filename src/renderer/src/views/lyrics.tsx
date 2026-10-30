@@ -49,6 +49,12 @@ function SongLyrics({ player }: { player: PlayerState }) {
   const bg = lyricsBackground(useColor(player.thumb))
   const active = useActiveLine(data, player.playing)
   const box = useRef<HTMLDivElement>(null)
+  // Each song starts at its first line: the page scrolls in the main view, which outlives the song,
+  // and unsynced lyrics never scroll themselves.
+  const pageRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    pageRef.current?.closest('.main-scroll')?.scrollTo({ top: 0 })
+  }, [])
   // Scrolling by hand stops the view following the song until "Sync" is pressed (Spotify).
   const [away, setAway] = useState(false)
   const follow = () => box.current?.children[active]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -63,13 +69,16 @@ function SongLyrics({ player }: { player: PlayerState }) {
   }
 
   return (
-    <div className="page lyrics-page" style={{ '--lyrics-bg': bg } as React.CSSProperties} onWheel={() => data?.synced && setAway(true)}>
+    <div ref={pageRef} className="page lyrics-page" style={{ '--lyrics-bg': bg } as React.CSSProperties} onWheel={() => data?.synced && setAway(true)}>
       {error && data === undefined ? (
         <ErrorBox error={error} onRetry={retry} />
       ) : data === undefined ? (
         <p className="lyrics-note">Loading lyrics…</p>
       ) : !data?.lines.length ? (
-        <p className="lyrics-note">Looks like we don’t have the lyrics for this song.</p>
+        <div className="lyrics-empty">
+          <p className="lyrics-empty-title">No lyrics for this song</p>
+          <p className="lyrics-empty-sub">Looks like we don’t have the lyrics for this one yet.</p>
+        </div>
       ) : (
         <div className="lyrics-wrap">
           {!data.synced && <p className="lyrics-unsynced">These lyrics aren’t synced to the song yet.</p>}
@@ -127,11 +136,12 @@ export function LyricsCard({ player, onOpen }: { player: PlayerState; onOpen: ()
   const body = useRef<HTMLDivElement>(null)
   // Keep the sung line at the top of the card, just below the faded edge (scrolling only the card;
   // a long line can wrap to three rows in this narrow panel).
+  // A new song (synced or not) starts from its first line.
   useEffect(() => {
     const box = body.current
     const line = box?.children[Math.max(0, active)] as HTMLElement | undefined
     if (box && line) box.scrollTo({ top: Math.max(0, line.offsetTop - 28), behavior: 'smooth' })
-  }, [active, more])
+  }, [active, more, player.videoId, data])
   if (!data?.lines.length) return null
   return (
     <div className={`np-card np-lyrics ${more ? 'more' : ''}`} style={{ '--lyrics-bg': bg } as React.CSSProperties}>

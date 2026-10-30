@@ -46,6 +46,8 @@ export interface Collection {
   description?: string
   editable?: boolean // a playlist you own (rename, cover, remove songs, suggestions)
   privacy?: Privacy
+  saved?: boolean // in your library (albums and others' playlists)
+  saveId?: string // the playlist id YTM saves to your library for it
   tracks: Track[]
   more?: boolean
   loaded?: number // songs fetched so far, counting ones since removed (the next page starts here)
@@ -114,6 +116,17 @@ export interface PlayerState {
   queue: QueueItem[]
   autoplay: QueueItem[]
   pending?: boolean // the song just changed and its details haven't arrived yet
+}
+
+// What the menu bar item shows next to its icon; 'off' removes it.
+export type MenuBarMode = 'both' | 'song' | 'artist' | 'icon' | 'off'
+
+// The settings main acts on. The renderer owns them (localStorage) and sends them over 'ui:prefs'.
+export interface MainPrefs {
+  keepPlaying: boolean
+  videoMode: boolean
+  openAtLogin: boolean
+  menuBar: MenuBarMode
 }
 
 export type PlayerCommand =

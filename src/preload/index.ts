@@ -1,6 +1,6 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webFrame } from 'electron'
 import type { Action } from '../shared/shortcuts'
-import type { Card, HomeData, LibraryFilter, Lyrics, More, PlayerCommand, PlayerState, Privacy, SearchFilter, Track, YtmSetting } from '../shared/types'
+import type { Card, HomeData, LibraryFilter, Lyrics, MainPrefs, More, PlayerCommand, PlayerState, Privacy, SearchFilter, Track, YtmSetting } from '../shared/types'
 import type { LyricsQuery } from '../main/lyrics'
 
 export interface PopupItem {
@@ -32,6 +32,7 @@ const bridge = {
   setPlaylistCover: (id: string, image: { base64: string; mime: string }) => ipcRenderer.invoke('yt:setPlaylistCover', id, image),
   rate: (videoId: string, like: boolean) => ipcRenderer.invoke('yt:rate', videoId, like),
   subscribe: (channelId: string, on: boolean) => ipcRenderer.invoke('yt:subscribe', channelId, on),
+  saveToLibrary: (playlistId: string, on: boolean) => ipcRenderer.invoke('yt:saveToLibrary', playlistId, on),
   browseMore: (more: More): Promise<Card[]> => ipcRenderer.invoke('yt:browseMore', more),
   ytmSettings: (): Promise<YtmSetting[]> => ipcRenderer.invoke('ytm:settings'),
   applyYtmSetting: (endpoint: unknown) => ipcRenderer.invoke('ytm:applySetting', endpoint),
@@ -52,9 +53,10 @@ const bridge = {
   copy: (text: string) => ipcRenderer.invoke('ui:copy', text),
   fullscreen: (on?: boolean): Promise<boolean> => ipcRenderer.invoke('ui:fullscreen', on),
   log: (msg: string) => ipcRenderer.invoke('ui:log', msg),
+  zoom: (): number => webFrame.getZoomFactor(),
   videoRect: (r: { x: number; y: number; width: number; height: number } | null) => ipcRenderer.invoke('ui:videoRect', r),
   setBindings: (b: Record<Action, string[]>) => ipcRenderer.invoke('ui:bindings', b),
-  setPrefs: (p: { keepPlaying: boolean; videoMode: boolean; openAtLogin: boolean }) => ipcRenderer.invoke('ui:prefs', p),
+  setPrefs: (p: MainPrefs) => ipcRenderer.invoke('ui:prefs', p),
   onState: (cb: (s: PlayerState) => void) => {
     const fn = (_: unknown, s: PlayerState) => cb(s)
     ipcRenderer.on('player:state', fn)

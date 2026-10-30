@@ -5,20 +5,26 @@ import { fileURLToPath } from 'node:url'
 import * as yt from './api'
 import { lyrics } from './lyrics'
 import { buildMenu } from './menu'
-import { command, createPlayerWindow, placeVideo, rateVideo, subscribe, getState, onLoggedIn, setVideoMode, applyYtmSetting, showLogin, signOut, uploadImage, ytmSession, ytmSettings } from './player'
+import { initTray, setTrayMode, trayOn, updateTray } from './tray'
+import { command, createPlayerWindow, placeVideo, rateVideo, saveToLibrary, subscribe, getState, onLoggedIn, setVideoMode, applyYtmSetting, showLogin, signOut, uploadImage, ytmSession, ytmSettings } from './player'
 import { bindings, DEFAULT_PREFS, type Action } from '../shared/shortcuts'
-import type { PlayerState } from '../shared/types'
+import type { MainPrefs, MenuBarMode, PlayerCommand, PlayerState } from '../shared/types'
 
 const dir = fileURLToPath(new URL('.', import.meta.url))
 // Test runs (YTSPOT_PROFILE=<dir>) get their own profile so they never share data, the keychain
 // entry or the media keys with an installed copy; YTSPOT_MUTE=1 silences the player.
 const testProfile = process.env.YTSPOT_PROFILE
+// YTSPOT_HEADLESS=1 (test runs only): no window on screen and no Dock icon; the UI still renders,
+// unthrottled, for driving over CDP.
+const headless = !!testProfile && !!process.env.YTSPOT_HEADLESS
 if (testProfile) {
   app.setPath('userData', testProfile)
   app.commandLine.appendSwitch('use-mock-keychain')
   app.commandLine.appendSwitch('disable-features', 'HardwareMediaKeyHandling,MediaSessionService')
 }
 const boundsFile = join(app.getPath('userData'), 'window.json')
+// Main's copy of the menu bar setting, so launch shows (or skips) the tray before the UI has loaded.
+const prefsFile = join(app.getPath('userData'), 'prefs.json')
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 
 let main: BrowserWindow | null = null
@@ -27,6 +33,12 @@ let sent: { info: string; time: number; queue: unknown; autoplay: unknown } | nu
 let loggedIn: boolean | null = null // unknown until the first cookie check
 let quitting = false
 let keepPlaying = true
+let menuBar: MenuBarMode = 'both'
+try {
+  menuBar = JSON.parse(readFileSync(prefsFile, 'utf8')).menuBar ?? menuBar
+} catch {
+  // first launch: default
+}
 
 async function syncAuth(): Promise<void> {
   const cookies = await ytmSession().cookies.get({ url: 'https://music.youtube.com' })
@@ -63,7 +75,7 @@ function createMain(): BrowserWindow {
     show: !testProfile,
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 16, y: 25 },
-    webPreferences: { preload: join(dir, '../preload/index.mjs'), sandbox: false, spellcheck: false }
+    webPreferences: { preload: join(dir, '../preload/index.mjs'), sandbox: false, spellcheck: false, backgroundThrottling: !headless }
   }))
   // Like Spotify, closing the window keeps the music playing (the hidden player window lives on).
   // The UI window is destroyed rather than hidden so its renderer's memory is freed while in the
@@ -75,7 +87,7 @@ function createMain(): BrowserWindow {
     if (!quitting && !keepPlaying) app.quit()
   })
   win.on('closed', () => (main = null))
-  if (testProfile) win.once('ready-to-show', () => win.showInactive())
+  if (testProfile && !headless) win.once('ready-to-show', () => win.showInactive())
   win.on('enter-full-screen', () => win.webContents.send('fullscreen', true))
   win.on('leave-full-screen', () => win.webContents.send('fullscreen', false))
   // A reloading UI can't report that the video slot went away; put the video back out of sight.
@@ -100,13 +112,17 @@ function showMain(then?: (w: BrowserWindow) => void): void {
 // Push player state while someone can see it: the whole state when anything besides the clock
 // changed, otherwise just the time. Each push repaints the window, so once a second (an m:ss clock)
 // is enough; commands refresh right away so the controls still respond instantly.
+// The menu bar item needs the song even with the window closed, so the poll keeps running then;
+// the tray itself only redraws when the song or play state changes.
 // A track change briefly has no trustworthy title/artwork (see player.ts); hold the update back
 // for up to a second so the UI never shows the old song's art under the new song.
 let pendingSince: { id: string; at: number } | null = null
 async function pushState(): Promise<void> {
-  if (!main?.isVisible()) return
+  const ui = !!main && (main.isVisible() || headless)
+  if (!ui && !trayOn()) return
   const s = await getState()
-  if (!s || !main) return
+  updateTray(s)
+  if (!s || !main || !ui) return
   if (s.pending) {
     if (pendingSince?.id !== s.videoId) pendingSince = { id: s.videoId, at: Date.now() }
     if (Date.now() - pendingSince.at < 1000) return void setTimeout(pushState, 200)
@@ -120,6 +136,17 @@ async function pushState(): Promise<void> {
     sent.time = time
     main.webContents.send('player:time', time)
   }
+}
+
+async function playerCommand(c: PlayerCommand): Promise<void> {
+  await command(c)
+  setTimeout(pushState, 150)
+}
+
+// Headless test runs stay off the user's menu bar. Fill a newly shown tray in right away.
+function applyMenuBar(): void {
+  setTrayMode(headless ? 'off' : menuBar)
+  pushState()
 }
 
 const rebuildMenu = () => buildMenu(() => main, showMain, keys)
@@ -160,6 +187,7 @@ app.on('before-quit', () => (quitting = true))
 app.on('activate', () => showMain())
 
 app.whenReady().then(() => {
+  if (headless) app.dock?.hide()
   const ses = ytmSession()
   // Open the window right away; data handlers wait for the YouTube session instead.
   const init = syncAuth()
@@ -193,6 +221,7 @@ app.whenReady().then(() => {
   ipcMain.handle('yt:setPlaylistCover', data((id: string, image: { base64: string; mime: string }) => yt.setPlaylistCover(id, image, uploadImage)))
   ipcMain.handle('yt:rate', (_, videoId: string, like: boolean) => rateVideo(videoId, like))
   ipcMain.handle('yt:subscribe', (_, channelId: string, on: boolean) => subscribe(channelId, on))
+  ipcMain.handle('yt:saveToLibrary', (_, playlistId: string, on: boolean) => saveToLibrary(playlistId, on))
   ipcMain.handle('yt:browseMore', data(yt.browseMore))
   ipcMain.handle('ytm:settings', () => ytmSettings())
   ipcMain.handle('ytm:applySetting', (_, endpoint: unknown) => applyYtmSetting(endpoint))
@@ -204,10 +233,7 @@ app.whenReady().then(() => {
   ipcMain.handle('yt:artist', data(yt.artist))
   ipcMain.handle('yt:search', data(yt.search))
   ipcMain.handle('yt:lyrics', data(lyrics))
-  ipcMain.handle('player:cmd', async (_, c) => {
-    await command(c)
-    setTimeout(pushState, 150)
-  })
+  ipcMain.handle('player:cmd', (_, c: PlayerCommand) => playerCommand(c))
   ipcMain.handle('player:get', () => getState())
   ipcMain.handle('ui:popup', popup)
   ipcMain.handle('ui:open', (_, url: string) => shell.openExternal(url))
@@ -225,15 +251,22 @@ app.whenReady().then(() => {
     keys = b
     rebuildMenu()
   })
-  ipcMain.handle('ui:prefs', (_, p: { keepPlaying: boolean; videoMode: boolean; openAtLogin: boolean }) => {
+  ipcMain.handle('ui:prefs', (_, p: MainPrefs) => {
     keepPlaying = p.keepPlaying
     setVideoMode(p.videoMode)
     if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: p.openAtLogin })
+    if (p.menuBar !== menuBar) {
+      menuBar = p.menuBar
+      writeFileSync(prefsFile, JSON.stringify({ menuBar }))
+      applyMenuBar()
+    }
   })
 
   createPlayerWindow()
   createMain()
   rebuildMenu()
+  initTray({ command: playerCommand, show: () => showMain(), quit: () => app.quit() })
+  applyMenuBar()
 
   let t: NodeJS.Timeout
   ses.cookies.on('changed', (_, cookie) => {

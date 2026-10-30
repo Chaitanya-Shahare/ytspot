@@ -1,18 +1,24 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { Collection, Privacy, SearchResult, Track } from '../../../shared/types'
-import { Close, Edit, Note, Search } from '../components/icons'
+import { Close, Edit, Note, Play, PlusCircle, Search } from '../components/icons'
 import { addSong } from '../components/menus'
 import { Img } from '../components/ui'
 import { libraryChanged, playlistChanged, sized, useApp, useCached } from '../lib'
 
-// Songs you can add straight to your playlist (Spotify's "Recommended" and "Find more" rows).
-function AddRows({ tracks, onAdd }: { tracks: Track[]; onAdd: (t: Track) => void }) {
-  const { playTrack, go } = useApp()
+// Songs you can add straight to your playlist (Spotify's "Recommended" and search rows). They use
+// the playlist table's own grid, so titles, albums and times line up with the songs above.
+function AddRows({ tracks, onAdd, showAlbum, playlist }: { tracks: Track[]; onAdd: (t: Track) => void; showAlbum: boolean; playlist: string }) {
+  const { playTrack, go, player } = useApp()
   return (
-    <div className="add-rows">
+    <div className={`tracks add-rows ${showAlbum ? '' : 'no-album'}`}>
       {tracks.map((t) => (
-        <div key={t.videoId} className="add-row" onDoubleClick={() => playTrack(t)}>
+        <div key={t.videoId} className={`track-row ${player?.videoId === t.videoId ? 'current' : ''}`} onDoubleClick={() => playTrack(t)}>
+          <span className="num">
+            <button className="row-play" onClick={() => playTrack(t)} aria-label={`Play ${t.title}`} title="Play">
+              <Play size={14} />
+            </button>
+          </span>
           <span className="title-cell">
             <Img src={sized(t.thumb, 40)} />
             <span className="tt">
@@ -22,11 +28,14 @@ function AddRows({ tracks, onAdd }: { tracks: Track[]; onAdd: (t: Track) => void
               </span>
             </span>
           </span>
-          <span className={`sub album-cell ${t.albumId ? 'link' : ''}`} onClick={() => t.albumId && go({ name: 'album', id: t.albumId })}>
-            {t.album}
-          </span>
-          <button className="outline-btn small" onClick={() => onAdd(t)}>
-            Add
+          {showAlbum && (
+            <span className={`sub album-cell ${t.albumId ? 'link' : ''}`} onClick={() => t.albumId && go({ name: 'album', id: t.albumId })}>
+              {t.album}
+            </span>
+          )}
+          <span className="dur sub">{t.duration}</span>
+          <button className="row-add" onClick={() => onAdd(t)} aria-label={`Add ${t.title} to ${playlist}`} title={`Add to ${playlist}`}>
+            <PlusCircle size={16} />
           </button>
         </div>
       ))}
@@ -41,21 +50,25 @@ export function PlaylistExtras({ data }: { data: Collection }) {
   const empty = !data.tracks.length && !data.more
   const [finding, setFinding] = useState(empty)
   const add = (t: Track) => addSong(ctx, { id: data.id, title: data.title }, t.videoId)
+  // Same columns as the table above (an empty playlist has none, so show the album).
+  const rows = { showAlbum: empty || data.tracks.some((t) => t.album), playlist: data.title }
   return (
     <>
-      {finding ? <FindSongs onAdd={add} onClose={empty ? undefined : () => setFinding(false)} /> : (
+      {finding ? <FindSongs onAdd={add} rows={rows} onClose={empty ? undefined : () => setFinding(false)} /> : (
         <div className="find-more">
           <button className="link-btn" onClick={() => setFinding(true)}>
             Find more
           </button>
         </div>
       )}
-      <Recommended data={data} onAdd={add} />
+      <Recommended data={data} onAdd={add} rows={rows} />
     </>
   )
 }
 
-function FindSongs({ onAdd, onClose }: { onAdd: (t: Track) => void; onClose?: () => void }) {
+type RowOpts = { showAlbum: boolean; playlist: string }
+
+function FindSongs({ onAdd, onClose, rows }: { onAdd: (t: Track) => void; onClose?: () => void; rows: RowOpts }) {
   const [q, setQ] = useState('')
   const [res, setRes] = useState<Track[] | null>(null)
   useEffect(() => {
@@ -74,30 +87,28 @@ function FindSongs({ onAdd, onClose }: { onAdd: (t: Track) => void; onClose?: ()
   return (
     <section className="find-songs">
       <div className="find-head">
-        <div>
-          <h2 className="section-title">Let’s find something for your playlist</h2>
-          <label className="find-box">
-            <Search size={16} />
-            <input autoFocus placeholder="Search for songs" value={q} onChange={(e) => setQ(e.target.value)} />
-            {q && (
-              <button className="icon-btn" onClick={() => setQ('')} aria-label="Clear search field" title="Clear search field">
-                <Close size={14} />
-              </button>
-            )}
-          </label>
-        </div>
+        <h2 className="section-title">Let’s find something for your playlist</h2>
         {onClose && (
           <button className="icon-btn big" onClick={onClose} aria-label="Close" title="Close">
             <Close size={20} />
           </button>
         )}
       </div>
-      {res && (res.length ? <AddRows tracks={res} onAdd={onAdd} /> : <p className="sub find-none">No songs found for “{q}”.</p>)}
+      <label className="find-box">
+        <Search size={20} />
+        <input autoFocus placeholder="Search for songs" value={q} onChange={(e) => setQ(e.target.value)} />
+        {q && (
+          <button className="search-clear" onClick={() => setQ('')} aria-label="Clear search field" title="Clear search field">
+            <Close size={16} />
+          </button>
+        )}
+      </label>
+      {res && (res.length ? <AddRows tracks={res} onAdd={onAdd} {...rows} /> : <p className="sub find-none">No songs found for “{q}”.</p>)}
     </section>
   )
 }
 
-function Recommended({ data, onAdd }: { data: Collection; onAdd: (t: Track) => Promise<boolean> }) {
+function Recommended({ data, onAdd, rows }: { data: Collection; onAdd: (t: Track) => Promise<boolean>; rows: RowOpts }) {
   // Depends on what's in the playlist, so it's fetched again whenever the songs change.
   const { data: recs, set } = useCached<Track[]>(`suggest:${data.id}:${data.tracks.length}`, () => window.ytm.playlistSuggestions(data.id), {
     revalidate: false
@@ -117,10 +128,12 @@ function Recommended({ data, onAdd }: { data: Collection; onAdd: (t: Track) => P
     <section className="recommended">
       <h2 className="section-title">Recommended</h2>
       <p className="sub">Based on what’s in this playlist</p>
-      <AddRows tracks={shown} onAdd={(t) => onAdd(t).then((ok) => ok && set(recs.filter((r) => r.videoId !== t.videoId)))} />
-      <button className="link-btn refresh" onClick={refresh} disabled={busy}>
-        {busy ? 'Refreshing…' : 'Refresh'}
-      </button>
+      <AddRows tracks={shown} {...rows} onAdd={(t) => onAdd(t).then((ok) => ok && set(recs.filter((r) => r.videoId !== t.videoId)))} />
+      <div className="recommended-foot">
+        <button className="link-btn" onClick={refresh} disabled={busy}>
+          {busy ? 'Refreshing…' : 'Refresh'}
+        </button>
+      </div>
     </section>
   )
 }

@@ -62,7 +62,13 @@ let shownIn: BrowserWindow | null = null
 export function placeVideo(main: BrowserWindow | null, rect: Electron.Rectangle | null): void {
   if (!view || !host) return
   if (main && rect) {
-    if (shownIn !== main) main.contentView.addChildView(view)
+    if (shownIn !== main) {
+      main.contentView.addChildView(view)
+      // Clicking the video would move keyboard focus into the YTM page, where our shortcuts (Space
+      // included) no longer reach the app; hand it straight back.
+      view.webContents.removeAllListeners('focus')
+      view.webContents.on('focus', () => shownIn?.webContents.focus())
+    }
     shownIn = main
     view.setVisible(true)
     // The renderer measures in CSS pixels; the view is placed in window points.
@@ -120,6 +126,14 @@ const run = <T>(js: string): Promise<T | null> =>
 // video to 144p so a hidden window isn't decoding HD video for music.
 const SETUP_JS = (videoMode: boolean) => `(() => {
   if (window.__ytspot) return
+  // A pause asked for while a track was changing: if YTM then starts the new track by itself,
+  // pause it again (media events don't bubble, so listen while capturing).
+  document.addEventListener('play', () => {
+    if ((window.__ytspotHold || 0) > Date.now()) document.getElementById('movie_player')?.pauseVideo()
+  }, true)
+  // When the video was last seen playing, so a toggle can tell a song switching over (stopped for
+  // a moment, YTM about to start the next) from a real pause.
+  document.addEventListener('timeupdate', (e) => { if (!e.target.paused) window.__ytspotPlayedAt = Date.now() }, true)
   const t = (x) => typeof x === 'string' ? x : x?.runs ? x.runs.map((r) => r.text).join('') : (x?.simpleText || '')
   const store = () => document.querySelector('#queue')?.queue?.store?.store?.getState?.().queue
   const thumbs = (r) => r?.thumbnail?.thumbnails || []
@@ -193,6 +207,14 @@ export function setVideoMode(on: boolean): void {
 }
 
 // `rev` is the queue revision main already has; the queue is only sent when it differs.
+// "Is it playing?" for the movie player \`p\`, used by the play button, the toggle and shuffle
+// alike so they never disagree. A video that isn't paused is playing; so is one that only
+// stopped because the next song is loading (it was playing a moment ago, YTM isn't in its
+// "paused" state, and the stop wasn't our own pause, which YTM reports a beat late).
+const IS_PLAYING = `((v, s) => v
+  ? (!v.paused && !v.ended) || (v.paused && s !== 2 && Date.now() - (window.__ytspotPlayedAt || 0) < 3000 && (window.__ytspotPausedAt || 0) < (window.__ytspotPlayedAt || 0))
+  : s === 1)(p.querySelector('video'), p.getPlayerState())`
+
 const STATE_JS = (rev: string) => `(() => {
   const p = document.getElementById('movie_player'), y = window.__ytspot
   if (!p || !p.getVideoData || !y) return null
@@ -218,7 +240,8 @@ const STATE_JS = (rev: string) => `(() => {
     pending: !fresh && !cur,
     time: p.getCurrentTime() || 0,
     duration: p.getDuration() || 0,
-    playing: p.getPlayerState() === 1 || p.getPlayerState() === 3,
+    // The same notion of "playing" the toggle uses (see command), so the button always does what it shows.
+    playing: ${IS_PLAYING},
     volume: p.getVolume(),
     muted: p.isMuted(),
     repeat: bar?.getAttribute('repeat-mode') || 'NONE',
@@ -248,9 +271,23 @@ const rate = (which: 'like' | 'dislike') =>
 // user has already skipped or picked something else doesn't drag playback back.
 let playSeq = 0
 
+// Play/pause during a track change. Right after Next, a song click or a jump, the old video reads
+// as paused while the new one loads, and YTM starts the new one on its own a moment later; asking
+// the video which way to toggle then gets it backwards. So for a few seconds after a track
+// command, a toggle flips what the user last asked for (starting a track asks to play) instead.
+const SWITCH_MS = 4000
+let switching = 0 // when the last track command was sent
+let wantPlaying = true
+const TRACK_COMMANDS = ['play', 'next', 'prev', 'jump', 'jumpAuto', 'dislike']
+
 export async function command(c: PlayerCommand): Promise<void> {
   const P = `document.getElementById('movie_player')`
   if (['play', 'next', 'prev', 'jump', 'jumpAuto', 'toggle', 'dislike'].includes(c.type)) playSeq++
+  if (TRACK_COMMANDS.includes(c.type)) {
+    switching = Date.now()
+    wantPlaying = true
+    run(`window.__ytspotHold = 0`)
+  }
   switch (c.type) {
     case 'play': {
       const mine = playSeq
@@ -264,18 +301,40 @@ export async function command(c: PlayerCommand): Promise<void> {
         if (s?.videoId !== c.videoId) {
           const list = c.playlistId ? `&list=${c.playlistId}` : ''
           page?.loadURL(`${YTM}/watch?v=${c.videoId}${list}`)
-        } else if (!s.playing) run(`${P}.playVideo()`)
+        } else if (!s.playing && wantPlaying) run(`${P}.playVideo()`)
       }, 2500)
       return
     }
+    // Decided by the <video> element itself: YTM's player state is "buffering" (3) both while
+    // starting to play and while paused mid-seek, so it can't tell which way to go. A paused
+    // video always plays and a playing (or buffering-to-play) one always pauses.
     case 'toggle':
-      return void run(`(p => p.getPlayerState() === 1 ? p.pauseVideo() : p.playVideo())(${P})`)
+      if (Date.now() - switching < SWITCH_MS) {
+        wantPlaying = !wantPlaying
+        // Holding the pause (10s, or until play is asked for) covers a new track that starts late.
+        return void run(`(p => { window.__ytspotHold = ${wantPlaying ? 0 : 'Date.now() + 10000'}; ${wantPlaying ? 'p.playVideo()' : 'window.__ytspotPausedAt = Date.now(); p.pauseVideo()'} })(${P})`)
+      }
+      // A video that isn't paused, or that only stopped because the next one is loading (it was
+      // playing a moment ago and isn't in YTM's "paused" state), counts as playing: pause it, and
+      // hold the pause in case the next song starts by itself.
+      return void run(`(p => {
+        const on = ${IS_PLAYING}, v = p.querySelector('video')
+        window.__ytspotHold = on && v?.paused ? Date.now() + 10000 : 0
+        if (on) window.__ytspotPausedAt = Date.now()
+        on ? p.pauseVideo() : p.playVideo()
+      })(${P})`)
     case 'next':
       return void run(click('.next-button'))
     case 'prev':
       return void run(click('.previous-button'))
-    case 'shuffle':
+    // YTM's shuffle can jump to another song, so it's a track change too, but one that keeps
+    // whatever play/pause state it had.
+    case 'shuffle': {
+      // Mid-switch already (a second shuffle right after the first): keep what was asked for.
+      if (Date.now() - switching >= SWITCH_MS) wantPlaying = !!(await run<boolean>(`(p => ${IS_PLAYING})(${P})`))
+      switching = Date.now()
       return void run(click('.shuffle'))
+    }
     case 'repeat':
       return void run(click('.repeat'))
     case 'like':
@@ -409,6 +468,15 @@ export async function rateVideo(videoId: string, like: boolean): Promise<void> {
     `document.querySelector('ytmusic-app').networkManager.fetch('/like/${like ? 'like' : 'removelike'}', { target: { videoId: ${JSON.stringify(videoId)} } }).then(() => true)`,
     true
   )
+}
+
+// Save an album or someone's playlist to your library (or remove it) through YTM's own client.
+export async function saveToLibrary(playlistId: string, on: boolean): Promise<void> {
+  const ok = await page?.executeJavaScript(
+    `document.querySelector('ytmusic-app').networkManager.fetch('/like/${on ? 'like' : 'removelike'}', { target: { playlistId: ${JSON.stringify(playlistId)} } }).then(() => true)`,
+    true
+  )
+  if (!ok) throw new Error('YouTube Music isn’t loaded yet')
 }
 
 // Follow / unfollow an artist (a YouTube subscription) through YTM's own client.
