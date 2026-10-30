@@ -1,7 +1,7 @@
 // Drives a hidden music.youtube.com window: YouTube's own player does the streaming
 // (Premium, no ads, its queue/radio), we only send commands and read state.
 import { BaseWindow, BrowserWindow, session, WebContentsView, type WebContents } from 'electron'
-import type { PlayerCommand, PlayerState, YtmSetting } from '../shared/types'
+import type { PlayerCommand, PlayerState, ShuffleMode, YtmSetting } from '../shared/types'
 
 const YTM = 'https://music.youtube.com'
 // Same sign-in entry point Pear uses: Google login, then YouTube's sign-in handler, then YTM.
@@ -51,7 +51,7 @@ export function createPlayerWindow(): BaseWindow {
   if (process.env.YTSPOT_MUTE) p.setAudioMuted(true)
   p.on('dom-ready', () => {
     p.insertCSS(VIDEO_CSS)
-    run(SETUP_JS(videoMode))
+    run(SETUP_JS(videoMode, shuffleMode))
   })
   p.loadURL(YTM)
   return host
@@ -124,7 +124,7 @@ const run = <T>(js: string): Promise<T | null> =>
 // Shared helpers injected into the YTM page once per load, plus the audio-only policy:
 // unless video mode is on, switch to YTM's audio-only stream when offered, otherwise drop the
 // video to 144p so a hidden window isn't decoding HD video for music.
-const SETUP_JS = (videoMode: boolean) => `(() => {
+const SETUP_JS = (videoMode: boolean, shuffleMode: ShuffleMode) => `(() => {
   if (window.__ytspot) return
   // A pause asked for while a track was changing: if YTM then starts the new track by itself,
   // pause it again (media events don't bubble, so listen while capturing).
@@ -137,10 +137,180 @@ const SETUP_JS = (videoMode: boolean) => `(() => {
   const t = (x) => typeof x === 'string' ? x : x?.runs ? x.runs.map((r) => r.text).join('') : (x?.simpleText || '')
   const store = () => document.querySelector('#queue')?.queue?.store?.store?.getState?.().queue
   const thumbs = (r) => r?.thumbnail?.thumbnails || []
+  const primary = (it) => it?.playlistPanelVideoRenderer || it?.playlistPanelVideoWrapperRenderer?.primaryRenderer?.playlistPanelVideoRenderer
+  // A queue item's id: YTM numbers items as it adds them, unique within a queue.
+  const key = (it) => primary(it)?.navigationEndpoint?.watchEndpoint?.index
+
+  // ---- Shuffle, as in Spotify: off, on, or Smart Shuffle (on, plus a recommendation after every
+  // 3 songs). Done on YTM's queue store, because YTM's own shuffle button jumps to another song
+  // when it's turned on or off. \`order\` is the queue's own order (item ids), \`queued\` the songs
+  // the user added, \`recs\` the ones Smart Shuffle added.
+  const sh = { mode: ${JSON.stringify(shuffleMode)}, order: [], queued: new Set(), recs: new Set(), fresh: true, wantRecs: false, asked: false, busy: false }
+  const queueEl = () => document.querySelector('#queue')
+  const items = () => store()?.items || []
+  const current = () => items()[queueEl()?.queue?.getCurrentItemIndex?.() ?? -1]
+  const mix = (a) => {
+    for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]] }
+    return a
+  }
+  // Our own dispatches, which the dispatch hook below ignores.
+  const quietly = (fn) => { sh.busy = true; try { fn() } finally { sh.busy = false } }
+  // Replace the queue with \`list\` (the same items, reordered or trimmed) and keep \`cur\` current.
+  // YTM doesn't restart a song for this; it only plays the next item when this one ends.
+  const put = (list, cur) => quietly(() => {
+    queueEl().dispatch({ type: 'RESET_ITEMS', payload: list })
+    queueEl().dispatch({ type: 'SET_INDEX', payload: list.indexOf(cur) })
+  })
+  // The current song first, then songs the user queued after it, then everything else in random
+  // order. (The songs before it go too, so "previous" restarts the song, as in YTM's own shuffle.)
+  const shuffleAll = () => {
+    const list = items(), cur = current()
+    if (!cur) return
+    const queued = list.slice(list.indexOf(cur) + 1).filter((it) => sh.queued.has(key(it)))
+    put([cur, ...queued, ...mix(list.filter((it) => it !== cur && !queued.includes(it)))], cur)
+  }
+  // Back to the queue's own order, carrying on from the current song. Songs that aren't part of it
+  // (ones the user queued) stay right after the song they followed.
+  const unshuffle = () => {
+    const pos = new Map(sh.order.map((k, i) => [k, i])), cur = current()
+    let at = -1
+    const ranked = items().map((it, i) => {
+      const own = pos.has(key(it))
+      if (own) at = pos.get(key(it))
+      return { it, at, own, i }
+    })
+    ranked.sort((a, b) => a.at - b.at || b.own - a.own || a.i - b.i)
+    if (cur) put(ranked.map((r) => r.it), cur)
+  }
+  // Songs YTM loads into a shuffled queue later (the rest of a long playlist) go in at random
+  // places among the songs still to come, after any the user queued. A recommendation that turns
+  // out to be one of them goes, so the song doesn't play twice.
+  const spread = (added) => {
+    const cur = current()
+    if (!cur || added.includes(cur)) return shuffleAll()
+    const ids = new Set(added.map((it) => primary(it)?.videoId))
+    const dup = (it) => it !== cur && sh.recs.has(key(it)) && ids.has(primary(it)?.videoId)
+    const out = items().filter((it) => !added.includes(it) && !dup(it))
+    let from = out.indexOf(cur) + 1
+    while (from < out.length && sh.queued.has(key(out[from]))) from++
+    for (const it of added) out.splice(from + Math.floor(Math.random() * (out.length - from + 1)), 0, it)
+    put(out, cur)
+  }
+  // Smart Shuffle's recommendations are YTM's autoplay songs for this queue (its radio), moved up
+  // into the queue: one after every 3 songs to come. False when there are none yet.
+  const addRecs = () => {
+    const list = items(), cur = current(), auto = store()?.automixItems || []
+    const have = new Set(list.map((it) => primary(it)?.videoId))
+    // Songs and official videos only, not covers and remixes people uploaded.
+    const ugc = (it) => primary(it)?.navigationEndpoint?.watchEndpoint?.watchEndpointMusicSupportedConfigs?.watchEndpointMusicConfig?.musicVideoType === 'MUSIC_VIDEO_TYPE_UGC'
+    const pool = auto.filter((it) => !have.has(primary(it)?.videoId) && !ugc(it))
+    if (!cur || !pool.length) return false
+    const out = list.slice(0, list.indexOf(cur) + 1), used = []
+    const add = () => { const it = pool.shift(); used.push(it); out.push(it) }
+    list.slice(out.length).forEach((it, i) => { out.push(it); if (i % 3 === 2 && pool.length) add() })
+    if (!used.length) add()
+    used.forEach((it) => sh.recs.add(key(it)))
+    put(out, cur)
+    quietly(() => queueEl().dispatch({ type: 'REPLACE_AUTOMIX_ITEMS', payload: { automixItems: auto.filter((it) => !used.includes(it)) } }))
+    return true
+  }
+  // YTM fetches its autoplay songs only when a long playlist is about to run out, so without them
+  // ask for the playlist's radio (or the song's), as YTM's own radio would, once per queue. They
+  // arrive as autoplay songs, which \`settle\` then mixes in.
+  const fetchRecs = async () => {
+    const we = primary(current())?.navigationEndpoint?.watchEndpoint, order = sh.order
+    if (!we || sh.asked) return
+    sh.asked = true
+    const lists = [we.playlistId && !we.playlistId.startsWith('RD') && 'RDAMPL' + we.playlistId, 'RDAMVM' + we.videoId]
+    for (const playlistId of lists.filter(Boolean)) {
+      const res = await document.querySelector('ytmusic-app').networkManager.fetch('/next', { playlistId, videoId: we.videoId, isAudioOnly: true }).catch(() => null)
+      const panel = res?.contents?.singleColumnMusicWatchNextResultsRenderer?.tabbedRenderer?.watchNextTabbedResultsRenderer?.tabs?.[0]?.tabRenderer?.content?.musicQueueRenderer?.content?.playlistPanelRenderer
+      // A radio starts with the song it's for and can include the queue's own songs.
+      const have = new Set(items().map((it) => primary(it)?.videoId))
+      const found = (panel?.contents || []).filter((it) => primary(it) && !have.has(primary(it).videoId))
+      // Moved on to another queue meanwhile (a new queue gets a new \`order\`): these were for the old one.
+      if (sh.order !== order) return
+      if (!found.length) continue
+      found.forEach((it) => (primary(it).selected = false))
+      return queueEl().dispatch({ type: 'ADD_AUTOMIX_ITEMS', payload: { automixItems: found, nextQueueItemId: store().nextQueueItemId, shouldAssignIds: true } })
+    }
+  }
+  // A new queue's autoplay songs come a moment after its songs, so give YTM a few seconds first.
+  const mixInRecs = () => {
+    sh.wantRecs = !addRecs()
+    if (sh.wantRecs) setTimeout(() => sh.wantRecs && fetchRecs(), 3000)
+  }
+  // Takes them out again, except the one playing.
+  const dropRecs = () => {
+    const cur = current()
+    if (cur && sh.recs.size) put(items().filter((it) => it === cur || !sh.recs.has(key(it))), cur)
+    sh.recs.clear()
+    sh.wantRecs = false
+  }
+  // Keeps YTM's queue in the chosen mode as it changes: a new queue (another playlist) gets
+  // shuffled, songs loaded later get shuffled in, and Smart Shuffle adds its songs once YTM has them.
+  const settle = () => {
+    if (sh.mode === 'off' || !store()) return
+    const cur = current()
+    if (!cur) return
+    if (sh.fresh) {
+      sh.fresh = false
+      sh.order = items().map(key)
+      shuffleAll()
+      sh.wantRecs = sh.mode === 'smart'
+    } else {
+      const known = new Set(sh.order)
+      const added = items().filter((it) => !known.has(key(it)) && !sh.queued.has(key(it)) && !sh.recs.has(key(it)))
+      if (added.length) (sh.order.push(...added.map(key)), spread(added))
+    }
+    if (sh.wantRecs) mixInRecs()
+  }
+  // Watch YTM's own queue changes: a CLEAR starts a new queue; songs added with "Play next" / "Add
+  // to queue" (\`adding\`) are the user's; autoplay songs YTM moves in at the end stay in its order.
+  const hook = () => {
+    const st = queueEl()?.queue?.store?.store
+    if (!st || st.__ytspot) return
+    st.__ytspot = true
+    const dispatch = st.dispatch.bind(st)
+    st.dispatch = (a) => {
+      const r = dispatch(a)
+      if (sh.busy || !a) return r
+      if (a.type === 'CLEAR') {
+        sh.order = []
+        sh.queued.clear()
+        sh.recs.clear()
+        sh.fresh = true
+        sh.asked = false
+      } else if (a.type === 'ADD_ITEMS' && sh.adding) a.payload.items.forEach((it) => sh.queued.add(key(it)))
+      else if (a.type === 'SHIFT_AUTOPLAY_ITEMS') sh.order.push(...a.payload.map(key))
+      if (['CLEAR', 'ADD_ITEMS', 'ADD_AUTOMIX_ITEMS', 'UPDATE_ITEMS', 'RESET_ITEMS', 'REFRESH_ITEMS'].includes(a.type)) {
+        clearTimeout(sh.t)
+        sh.t = setTimeout(settle, 0)
+      }
+      return r
+    }
+    settle()
+  }
+  const setShuffle = (mode) => {
+    const was = sh.mode
+    if (mode === was) return
+    sh.mode = mode
+    // Before the queue exists, \`settle\` applies the mode once it does.
+    if (!store() || !current()) return
+    if (was === 'smart') dropRecs()
+    if (was === 'off') {
+      sh.fresh = false
+      sh.order = items().filter((it) => !sh.queued.has(key(it))).map(key)
+      shuffleAll()
+    }
+    if (mode === 'off') unshuffle()
+    if (mode === 'smart') mixInRecs()
+  }
+
   const rows = (list) => (list || []).map((it) => {
     // A wrapper pairs a song with its music video; whichever one is playing describes the row.
     const w = it.playlistPanelVideoWrapperRenderer
-    const prim = it.playlistPanelVideoRenderer || w?.primaryRenderer?.playlistPanelVideoRenderer
+    const prim = primary(it)
     const cp = w?.counterpart?.[0]?.counterpartRenderer?.playlistPanelVideoRenderer
     const r = cp?.selected ? cp : prim
     if (!r) return null
@@ -158,18 +328,19 @@ const SETUP_JS = (videoMode: boolean) => `(() => {
     return {
       videoId: r.videoId, title: t(r.title), artist: t(r.shortBylineText), artistId, albumId,
       duration: t(r.lengthText), thumb: thumbs(r)[0]?.url || '', art, square: !!album,
-      selected: !!prim?.selected || !!cp?.selected
+      selected: !!prim?.selected || !!cp?.selected, rec: sh.recs.has(key(it))
     }
   })
   const queue = () => rows(document.querySelector('#queue')?.queue?.getItems?.())
   // YTM's autoplay recommendations ("Dynamic queue") that play after the queue runs out.
   const autoplay = () => (store()?.autoplay ? rows(store().automixItems).filter(Boolean) : [])
   const s = window.__ytspot = {
-    video: ${videoMode}, t, queue, autoplay,
+    video: ${videoMode}, t, queue, autoplay, sh, setShuffle,
     // Queue rows are rebuilt only when YTM's queue store changes; it's immutable, so identity says
     // whether anything changed. \`rev\` tells main whether its copy is current (unique per page load).
     page: Math.random().toString(36).slice(2), n: 0,
     snap() {
+      hook()
       const st = store()
       if (st === s.src && s.q) return
       s.src = st
@@ -201,14 +372,18 @@ const SETUP_JS = (videoMode: boolean) => `(() => {
 })()`
 
 let videoMode = false
+// Kept here too, so a reloaded YTM page starts in the same mode.
+let shuffleMode: ShuffleMode = 'off'
+const NEXT_SHUFFLE = { off: 'on', on: 'smart', smart: 'off' } as const
+
 export function setVideoMode(on: boolean): void {
   videoMode = on
   run(`window.__ytspot && (window.__ytspot.video = ${on}, window.__ytspot.apply())`)
 }
 
 // `rev` is the queue revision main already has; the queue is only sent when it differs.
-// "Is it playing?" for the movie player \`p\`, used by the play button, the toggle and shuffle
-// alike so they never disagree. A video that isn't paused is playing; so is one that only
+// "Is it playing?" for the movie player \`p\`, used by the play button and the toggle alike so
+// they never disagree. A video that isn't paused is playing; so is one that only
 // stopped because the next song is loading (it was playing a moment ago, YTM isn't in its
 // "paused" state, and the stop wasn't our own pause, which YTM reports a beat late).
 const IS_PLAYING = `((v, s) => v
@@ -245,6 +420,7 @@ const STATE_JS = (rev: string) => `(() => {
     volume: p.getVolume(),
     muted: p.isMuted(),
     repeat: bar?.getAttribute('repeat-mode') || 'NONE',
+    shuffle: y.sh.mode,
     liked: bar?.querySelector('ytmusic-like-button-renderer')?.getAttribute('like-status') === 'LIKE',
     isVideo: !!bar?.hasAttribute('is-video'),
     videoMode: y.video,
@@ -327,14 +503,11 @@ export async function command(c: PlayerCommand): Promise<void> {
       return void run(click('.next-button'))
     case 'prev':
       return void run(click('.previous-button'))
-    // YTM's shuffle can jump to another song, so it's a track change too, but one that keeps
-    // whatever play/pause state it had.
-    case 'shuffle': {
-      // Mid-switch already (a second shuffle right after the first): keep what was asked for.
-      if (Date.now() - switching >= SWITCH_MS) wantPlaying = !!(await run<boolean>(`(p => ${IS_PLAYING})(${P})`))
-      switching = Date.now()
-      return void run(click('.shuffle'))
-    }
+    // Off → shuffle → Smart Shuffle → off, like Spotify's button.
+    case 'shuffle':
+      return setShuffle(NEXT_SHUFFLE[shuffleMode])
+    case 'shuffleMode':
+      return setShuffle(c.mode)
     case 'repeat':
       return void run(click('.repeat'))
     case 'like':
@@ -376,12 +549,18 @@ export async function command(c: PlayerCommand): Promise<void> {
         }).then((res) => {
           const items = store.getState().queue.items
           const sel = items.findIndex((e) => (e.playlistPanelVideoRenderer || e.playlistPanelVideoWrapperRenderer?.primaryRenderer.playlistPanelVideoRenderer)?.selected)
-          q.dispatch({ type: 'ADD_ITEMS', payload: {
-            nextQueueItemId: store.getState().queue.nextQueueItemId,
-            index: pos === 'INSERT_AFTER_CURRENT_VIDEO' ? sel + 1 : items.length,
-            items: (res?.queueDatas || []).map((d) => d?.content).filter(Boolean),
-            shuffleEnabled: false, shouldAssignIds: true
-          } })
+          // Marked as the user's, so shuffle leaves them where they were put.
+          window.__ytspot.sh.adding = true
+          try {
+            q.dispatch({ type: 'ADD_ITEMS', payload: {
+              nextQueueItemId: store.getState().queue.nextQueueItemId,
+              index: pos === 'INSERT_AFTER_CURRENT_VIDEO' ? sel + 1 : items.length,
+              items: (res?.queueDatas || []).map((d) => d?.content).filter(Boolean),
+              shuffleEnabled: false, shouldAssignIds: true
+            } })
+          } finally {
+            window.__ytspot.sh.adding = false
+          }
         })
       })()`)
     case 'queueMove':
@@ -400,6 +579,11 @@ export async function command(c: PlayerCommand): Promise<void> {
     case 'videoMode':
       return setVideoMode(c.on)
   }
+}
+
+async function setShuffle(mode: ShuffleMode): Promise<void> {
+  shuffleMode = mode
+  await run(`window.__ytspot?.setShuffle(${JSON.stringify(mode)})`)
 }
 
 // ---- YouTube Music settings, read from and applied through YTM's own settings dialog ----

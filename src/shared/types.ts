@@ -93,7 +93,11 @@ export interface QueueItem {
   art?: string // Now Playing-size artwork: album art when there is any, else a video frame
   square?: boolean // `art` is album art
   selected: boolean
+  rec?: boolean // added by Smart Shuffle
 }
+
+// Play in order, shuffle, or Smart Shuffle (shuffle plus recommendations), as in Spotify.
+export type ShuffleMode = 'off' | 'on' | 'smart'
 
 export interface PlayerState {
   videoId: string
@@ -109,6 +113,7 @@ export interface PlayerState {
   volume: number
   muted: boolean
   repeat: 'NONE' | 'ALL' | 'ONE'
+  shuffle: ShuffleMode
   liked: boolean
   // The current item is a video (music video / upload); `videoMode` is the user's preference.
   isVideo: boolean
@@ -139,6 +144,7 @@ export type PlayerCommand =
   | { type: 'queueRemove'; index: number }
   | { type: 'queueMove' | 'autoplayMove'; from: number; to: number }
   | { type: 'videoMode'; on: boolean }
+  | { type: 'shuffleMode'; mode: ShuffleMode }
 
 // A YouTube Music setting mirrored from its own settings dialog.
 export interface YtmSetting {
