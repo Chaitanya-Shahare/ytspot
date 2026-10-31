@@ -1,6 +1,7 @@
 // Drives a hidden music.youtube.com window: YouTube's own player does the streaming
-// (Premium, no ads, its queue/radio), we only send commands and read state.
+// (Premium, its queue/radio), we only send commands and read state. Ads are blocked (adblock.ts).
 import { BaseWindow, BrowserWindow, session, WebContentsView, type WebContents } from 'electron'
+import { AD_URLS, blockAds, isAdUrl } from './adblock'
 import type { PlayerCommand, PlayerState, ShuffleMode, YtmSetting } from '../shared/types'
 
 const YTM = 'https://music.youtube.com'
@@ -40,10 +41,11 @@ export function createPlayerWindow(): BaseWindow {
   const p = (page = view.webContents)
   const id = p.id
   // Nobody sees this page, so don't download or decode its artwork (our UI loads its own), and
-  // don't run YTM's offline service worker, which costs a whole extra process.
-  const urls = ['*://*.ytimg.com/*', '*://*.ggpht.com/*', '*://*.googleusercontent.com/*', '*://*.gstatic.com/*', '*://music.youtube.com/sw.js*']
+  // don't run YTM's offline service worker, which costs a whole extra process. Ad requests never go
+  // out. (A session takes one such listener, so this is the only one.)
+  const urls = ['*://*.ytimg.com/*', '*://*.ggpht.com/*', '*://*.googleusercontent.com/*', '*://*.gstatic.com/*', '*://music.youtube.com/sw.js*', ...AD_URLS]
   ytmSession().webRequest.onBeforeRequest({ urls }, (d, cb) =>
-    cb({ cancel: d.url.includes('/sw.js') || (d.webContentsId === id && d.resourceType === 'image') })
+    cb({ cancel: isAdUrl(d.url) || d.url.includes('/sw.js') || (d.webContentsId === id && d.resourceType === 'image') })
   )
   ytmSession().clearStorageData({ storages: ['serviceworkers'] })
   // YTM's "Leave site?" beforeunload handler would otherwise silently block quitting and reloads.
@@ -53,7 +55,7 @@ export function createPlayerWindow(): BaseWindow {
     p.insertCSS(VIDEO_CSS)
     run(SETUP_JS(videoMode, shuffleMode))
   })
-  p.loadURL(YTM)
+  blockAds(p).then(() => p.loadURL(YTM))
   return host
 }
 
