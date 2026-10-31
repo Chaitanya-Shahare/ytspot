@@ -1,7 +1,8 @@
 // Drives a hidden music.youtube.com window: YouTube's own player does the streaming
-// (Premium, no ads, its queue/radio), we only send commands and read state.
+// (Premium, its queue/radio), we only send commands and read state. Ads are blocked (adblock.ts).
 import { BaseWindow, BrowserWindow, session, WebContentsView, type WebContents } from 'electron'
-import type { PlayerCommand, PlayerState, ShuffleMode, YtmSetting } from '../shared/types'
+import { AD_URLS, blockAds, isAdUrl } from './adblock'
+import type { PlayerCommand, PlayerState, ShuffleMode, VideoRect, YtmSetting } from '../shared/types'
 
 const YTM = 'https://music.youtube.com'
 // Same sign-in entry point Pear uses: Google login, then YouTube's sign-in handler, then YTM.
@@ -12,7 +13,7 @@ export const ytmSession = () => session.fromPartition('persist:ytm')
 
 // The YTM page lives in its own view, parked in a hidden window (a BaseWindow has no page of its
 // own). When a video should be watched, the view is moved into the main window over the Now
-// Playing artwork, then parked again.
+// Playing artwork (or, in full screen, beneath the whole page), then parked again.
 let host: BaseWindow | null = null
 let view: WebContentsView | null = null
 let page: WebContents | null = null
@@ -20,13 +21,17 @@ let login: BrowserWindow | null = null
 
 const HIDDEN_BOUNDS = { x: 0, y: 0, width: 1000, height: 700 }
 
-// While shown in the app, only the <video> is visible, filling the view.
+// While shown in the app, only the <video> is visible, filling the view. Nothing in YTM's page may
+// move it: its player plays a "grow-into-place" animation whenever it's resized, which for half a
+// second shifts the video off to one side.
 const VIDEO_CSS = `
   html.ytspot-video, html.ytspot-video body { background: #000 !important; overflow: hidden !important; }
   html.ytspot-video * { visibility: hidden !important; transform: none !important; contain: none !important;
-    will-change: auto !important; filter: none !important; transition: none !important; }
+    will-change: auto !important; filter: none !important; transition: none !important; animation: none !important; }
   html.ytspot-video video { visibility: visible !important; position: fixed !important; inset: 0 !important;
     width: 100vw !important; height: 100vh !important; object-fit: cover !important; z-index: 2147483647 !important; }
+  /* Full screen shows the whole picture, letterboxed, as YouTube's own full screen does. */
+  html.ytspot-video.ytspot-full video { object-fit: contain !important; }
 `
 
 export function createPlayerWindow(): BaseWindow {
@@ -40,10 +45,11 @@ export function createPlayerWindow(): BaseWindow {
   const p = (page = view.webContents)
   const id = p.id
   // Nobody sees this page, so don't download or decode its artwork (our UI loads its own), and
-  // don't run YTM's offline service worker, which costs a whole extra process.
-  const urls = ['*://*.ytimg.com/*', '*://*.ggpht.com/*', '*://*.googleusercontent.com/*', '*://*.gstatic.com/*', '*://music.youtube.com/sw.js*']
+  // don't run YTM's offline service worker, which costs a whole extra process. Ad requests never go
+  // out. (A session takes one such listener, so this is the only one.)
+  const urls = ['*://*.ytimg.com/*', '*://*.ggpht.com/*', '*://*.googleusercontent.com/*', '*://*.gstatic.com/*', '*://music.youtube.com/sw.js*', ...AD_URLS]
   ytmSession().webRequest.onBeforeRequest({ urls }, (d, cb) =>
-    cb({ cancel: d.url.includes('/sw.js') || (d.webContentsId === id && d.resourceType === 'image') })
+    cb({ cancel: isAdUrl(d.url) || d.url.includes('/sw.js') || (d.webContentsId === id && d.resourceType === 'image') })
   )
   ytmSession().clearStorageData({ storages: ['serviceworkers'] })
   // YTM's "Leave site?" beforeunload handler would otherwise silently block quitting and reloads.
@@ -53,37 +59,104 @@ export function createPlayerWindow(): BaseWindow {
     p.insertCSS(VIDEO_CSS)
     run(SETUP_JS(videoMode, shuffleMode))
   })
-  p.loadURL(YTM)
+  blockAds(p).then(() => p.loadURL(YTM))
   return host
 }
 
-// Show the playing video at `rect` inside `main` (null puts the page back out of sight).
-let shownIn: BrowserWindow | null = null
-export function placeVideo(main: BrowserWindow | null, rect: Electron.Rectangle | null): void {
-  if (!view || !host) return
-  if (main && rect) {
-    if (shownIn !== main) {
-      main.contentView.addChildView(view)
-      // Clicking the video would move keyboard focus into the YTM page, where our shortcuts (Space
-      // included) no longer reach the app; hand it straight back.
-      view.webContents.removeAllListeners('focus')
-      view.webContents.on('focus', () => shownIn?.webContents.focus())
-    }
-    shownIn = main
-    view.setVisible(true)
-    // The renderer measures in CSS pixels; the view is placed in window points.
-    const z = main.webContents.getZoomFactor()
-    view.setBounds({ x: Math.round(rect.x * z), y: Math.round(rect.y * z), width: Math.round(rect.width * z), height: Math.round(rect.height * z) })
-    view.setBorderRadius(8)
-    run(`document.documentElement.classList.add('ytspot-video')`)
-  } else if (shownIn) {
-    shownIn = null
-    host.contentView.addChildView(view)
-    view.setVisible(false)
-    view.setBounds(HIDDEN_BOUNDS)
-    view.setBorderRadius(0)
-    run(`document.documentElement.classList.remove('ytspot-video')`)
+// Where the video is shown: over the Now Playing artwork (on top of the page), or filling the
+// window beneath the page in full screen (the page is see-through there and draws the controls over
+// it). Null while parked out of sight.
+let shown: { main: BaseWindow; full: boolean } | null = null
+// The latest place asked for, and the move getting there (one at a time).
+let target: { main: BaseWindow; ui: WebContents; rect: VideoRect } | null = null
+let moving: Promise<void> | null = null
+let parking: ReturnType<typeof setTimeout> | undefined
+
+const boundsOf = ({ main, ui, rect }: NonNullable<typeof target>): Electron.Rectangle => {
+  if (rect.full) return { ...main.getContentBounds(), x: 0, y: 0 }
+  // The renderer measures in CSS pixels; the view is placed in window points.
+  const z = ui.getZoomFactor()
+  return { x: Math.round(rect.x * z), y: Math.round(rect.y * z), width: Math.round(rect.width * z), height: Math.round(rect.height * z) }
+}
+
+// Resolves once the video has been drawn at the page's new size (or gives up after a moment). The
+// page reports its new size a little before the video layer catches up, so a playing video waits
+// for two of its own frames to be presented; a paused one, which presents none, for two page frames.
+const SIZED_JS = (w: number, h: number) => `new Promise((done) => {
+  const stop = setTimeout(done, 1000), end = () => (clearTimeout(stop), done())
+  const v = document.querySelector('video')
+  const frames = (n) => v && !v.paused && v.requestVideoFrameCallback
+    ? v.requestVideoFrameCallback(() => (n > 1 ? frames(n - 1) : end()))
+    : requestAnimationFrame(() => requestAnimationFrame(end))
+  const check = () => (innerWidth === ${w} && innerHeight === ${h} ? requestAnimationFrame(() => frames(2)) : requestAnimationFrame(check))
+  check()
+})`
+
+// Show the playing video at `rect` inside `main`, whose page is `ui`; resolves once it's showing
+// there. Like Spotify's player, the video is never hidden and reloaded on the way between places:
+// a slot going away is usually another appearing (Now Playing → full screen), so null parks it only
+// if no new place follows. Moving between places, the video is first resized and restyled beneath
+// the page, where it's covered (by the app, or the full-screen player's curtain), and only shown
+// once it has drawn itself at its new size, so a squeezed or cropped frame never shows.
+export function placeVideo(main: BaseWindow | null, ui: WebContents | null, rect: VideoRect | null): Promise<void> {
+  clearTimeout(parking)
+  if (!view || !host) return Promise.resolve()
+  if (!main || !ui || !rect) {
+    parking = setTimeout(parkVideo, 150)
+    return Promise.resolve()
   }
+  target = { main, ui, rect }
+  if (moving) return moving
+  if (shown?.main === main && shown.full === !!rect.full) return Promise.resolve(view.setBounds(boundsOf(target)))
+  return (moving = move().finally(() => (moving = null)))
+}
+
+async function move(): Promise<void> {
+  const v = view!
+  while (target && !(shown?.main === target.main && shown.full === !!target.rect.full)) {
+    const { main, ui, rect } = target
+    const full = !!rect.full
+    if (main.isDestroyed() || ui.isDestroyed()) return
+    // Beneath the page first. (Re-adding a view that's already there doesn't move it to the bottom.)
+    if (shown?.main === main) main.contentView.removeChildView(v)
+    main.contentView.addChildView(v, 0)
+    shown = null
+    // Clicking the video would move keyboard focus into the YTM page, where our shortcuts (Space
+    // included) no longer reach the app; hand it straight back.
+    v.webContents.removeAllListeners('focus')
+    v.webContents.on('focus', () => !ui.isDestroyed() && ui.focus())
+    await run(`document.documentElement.classList.add('ytspot-video'); document.documentElement.classList.toggle('ytspot-full', ${full})`)
+    if (target?.main !== main || !!target.rect.full !== full) continue
+    const b = boundsOf(target)
+    v.setBounds(b)
+    v.setBorderRadius(full ? 0 : 8)
+    v.setVisible(true)
+    await run(SIZED_JS(b.width, b.height))
+    if (target?.main !== main || !!target.rect.full !== full || main.isDestroyed()) continue
+    if (!full) main.contentView.addChildView(v)
+    shown = { main, full }
+  }
+  if (target && shown) view!.setBounds(boundsOf(target))
+}
+
+// Put the video back out of sight (at once: the window is closing or its page reloading).
+export function parkVideo(): void {
+  clearTimeout(parking)
+  target = null
+  if (moving) return void moving.then(parkVideo)
+  if (!view || !host || view.webContents.isDestroyed()) return
+  shown = null
+  host.contentView.addChildView(view)
+  view.setVisible(false)
+  view.setBounds(HIDDEN_BOUNDS)
+  view.setBorderRadius(0)
+  run(`document.documentElement.classList.remove('ytspot-video', 'ytspot-full')`)
+}
+
+// The window resized: a full-screen video follows it directly, without waiting on the page to
+// measure and report (which would trail behind during the full-screen animation).
+export function fitVideo(main: BaseWindow): void {
+  if (target?.main === main && target.rect.full && view) view.setBounds(boundsOf(target))
 }
 
 // Sign-in gets its own window so the player keeps running and closing it returns to the app.
@@ -365,6 +438,18 @@ const SETUP_JS = (videoMode: boolean, shuffleMode: ShuffleMode) => `(() => {
       }
     }
   }
+  // YTM pauses with "Video paused. Continue watching?" once nobody has touched its page for a while
+  // (the player response sets how long, ~40 min), and nobody ever does: ytspot's controls run as
+  // script. So keep its last-activity time (\`_lact\`, which keys and clicks would update) current,
+  // and if the prompt shows anyway, answer it and carry on playing.
+  setInterval(() => {
+    window._lact = Date.now()
+    const yt = [...document.querySelectorAll('ytmusic-you-there-renderer')].find((e) => e.getClientRects().length)
+    if (!yt) return
+    yt.querySelector('button, yt-button-renderer, tp-yt-paper-button')?.click()
+    const p = document.getElementById('movie_player')
+    if (p?.getPlayerState() === 2) p.playVideo()
+  }, 10000)
   // Media events don't bubble, but a capturing listener on document sees them.
   const later = () => { s.apply(); setTimeout(s.apply, 1500) }
   document.addEventListener('loadedmetadata', later, true)
@@ -396,6 +481,10 @@ const STATE_JS = (rev: string) => `(() => {
   y.snap()
   const d = p.getVideoData(), m = navigator.mediaSession.metadata, id = d.video_id || ''
   const bar = document.querySelector('ytmusic-player-bar')
+  // Newer YTM builds have no player bar element. There, a real video is showing when the track is
+  // a video (not a song's still artwork) and YTM's Song/Video switch, if it has one, is on Video.
+  const tg = document.querySelector('ytmusic-av-toggle'), type = p.getPlayerResponse?.()?.videoDetails?.musicVideoType
+  const shows = !!type && type !== 'MUSIC_VIDEO_TYPE_ATV' && (!tg || tg.getAttribute('is-video-playback-mode-selected') === 'true')
   const cur = y.q.find((q) => q && q.selected && q.videoId === id) || y.q.find((q) => q && q.videoId === id)
   // Right after a track change YTM already reports the new video but still has the previous song's
   // media metadata (title, artwork) for a moment; only trust it once it describes this video.
@@ -422,7 +511,7 @@ const STATE_JS = (rev: string) => `(() => {
     repeat: bar?.getAttribute('repeat-mode') || 'NONE',
     shuffle: y.sh.mode,
     liked: bar?.querySelector('ytmusic-like-button-renderer')?.getAttribute('like-status') === 'LIKE',
-    isVideo: !!bar?.hasAttribute('is-video'),
+    isVideo: !!bar?.hasAttribute('is-video') || shows,
     videoMode: y.video,
     rev: y.rev,
     ...(y.rev === ${JSON.stringify(rev)} ? {} : { queue: y.q, autoplay: y.a })

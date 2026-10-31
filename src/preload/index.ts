@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webFrame } from 'electron'
 import type { Action } from '../shared/shortcuts'
-import type { Card, HomeData, LibraryFilter, Lyrics, MainPrefs, More, PlayerCommand, PlayerState, Privacy, SearchFilter, Track, YtmSetting } from '../shared/types'
+import type { Card, HomeData, LibraryFilter, Lyrics, MainPrefs, More, PlayerCommand, PlayerState, Privacy, SearchFilter, Track, VideoRect, YtmSetting } from '../shared/types'
 import type { LyricsQuery } from '../main/lyrics'
 
 export interface PopupItem {
@@ -54,7 +54,7 @@ const bridge = {
   fullscreen: (on?: boolean): Promise<boolean> => ipcRenderer.invoke('ui:fullscreen', on),
   log: (msg: string) => ipcRenderer.invoke('ui:log', msg),
   zoom: (): number => webFrame.getZoomFactor(),
-  videoRect: (r: { x: number; y: number; width: number; height: number } | null) => ipcRenderer.invoke('ui:videoRect', r),
+  videoRect: (r: VideoRect | null) => ipcRenderer.invoke('ui:videoRect', r),
   setBindings: (b: Record<Action, string[]>) => ipcRenderer.invoke('ui:bindings', b),
   setPrefs: (p: MainPrefs) => ipcRenderer.invoke('ui:prefs', p),
   onState: (cb: (s: PlayerState) => void) => {

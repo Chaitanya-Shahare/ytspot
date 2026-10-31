@@ -24,7 +24,7 @@ An open-source macOS desktop client for YouTube Music. It looks and handles like
 
 YouTube Music has the catalogue, but its desktop experience is a browser tab. Spotify has the best desktop app, but not your music. ytspot puts the Spotify UI on top of YouTube Music.
 
-The UI is a separate React app; it is not a restyle of the YouTube Music website. Its colours, spacing, corner radii and control sizes come from the Spotify Mac app's own design tokens. Playback runs in a hidden YouTube Music player, so Premium, ad-free listening, radio and autoplay behave exactly as they do on music.youtube.com.
+The UI is a separate React app; it is not a restyle of the YouTube Music website. Its colours, spacing, corner radii and control sizes come from the Spotify Mac app's own design tokens. Playback runs in a hidden YouTube Music player, so Premium, radio and autoplay behave exactly as they do on music.youtube.com.
 
 ## Features
 
@@ -33,6 +33,7 @@ The UI is a separate React app; it is not a restyle of the YouTube Music website
 - **Song menus** on every row (click "⋯" or right-click): add to playlist, play next, add to queue, like, go to song radio, artist or album, copy link.
 - **Two shortcut schemes:** Spotify's ⌘ shortcuts and YouTube Music's vim-style keys (`j`/`k`, `h`/`l`, `g h`, `/`). Both are on by default and don't collide. You can rebind any key, including two-key sequences, in Settings.
 - **Audio-only by default:** songs stream without the video. Turn on **Switch to video** to watch the music video inside the Now Playing panel.
+- **Full screen, three ways:** the artwork as in Spotify, the music video filling the screen as in YouTube (switch **Audio / Video** at the top right), or synced lyrics as in Spotify's full-screen lyrics (the microphone button, or the full-screen button on the lyrics card). Over the video and lyrics, the controls fade out after 3 seconds without mouse movement.
 - **Native macOS integration:** Control Center / Now Playing widget, media keys, and a full menu bar (Playback, View, Window). Closing the window keeps the music playing, like Spotify.
 - **All YouTube Music settings** in one Settings page: audio quality, Restricted Mode, dynamic queue, history, language and location.
 - **Light on resources:** about 2% CPU and 250–300 MB of memory while playing with the window closed, and close to zero CPU when paused. Home appears in about 0.9 s from cache.
@@ -93,7 +94,7 @@ ytspot signs you in through Google's normal sign-in page, opened in a small wind
 - **Passkeys don't work.** If Google offers a passkey, choose **Try another way** and use your password plus the prompt on your phone. Google only allows passkeys for apps it has approved, and Electron doesn't support the phone/QR passkey flow yet ([electron#53733](https://github.com/electron/electron/pull/53733)).
 - **You may land on your Google Account page** instead of YouTube Music after "Try another way". ytspot detects this, finishes the YouTube Music sign-in on its own and closes the window. If your library still doesn't appear, close the sign-in window and click **Log in** again. It usually won't ask for your password again.
 - **You only sign in once.** The session is saved in `~/Library/Application Support/ytspot` and survives restarts until Google signs you out.
-- **YouTube Music Premium is recommended.** Without Premium, YouTube plays ads between songs, just as on the website.
+- **No ads, with or without Premium.** ytspot strips the ads out of YouTube Music's player responses before the player sees them and blocks YouTube's ad requests. If an ad slips through anyway, it's muted and played at 16× speed until it ends or can be skipped.
 - **Google may still block some accounts** with "Couldn't sign you in: this browser or app may not be secure". If that happens, please [open an issue](https://github.com/Chaitanya-Shahare/ytspot/issues).
 
 You can use ytspot without signing in to browse, search and play. Your library, likes and playlists need an account.

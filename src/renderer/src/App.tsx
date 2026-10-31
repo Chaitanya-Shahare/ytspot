@@ -7,7 +7,7 @@ import { cardMenu, songMenu } from './components/menus'
 import { Boundary, Img } from './components/ui'
 import { SavePopover } from './components/save'
 import { SettingsView } from './views/settings'
-import { LyricsCard, LyricsView } from './views/lyrics'
+import { FullScreenLyrics, LyricsCard, LyricsView, lyricsBackground } from './views/lyrics'
 import { MoodView, SearchView } from './views/search'
 import { ArtistView, CollectionView, ExploreView, HomeView, MoreView, resetHome } from './views/views'
 
@@ -32,7 +32,7 @@ const COLLAPSE_AT = 200
 const TEXT_ENTRY = 'input:not([type=button], [type=checkbox], [type=radio], [type=range], [type=file]), textarea, select, [contenteditable=""], [contenteditable="true"]'
 const CONTROL = 'button, a[href], summary, [role=button], [role=switch], [role=slider], [role=menuitem], [role=tab], [role=option]'
 const REPEATABLE = new Set<Action>(['seekFwd', 'seekBack', 'seekFwdSmall', 'seekBackSmall', 'volUp', 'volDown', 'back', 'forward'])
-const OVERLAY_ACTIONS = new Set<Action>(['toggle', 'next', 'prev', 'seekFwd', 'seekBack', 'seekFwdSmall', 'seekBackSmall', 'shuffle', 'repeat', 'volUp', 'volDown', 'mute', 'like', 'dislike', 'fullscreen', 'help'])
+const OVERLAY_ACTIONS = new Set<Action>(['toggle', 'next', 'prev', 'seekFwd', 'seekBack', 'seekFwdSmall', 'seekBackSmall', 'shuffle', 'repeat', 'volUp', 'volDown', 'mute', 'like', 'dislike', 'fullscreen', 'lyrics', 'help'])
 
 export default function App() {
   const [authed, setAuthed] = useState<boolean | null>(null)
@@ -53,6 +53,8 @@ export default function App() {
   const [panel, setPanel] = useState<'np' | 'queue'>('np')
   const [help, setHelp] = useState(false)
   const [full, setFull] = useState(false)
+  // The full-screen player shows the lyrics instead of the artwork or video.
+  const [fullLyrics, setFullLyrics] = useState(false)
   const [layout, setLayout] = useState<Layout>(loadLayout)
   useEffect(() => localStorage.setItem('layout', JSON.stringify(layout)), [layout])
   const [prefs, setPrefsState] = useState<Prefs>(loadPrefs)
@@ -170,6 +172,7 @@ export default function App() {
     [player?.videoId, player?.liked, player?.title, like, openSave]
   )
   const closeFull = useCallback(() => setFull(false), [])
+  const openFull = useCallback((lyrics: boolean) => (setFullLyrics(lyrics), setFull(true)), [])
   // The song went away (e.g. the player page reloaded): leave full screen rather than leave it
   // armed for whatever plays next.
   useEffect(() => {
@@ -283,8 +286,9 @@ export default function App() {
         case 'explore': return go({ name: 'explore' })
         case 'library': return setLeft(true)
         case 'settings': return go({ name: 'settings' })
-        case 'fullscreen': return setFull((v) => !v && !!player?.videoId)
-        case 'lyrics': return toggleLyrics()
+        // From the Lyrics page, full screen opens on the lyrics.
+        case 'fullscreen': return full ? setFull(false) : player?.videoId && openFull(route.name === 'lyrics')
+        case 'lyrics': return full ? setFullLyrics((v) => !v) : toggleLyrics()
         case 'volUp': return setVolume(volume.current + 10)
         case 'volDown': return setVolume(volume.current - 10)
         case 'shuffle': return shuffle()
@@ -301,7 +305,7 @@ export default function App() {
         case 'help': return setHelp((v) => !v)
       }
     },
-    [player, go, back, forward, like, shuffle, openQueue, showPanel, toast, toggleLyrics]
+    [player, go, back, forward, like, shuffle, openQueue, showPanel, toast, toggleLyrics, full, openFull, route.name]
   )
 
   // Keyboard: Esc closes overlays/leaves the search box; otherwise match combos and sequences
@@ -451,7 +455,7 @@ export default function App() {
               {panel === 'queue' ? (
                 <QueuePanel onClose={() => setRight(false)} />
               ) : (
-                <NowPlayingPanel onClose={() => setRight(false)} onPlus={plus} onQueue={openQueue} covered={help || full} />
+                <NowPlayingPanel onClose={() => setRight(false)} onPlus={plus} onQueue={openQueue} onFullLyrics={() => openFull(true)} covered={help || full} />
               )}
             </Boundary>
           </>
@@ -463,12 +467,12 @@ export default function App() {
           onPlus={plus}
           onShuffle={shuffle}
           onLyrics={toggleLyrics}
-          onFull={() => setFull(true)}
+          onFull={() => openFull(route.name === 'lyrics')}
         />
       </div>
       {full && player?.videoId && (
         <Boundary resetKey={player.videoId}>
-          <FullScreenView onClose={closeFull} onPlus={plus} onShuffle={shuffle} covered={help} />
+          <FullScreenView lyrics={fullLyrics} onLyrics={() => setFullLyrics((v) => !v)} onClose={closeFull} onPlus={plus} onShuffle={shuffle} />
         </Boundary>
       )}
       {help && <ShortcutsModal keys={keys} onClose={() => setHelp(false)} />}
@@ -871,7 +875,7 @@ function upcomingOf(player: PlayerState) {
   return player.queue.map((q, i) => ({ q, i })).slice(idx + 1).filter(({ q }) => q.videoId)
 }
 
-function NowPlayingPanel({ onClose, onPlus, onQueue, covered }: { onClose: () => void; onPlus: (from: HTMLElement) => void; onQueue: () => void; covered: boolean }) {
+function NowPlayingPanel({ onClose, onPlus, onQueue, onFullLyrics, covered }: { onClose: () => void; onPlus: (from: HTMLElement) => void; onQueue: () => void; onFullLyrics: () => void; covered: boolean }) {
   const ctx = useApp()
   const { player, go, prefs, setPrefs } = ctx
   if (!player) return null
@@ -926,7 +930,7 @@ function NowPlayingPanel({ onClose, onPlus, onQueue, covered }: { onClose: () =>
             {prefs.videoMode ? 'Switch to audio' : 'Switch to video'}
           </button>
         </div>
-        <LyricsCard player={player} onOpen={() => go({ name: 'lyrics' })} />
+        <LyricsCard player={player} onOpen={() => go({ name: 'lyrics' })} onFull={onFullLyrics} />
         {player.artistId && <AboutArtist id={player.artistId} />}
         <div className="np-card">
           <div className="np-card-head">
@@ -1025,23 +1029,26 @@ function QueuePanel({ onClose }: { onClose: () => void }) {
 
 // Where the YTM player page (the actual video) is drawn, over the artwork. Reports its position to
 // main; if it's scrolled partly out of the panel the video is put away and the artwork shows.
-function VideoSlot({ poster }: { poster: string }) {
+// `full`: the full-screen player's video, filling the window beneath this page (which turns
+// see-through there). A black curtain covers it until main says it's in place, then fades away.
+function VideoSlot({ poster, full }: { poster: string; full?: boolean }) {
   const ref = useRef<HTMLDivElement>(null)
   const [shown, setShown] = useState(false)
   useEffect(() => {
     const el = ref.current!
     const scroller = el.closest('.np-scroll, .fs')!
     let last = ''
+    let live = true
     const report = () => {
       const r = el.getBoundingClientRect()
       const box = scroller.getBoundingClientRect()
       const visible = r.top >= box.top && r.bottom <= box.bottom && r.width > 0
-      const rect = visible ? { x: Math.round(r.left), y: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height) } : null
+      const rect = visible ? { x: Math.round(r.left), y: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height), full } : null
       const key = JSON.stringify(rect)
       if (key === last) return
       last = key
-      setShown(!!rect)
-      window.ytm.videoRect(rect)
+      if (!rect) setShown(false)
+      window.ytm.videoRect(rect).then(() => live && rect && key === last && setShown(true))
     }
     report()
     const ro = new ResizeObserver(report)
@@ -1049,16 +1056,43 @@ function VideoSlot({ poster }: { poster: string }) {
     ro.observe(document.body)
     scroller.addEventListener('scroll', report, { passive: true })
     return () => {
+      live = false
       ro.disconnect()
       scroller.removeEventListener('scroll', report)
       window.ytm.videoRect(null)
     }
-  }, [])
+  }, [full])
+  if (full) return <div ref={ref} className={`fs-video ${shown ? 'shown' : ''}`} />
   return (
     <div ref={ref} className="np-art np-video-slot">
       {!shown && <img src={poster} />}
     </div>
   )
+}
+
+// Spotify's ambient mode (cinema mode) and YouTube's full screen: after a few seconds without the
+// mouse moving, the controls and the pointer fade away until it moves again. Not while the pointer
+// rests on the controls.
+function useIdle(enabled: boolean, ms = 3000): boolean {
+  const [idle, setIdle] = useState(false)
+  useEffect(() => {
+    setIdle(false)
+    if (!enabled) return
+    let t: ReturnType<typeof setTimeout>
+    const wake = (e?: Event) => {
+      clearTimeout(t)
+      setIdle(false)
+      if (!(e?.target instanceof Element && e.target.closest('.fs-top, .fs-bottom'))) t = setTimeout(() => setIdle(true), ms)
+    }
+    wake()
+    const events = ['pointermove', 'pointerdown', 'keydown', 'wheel']
+    events.forEach((n) => window.addEventListener(n, wake, true))
+    return () => {
+      clearTimeout(t)
+      events.forEach((n) => window.removeEventListener(n, wake, true))
+    }
+  }, [enabled, ms])
+  return idle
 }
 
 // Spotify's progress/volume bar: hover shows the fill up to the pointer (and, for the progress bar,
@@ -1382,9 +1416,12 @@ function Resizer({ side, width, onResize, label }: { side: 'left' | 'right'; wid
 }
 
 // Spotify's full-screen player: blurred artwork behind, big cover and title bottom-left, controls
-// along the bottom. Puts the window itself into full screen while open.
-function FullScreenView({ onClose, onPlus, onShuffle, covered }: { onClose: () => void; onPlus: (from: HTMLElement) => void; onShuffle: (mode?: ShuffleMode) => void; covered: boolean }) {
-  const { player: p, prefs, source } = useApp()
+// along the bottom. Puts the window itself into full screen while open. In video mode the music
+// video fills the screen instead, letterboxed as in YouTube's full screen; with lyrics on, the
+// lyrics fill it, as in Spotify's full-screen lyrics. Over either, the title and controls float
+// and fade out while the mouse is still.
+function FullScreenView({ lyrics, onLyrics, onClose, onPlus, onShuffle }: { lyrics: boolean; onLyrics: () => void; onClose: () => void; onPlus: (from: HTMLElement) => void; onShuffle: (mode?: ShuffleMode) => void }) {
+  const { player: p, prefs, setPrefs, source } = useApp()
   const tint = useColor(p?.thumb)
   const close = useRef(onClose)
   close.current = onClose
@@ -1407,21 +1444,59 @@ function FullScreenView({ onClose, onPlus, onShuffle, covered }: { onClose: () =
       if (entered) window.ytm.fullscreen(false)
     }
   }, [])
+  const video = !!p && !lyrics && prefs.videoMode && p.isVideo
+  const mode = lyrics ? 'lyrics' : video ? 'video' : 'art'
+  const idle = useIdle(mode !== 'art')
   if (!p) return null
+  // As on YouTube, clicking the video plays or pauses it and double-clicking leaves full screen.
+  const onVideo = (e: React.MouseEvent, then: () => void) => video && !(e.target as Element).closest('.fs-top, .fs-bottom') && then()
   return (
-    <div className="fs" style={{ '--tint': tint } as React.CSSProperties}>
-      <div className="fs-bg" style={{ backgroundImage: `url(${p.thumb})` }} />
+    <div
+      className={`fs mode-${mode} ${idle ? 'idle' : ''}`}
+      style={{ '--tint': tint, '--lyrics-bg': lyricsBackground(tint) } as React.CSSProperties}
+      onClick={(e) => onVideo(e, () => window.ytm.cmd({ type: 'toggle' }))}
+      onDoubleClick={(e) => onVideo(e, onClose)}
+    >
+      {mode === 'art' && <div className="fs-bg" style={{ backgroundImage: `url(${p.thumb})` }} />}
+      {video && <VideoSlot poster={p.thumb} full />}
+      {lyrics && (
+        <div className="fs-lyrics">
+          <FullScreenLyrics player={p} />
+        </div>
+      )}
       <div className="fs-top">
-        <span>Playing from</span>
-        <b>{source?.title || p.album || 'YouTube Music'}</b>
-      </div>
-      <div className="fs-now">
-        {prefs.videoMode && p.isVideo && !covered ? <VideoSlot poster={p.thumb} /> : <Img className="fs-art" src={p.thumb} />}
-        <div className="fs-text">
-          <div className="fs-title">{p.title}</div>
-          <div className="fs-artist">{p.artist}</div>
+        {mode === 'art' ? (
+          <div className="fs-source">
+            <span>Playing from</span>
+            <b>{source?.title || p.album || 'YouTube Music'}</b>
+          </div>
+        ) : (
+          <div className="fs-track">
+            {lyrics && <Img className="fs-track-art" src={sized(p.thumb, 56)} />}
+            <div className="fs-track-text">
+              <b>{p.title}</b>
+              <span>{p.artist}</span>
+            </div>
+          </div>
+        )}
+        <div className="fs-av" role="radiogroup" aria-label="Play as">
+          <button role="radio" aria-checked={!prefs.videoMode} className={prefs.videoMode ? '' : 'on'} onClick={() => setPrefs({ videoMode: false })}>
+            Audio
+          </button>
+          <button role="radio" aria-checked={prefs.videoMode} className={prefs.videoMode ? 'on' : ''} onClick={() => setPrefs({ videoMode: true })}>
+            Video
+          </button>
         </div>
       </div>
+      {mode === 'art' && (
+        <div className="fs-now">
+          <Img className="fs-art" src={p.thumb} />
+          <div className="fs-text">
+            <div className="fs-title">{p.title}</div>
+            <div className="fs-artist">{p.artist}</div>
+          </div>
+        </div>
+      )}
       <div className="fs-bottom">
         <Progress />
         <div className="fs-row">
@@ -1430,6 +1505,9 @@ function FullScreenView({ onClose, onPlus, onShuffle, covered }: { onClose: () =
           </div>
           <Controls onShuffle={onShuffle} big />
           <div className="fs-side right">
+            <button className={`icon-btn ${lyrics ? 'green dot' : ''}`} onClick={onLyrics} aria-label={lyrics ? 'Hide lyrics' : 'Lyrics'} title={lyrics ? 'Hide lyrics' : 'Lyrics'} data-shortcut="lyrics">
+              <I.Lyrics size={20} />
+            </button>
             <VolumeControl />
             <button className="icon-btn" onClick={onClose} aria-label="Exit full screen" title="Exit full screen">
               <I.ExitFullScreen size={24} />
