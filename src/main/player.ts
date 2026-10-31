@@ -438,6 +438,18 @@ const SETUP_JS = (videoMode: boolean, shuffleMode: ShuffleMode) => `(() => {
       }
     }
   }
+  // YTM pauses with "Video paused. Continue watching?" once nobody has touched its page for a while
+  // (the player response sets how long, ~40 min), and nobody ever does: ytspot's controls run as
+  // script. So keep its last-activity time (\`_lact\`, which keys and clicks would update) current,
+  // and if the prompt shows anyway, answer it and carry on playing.
+  setInterval(() => {
+    window._lact = Date.now()
+    const yt = [...document.querySelectorAll('ytmusic-you-there-renderer')].find((e) => e.getClientRects().length)
+    if (!yt) return
+    yt.querySelector('button, yt-button-renderer, tp-yt-paper-button')?.click()
+    const p = document.getElementById('movie_player')
+    if (p?.getPlayerState() === 2) p.playVideo()
+  }, 10000)
   // Media events don't bubble, but a capturing listener on document sees them.
   const later = () => { s.apply(); setTimeout(s.apply, 1500) }
   document.addEventListener('loadedmetadata', later, true)
