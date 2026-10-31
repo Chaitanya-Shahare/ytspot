@@ -1,9 +1,11 @@
-import { app, BrowserWindow, Menu, type BaseWindow, type MenuItemConstructorOptions, type WebContents } from 'electron'
+import { app, BrowserWindow, Menu, webContents, type BaseWindow, type MenuItemConstructorOptions, type WebContents } from 'electron'
 import { accel, SHORTCUTS, type Action } from '../shared/shortcuts'
 
 // Spotify-style menu bar. Accelerators are display-only and mirror the user's current bindings:
 // the renderer's keydown handler owns the keys (so typing in search still works), and menu
-// clicks are forwarded to it as actions.
+// clicks are forwarded to it as actions. (On macOS `registerAccelerator: false` still leaves the
+// key on the menu item, which gets every key the page let through: Space typed into the search
+// box would also press Play/Pause. So a key only reaches an item when the app's page isn't focused.)
 export function buildMenu(
   main: () => BaseWindow | null,
   ui: () => WebContents | null,
@@ -14,7 +16,8 @@ export function buildMenu(
     label: label ?? SHORTCUTS.find((x) => x.action === action)!.label,
     accelerator: accel(keys[action] ?? []),
     registerAccelerator: false,
-    click: (_, win) => {
+    click: (_, win, e) => {
+      if (e.triggeredByAccelerator && webContents.getFocusedWebContents() === ui()) return
       // Back/Forward in the sign-in window navigate that page instead of the app.
       const nav = win instanceof BrowserWindow && win !== main() ? win.webContents.navigationHistory : null
       if (nav && action === 'back') return nav.goBack()

@@ -2,7 +2,7 @@
 // youtubei.js node classes are a wide union; we read them structurally, so `any` is used
 // deliberately for parser nodes in this file only.
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { Innertube } from 'youtubei.js'
+import { Innertube, Parser } from 'youtubei.js'
 import type { YTMusic } from 'youtubei.js'
 import type {
   ArtistPage,
@@ -22,6 +22,14 @@ import type {
 type Playlist = YTMusic.Playlist
 
 let yt: Innertube | null = null
+
+// youtubei.js reports the parts of a response it can't parse (new node types, which it parses
+// generically, or a broken one, which it skips). Its own reporter builds a "please report this"
+// message from its package.json's `bugs` field, which electron-builder strips when packaging, so in
+// the app that reporting threw ("reading 'url'") and failed the whole request, e.g. a search.
+Parser.setParserErrorHandler((e) => {
+  if (e.error_type === 'parse') console.warn('[youtubei]', e.classname, (e.error as Error)?.message)
+})
 
 // `fresh` reads the signed-in page's cookies as they are now: the page rotates some of them
 // (__Secure-*PSIDTS) while the app runs for days, so each request sends the current set instead
