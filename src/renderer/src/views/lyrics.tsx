@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Lyrics, PlayerState } from '../../../shared/types'
+import * as I from '../components/icons'
 import { ErrorBox } from '../components/ui'
 import { liveClock, setClock, useApp, useCached, useColor } from '../lib'
 
 // Spotify's lyrics colours: upcoming lines dark on a mid-tone of the artwork's colour, the current
 // line white, sung lines white at 70%. The average artwork colour is pulled to a fixed saturation
 // and lightness so the dark text stays readable on any cover.
-function lyricsBackground(rgb: string): string {
+export function lyricsBackground(rgb: string): string {
   const [r, g, b] = (rgb.match(/\d+/g) ?? ['83', '83', '83']).map((x) => Number(x) / 255)
   const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min
   let h = 0
@@ -24,6 +25,12 @@ export function LyricsView() {
       </div>
     )
   return <SongLyrics key={player.videoId} player={player} />
+}
+
+// The lyrics filling the full-screen player (Spotify's full-screen lyrics: the Lyrics page's lines
+// and colours, starting a quarter of the way down the screen).
+export function FullScreenLyrics({ player }: { player: PlayerState }) {
+  return <SongLyrics key={player.videoId} player={player} full />
 }
 
 // The playing song's lyrics; the Lyrics page and the Now Playing card share one fetch.
@@ -44,7 +51,7 @@ function seekTo(t: number | undefined, playing: boolean): void {
   if (!playing) window.ytm.cmd({ type: 'toggle' })
 }
 
-function SongLyrics({ player }: { player: PlayerState }) {
+function SongLyrics({ player, full }: { player: PlayerState; full?: boolean }) {
   const { data, error, retry } = useLyrics(player)
   const bg = lyricsBackground(useColor(player.thumb))
   const active = useActiveLine(data, player.playing)
@@ -69,7 +76,7 @@ function SongLyrics({ player }: { player: PlayerState }) {
   }
 
   return (
-    <div ref={pageRef} className="page lyrics-page" style={{ '--lyrics-bg': bg } as React.CSSProperties} onWheel={() => data?.synced && setAway(true)}>
+    <div ref={pageRef} className={`page lyrics-page ${full ? 'full' : ''}`} style={{ '--lyrics-bg': bg } as React.CSSProperties} onWheel={() => data?.synced && setAway(true)}>
       {error && data === undefined ? (
         <ErrorBox error={error} onRetry={retry} />
       ) : data === undefined ? (
@@ -126,9 +133,9 @@ function useActiveLine(data: Lyrics | null | undefined, playing: boolean): numbe
 }
 
 // Spotify's lyrics card in the Now Playing panel: a few lines around the one being sung, on the
-// song's lyrics colour, following along; "Show more" makes it taller, and the header opens the
-// full Lyrics page.
-export function LyricsCard({ player, onOpen }: { player: PlayerState; onOpen: () => void }) {
+// song's lyrics colour, following along; "Show more" makes it taller, the header opens the full
+// Lyrics page, and the full-screen button shows them in the full-screen player.
+export function LyricsCard({ player, onOpen, onFull }: { player: PlayerState; onOpen: () => void; onFull: () => void }) {
   const { data } = useLyrics(player)
   const bg = lyricsBackground(useColor(player.thumb))
   const active = useActiveLine(data, player.playing)
@@ -152,6 +159,9 @@ export function LyricsCard({ player, onOpen }: { player: PlayerState; onOpen: ()
         <div className="np-lyrics-actions">
           <button className="np-lyrics-btn" onClick={onOpen}>
             Show lyrics
+          </button>
+          <button className="np-lyrics-btn icon" onClick={onFull} aria-label="Full screen lyrics" title="Full screen lyrics">
+            <I.FullScreen />
           </button>
         </div>
       </div>

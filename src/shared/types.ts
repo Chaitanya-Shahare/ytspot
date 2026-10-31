@@ -123,6 +123,16 @@ export interface PlayerState {
   pending?: boolean // the song just changed and its details haven't arrived yet
 }
 
+// Where the UI wants the video, in CSS pixels. `full`: the full-screen player's video, which fills
+// the window beneath the page (whose controls show over it) instead of sitting on top of it.
+export interface VideoRect {
+  x: number
+  y: number
+  width: number
+  height: number
+  full?: boolean
+}
+
 // What the menu bar item shows next to its icon; 'off' removes it.
 export type MenuBarMode = 'both' | 'song' | 'artist' | 'icon' | 'off'
 
