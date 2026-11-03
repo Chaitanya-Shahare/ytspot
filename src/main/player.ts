@@ -424,6 +424,12 @@ const SETUP_JS = (videoMode: boolean, shuffleMode: ShuffleMode) => `(() => {
   const autoplay = () => (store()?.autoplay ? rows(store().automixItems).filter(Boolean) : [])
   const s = window.__ytspot = {
     video: ${videoMode}, t, queue, autoplay, sh, setShuffle,
+    // Whether \`id\` is playing: that video, or its twin that YTM's Song/Video switch swapped in.
+    plays(id) {
+      const now = playingId(), w = current()?.playlistPanelVideoWrapperRenderer
+      const twins = [primary(current())?.videoId, w?.counterpart?.[0]?.counterpartRenderer?.playlistPanelVideoRenderer?.videoId]
+      return now === id || (twins.includes(id) && twins.includes(now))
+    },
     // Queue rows are rebuilt only when YTM's queue store changes (it's immutable, so identity says
     // whether anything changed) or another video starts. \`rev\` tells main whether its copy is
     // current (unique per page load).
@@ -471,6 +477,11 @@ const SETUP_JS = (videoMode: boolean, shuffleMode: ShuffleMode) => `(() => {
   const later = () => { s.apply(); setTimeout(s.apply, 1500) }
   document.addEventListener('loadedmetadata', later, true)
   document.addEventListener('playing', later, true)
+  // And as soon as YTM's Song/Video switch updates, so a music video gives way to its song before
+  // much of it has played.
+  new MutationObserver(() => s.apply()).observe(document, {
+    subtree: true, attributes: true, attributeFilter: ['is-video-playback-mode-selected', 'audio-only-playback-available']
+  })
 })()`
 
 let videoMode = false
@@ -576,11 +587,13 @@ export async function command(c: PlayerCommand): Promise<void> {
       const ep = JSON.stringify({ watchEndpoint: { videoId: c.videoId, playlistId: c.playlistId } })
       await run(`document.querySelector('ytmusic-app').dispatchEvent(new CustomEvent('yt-navigate',
         { bubbles: true, composed: true, detail: { endpoint: ${ep} } }))`)
-      // In-app navigation is undocumented; fall back to a full load if it didn't take.
+      // In-app navigation is undocumented; fall back to a full load if it didn't take. Playing the
+      // song's twin counts: the audio/video policy (see apply) swaps a music video for its song (and
+      // back in video mode), and reloading would only play the original and swap it all over again.
       setTimeout(async () => {
         if (mine !== playSeq) return
         const s = await getState()
-        if (s?.videoId !== c.videoId) {
+        if (!s || !(await run<boolean>(`window.__ytspot.plays(${JSON.stringify(c.videoId)})`))) {
           const list = c.playlistId ? `&list=${c.playlistId}` : ''
           page?.loadURL(`${YTM}/watch?v=${c.videoId}${list}`)
         } else if (!s.playing && wantPlaying) run(`${P}.playVideo()`)
