@@ -768,9 +768,10 @@ export async function command(c: PlayerCommand): Promise<void> {
   }
 }
 
-// A downloaded song is about to play instead (see local.ts).
+// A downloaded song is about to play instead (see local.ts). Held like a toggle's pause, in case
+// YTM was between songs and starts the next one by itself.
 export function pauseYtm(): Promise<unknown> {
-  return run(`document.getElementById('movie_player')?.pauseVideo()`)
+  return run(`(p => { if (!p) return; window.__ytspotHold = Date.now() + 10000; window.__ytspotPausedAt = Date.now(); p.pauseVideo() })(document.getElementById('movie_player'))`)
 }
 
 async function setShuffle(mode: ShuffleMode): Promise<void> {

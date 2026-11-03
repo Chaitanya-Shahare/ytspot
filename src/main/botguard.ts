@@ -42,15 +42,27 @@ async function start(): Promise<{ page: BrowserWindow; expires: number }> {
   }
 }
 
+// Two downloads run at once, so they share one minter: whichever finds it stale starts the next,
+// and a token another download's reset took away mid-mint is minted again on the fresh one.
 export async function poToken(videoId: string): Promise<string> {
   clearTimeout(idle)
-  let m = await (minter ??= start().catch((e) => ((minter = null), Promise.reject(e))))
-  if (m.page.isDestroyed() || Date.now() > m.expires) {
-    resetBotguard()
-    m = await (minter = start().catch((e) => ((minter = null), Promise.reject(e))))
+  try {
+    for (let attempt = 0; ; attempt++) {
+      const current = (minter ??= start().catch((e) => ((minter = null), Promise.reject(e))))
+      const m = await current
+      if (!m.page.isDestroyed() && Date.now() <= m.expires) {
+        try {
+          return await m.page.webContents.executeJavaScript(`window.botguard.mint(${JSON.stringify(videoId)})`)
+        } catch (e) {
+          if (attempt || !m.page.isDestroyed()) throw e
+        }
+      } else if (attempt) throw new Error('BotGuard isn’t ready')
+      if (minter === current) resetBotguard()
+    }
+  } finally {
+    clearTimeout(idle)
+    idle = setTimeout(resetBotguard, IDLE_MS)
   }
-  idle = setTimeout(resetBotguard, IDLE_MS)
-  return m.page.webContents.executeJavaScript(`window.botguard.mint(${JSON.stringify(videoId)})`)
 }
 
 // Drop the minter (idle, expired, or one YouTube stopped accepting); the next token starts afresh.

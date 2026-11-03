@@ -51,11 +51,12 @@ async function load(): Promise<Map<string, Saved>> {
   return saved
 }
 
-// Written to a temporary file first, so a crash mid-write never leaves a broken index.
+// Written to a temporary file first, so a crash mid-write never leaves a broken index. A failed
+// write fails only its own caller; the next one still goes ahead.
 let writing = Promise.resolve()
 function persist(): Promise<void> {
   const list = [...saved!.values()]
-  return (writing = writing.then(async () => {
+  return (writing = writing.catch(() => undefined).then(async () => {
     await mkdir(dir(), { recursive: true })
     await writeFile(`${indexFile()}.tmp`, JSON.stringify(list))
     await rename(`${indexFile()}.tmp`, indexFile())
@@ -75,11 +76,13 @@ export async function downloadsState(): Promise<DownloadsState> {
   }
 }
 
-// Progress moves many times a second; the UI hears about it a few times a second at most.
+// Progress moves many times a second; the UI hears about it a few times a second at most. (Progress
+// waits for the push already due rather than putting it off, or a steady stream never sends one.)
 let pushTimer: ReturnType<typeof setTimeout> | undefined
 function changed(now = false): void {
+  if (pushTimer && !now) return
   clearTimeout(pushTimer)
-  pushTimer = setTimeout(() => downloadsState().then(notify), now ? 0 : 250)
+  pushTimer = setTimeout(() => ((pushTimer = undefined), downloadsState().then(notify)), now ? 0 : 250)
 }
 
 export function initDownloads(onChange: (s: DownloadsState) => void): void {
@@ -131,11 +134,14 @@ async function fetchAudio(videoId: string, quality: DownloadQuality, onProgress:
     for (let at = 0; at < size; ) {
       const res = await fetch(url, { headers: { Range: `bytes=${at}-${Math.min(size, at + CHUNK) - 1}` }, signal: AbortSignal.timeout(60000) })
       if (!res.ok || !res.body) throw Object.assign(new Error(`YouTube refused the download (${res.status})`), { status: res.status })
+      const from = at
       for await (const chunk of res.body) {
         await out.write(chunk)
         at += chunk.length
         onProgress(at / size)
       }
+      // An empty answer would otherwise ask for the same bytes forever.
+      if (at === from) throw new Error('YouTube sent no audio')
     }
   } catch (e) {
     await out.close()
@@ -206,16 +212,18 @@ export async function download(tracks: Track[], quality: DownloadQuality = 'high
     if (known) return known.done
     const job = { track, progress: 0, done: Promise.resolve() }
     job.done = (async () => {
+      // A song that has to wait is handed its slot by the one finishing, so none can slip in between.
       if (running >= PARALLEL) await new Promise<void>((go) => waiting.push(go))
-      running++
+      else running++
       try {
         await downloadOne(track, quality, at + tracks.length - i, (p) => ((job.progress = p), changed()))
       } catch (e) {
         console.error('[download]', track.videoId, (e as Error).message)
         failed.push(track.title || track.videoId)
       } finally {
-        running--
-        waiting.shift()?.()
+        const next = waiting.shift()
+        if (next) next()
+        else running--
         jobs.delete(track.videoId)
         changed(true)
       }

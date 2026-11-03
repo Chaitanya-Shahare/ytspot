@@ -295,7 +295,11 @@ app.whenReady().then(() => {
   ipcMain.handle('yt:search', data(yt.search))
   // A downloaded song's lyrics were saved with it, so they show offline too.
   const onlineLyrics = data(lyrics)
-  ipcMain.handle('yt:lyrics', async (e, q: LyricsQuery) => (await savedLyrics(q.videoId)) ?? onlineLyrics(e, q))
+  // Saved as null when the song has none, which stands too: offline, looking again would only fail.
+  ipcMain.handle('yt:lyrics', async (e, q: LyricsQuery) => {
+    const saved = await savedLyrics(q.videoId)
+    return saved !== undefined ? saved : onlineLyrics(e, q)
+  })
   ipcMain.handle('dl:state', () => downloadsState())
   ipcMain.handle('dl:add', (_, tracks: Track[], quality: DownloadQuality) => download(tracks, quality))
   ipcMain.handle('dl:remove', (_, videoIds: string[]) => removeDownloads(videoIds))
