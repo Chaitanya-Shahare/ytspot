@@ -885,10 +885,12 @@ export function ytmSettings(): Promise<YtmSetting[]> {
   settingsRead = run
   return run
 }
-export async function applyYtmSetting(endpoint: unknown): Promise<void> {
+// `resume`: pick YTM's song back up after a reload; not while a downloaded song plays instead,
+// which it would only play over.
+export async function applyYtmSetting(endpoint: unknown, resume = true): Promise<void> {
   if (!page) return
   const reloads = !!(endpoint as { setClientSettingEndpoint?: unknown })?.setClientSettingEndpoint
-  const before = reloads ? await getState() : null
+  const before = reloads && resume ? await getState() : null
   await page.executeJavaScript(SETTINGS_APPLY(endpoint), true).catch((e: Error) => {
     if (!reloads) throw e
   })

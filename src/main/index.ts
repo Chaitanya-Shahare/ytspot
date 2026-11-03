@@ -285,7 +285,7 @@ app.whenReady().then(() => {
   ipcMain.handle('yt:saveToLibrary', (_, playlistId: string, on: boolean) => saveToLibrary(playlistId, on))
   ipcMain.handle('yt:browseMore', data(yt.browseMore))
   ipcMain.handle('ytm:settings', () => ytmSettings())
-  ipcMain.handle('ytm:applySetting', (_, endpoint: unknown) => applyYtmSetting(endpoint))
+  ipcMain.handle('ytm:applySetting', (_, endpoint: unknown) => applyYtmSetting(endpoint, !localActive()))
   ipcMain.handle('yt:library', data(yt.library))
   ipcMain.handle('yt:playlist', data(yt.playlist))
   ipcMain.handle('yt:playlistMore', data(yt.playlistMore))

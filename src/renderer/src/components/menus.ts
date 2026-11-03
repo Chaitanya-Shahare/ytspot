@@ -86,6 +86,7 @@ export async function newPlaylistWith(ctx: AppCtx, song: { videoId: string; titl
 // Saves a song to / removes it from Liked Songs. The playing song goes through the player's own
 // like button so its heart updates too.
 export function setLiked(ctx: AppCtx, videoId: string, like: boolean): Promise<void> {
+  if (!ctx.authed) return Promise.resolve(ctx.toast('Log in to save songs to your Liked Songs', { label: 'Log in', run: () => window.ytm.login() }))
   const done = () => {
     playlistChanged('LM')
     ctx.toast(like ? 'Added to Liked Songs' : 'Removed from Liked Songs')

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ArtistPage, Card, LibraryFilter, PlayerState, QueueItem, ShuffleMode, Track } from '../../shared/types'
 import * as I from './components/icons'
-import { Ctx, downloadsSource, fmt, getClock, getDownloads, libraryChanged, loadPrefs, onLibraryChange, playlistChanged, resetCache, routeFor, savePrefs, setClock, sized, useApp, useCached, useColor, useDownloads, useTime, type AppCtx, type Prefs, type Route, type SaveSong, type Source, type ToastAction, sameRoute } from './lib'
+import { Ctx, downloadsSource, fmt, getClock, getDownloads, isRecordingKeys, libraryChanged, loadPrefs, onLibraryChange, playlistChanged, resetCache, routeFor, savePrefs, setClock, sized, useApp, useCached, useColor, useDownloads, useTime, type AppCtx, type Prefs, type Route, type SaveSong, type Source, type ToastAction, sameRoute } from './lib'
 import { bindings, comboLabel, comboOf, SHORTCUTS, type Action } from '../../shared/shortcuts'
 import { cardMenu, songMenu } from './components/menus'
 import { Boundary, Img } from './components/ui'
@@ -169,21 +169,25 @@ export default function App() {
     return () => (offFound(), offUpdate(), offReady())
   }, [toast, prefs.autoUpdate])
 
+  // Signed out, YTM's like button only asks the hidden page to sign in; say so instead.
+  const needLogin = useCallback(() => toast('Log in to save songs to your Liked Songs', { label: 'Log in', run: () => window.ytm.login() }), [toast])
   const like = useCallback(() => {
     if (!player?.videoId) return
+    if (!authed) return needLogin()
     window.ytm.cmd({ type: 'like' })
     playlistChanged('LM')
     toast(player?.liked ? 'Removed from Liked Songs' : 'Added to Liked Songs')
-  }, [player?.videoId, player?.liked, toast])
+  }, [player?.videoId, player?.liked, toast, authed, needLogin])
   // Spotify's + button: saves the song to Liked Songs and opens "Add to playlist" for anything else;
   // once saved (a green tick) it just opens the popover, where Liked Songs can be unticked.
   const plus = useCallback(
     (from: HTMLElement) => {
       if (!player?.videoId) return
+      if (!authed) return needLogin()
       if (!player.liked) like()
       openSave({ videoId: player.videoId, title: player.title }, from)
     },
-    [player?.videoId, player?.liked, player?.title, like, openSave]
+    [player?.videoId, player?.liked, player?.title, like, openSave, authed, needLogin]
   )
   const closeFull = useCallback(() => setFull(false), [])
   const openFull = useCallback((lyrics: boolean) => (setFullLyrics(lyrics), setFull(true)), [])
@@ -340,6 +344,8 @@ export default function App() {
     let pending = ''
     let timer: ReturnType<typeof setTimeout>
     const onKey = (e: KeyboardEvent) => {
+      // A shortcut being recorded in Settings: the key is the new binding, not a command.
+      if (isRecordingKeys()) return
       const el = e.target instanceof HTMLElement ? e.target : null
       const typing = !!el?.matches(TEXT_ENTRY)
       const control = !typing && !!el?.closest(CONTROL)
@@ -414,8 +420,8 @@ export default function App() {
   // "Playing from" holds only while one of its songs is playing (not after radio or autoplay).
   const liveSource = source && (!source.ids || !player?.videoId || source.ids.includes(player.videoId)) ? source : null
   const ctx: AppCtx = useMemo(
-    () => ({ route, go, player, playTrack, source: liveSource, openCard, playCard, toast, openSave, prefs, setPrefs, openQueue }),
-    [route, go, player, playTrack, liveSource, openCard, playCard, toast, openSave, prefs, setPrefs, openQueue]
+    () => ({ route, go, player, playTrack, source: liveSource, openCard, playCard, toast, openSave, prefs, setPrefs, openQueue, authed: !!authed }),
+    [route, go, player, playTrack, liveSource, openCard, playCard, toast, openSave, prefs, setPrefs, openQueue, authed]
   )
 
   if (authed === null) return <div className="splash" />
