@@ -425,6 +425,19 @@ export async function playlistMore(id: string, have: number): Promise<{ tracks: 
   return { tracks: p.tracks.slice(have), more }
 }
 
+// Every song of a playlist at once (downloading it whole from a card's menu). Pages on its own,
+// so a playlist page loading the same playlist through playlistMore isn't disturbed.
+export async function playlistTracks(id: string): Promise<Track[]> {
+  let pl = await api().music.getPlaylist(id)
+  const out = tracks(pl.items as any[])
+  // Capped like the library, in case YTM keeps offering more.
+  for (let n = 0; pl.has_continuation && n < 100; n++) {
+    pl = await pl.getContinuation()
+    out.push(...tracks(pl.items as any[]))
+  }
+  return out
+}
+
 export async function account(): Promise<{ name: string; photo: string } | null> {
   const all = await api().account.getInfo(true)
   const me: any = all.find((a: any) => a.is_selected) ?? all[0]

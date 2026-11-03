@@ -39,6 +39,8 @@ const bridge = {
   library: (f: LibraryFilter) => ipcRenderer.invoke('yt:library', f),
   playlist: (id: string, peek?: boolean) => ipcRenderer.invoke('yt:playlist', id, peek),
   playlistMore: (id: string, have: number) => ipcRenderer.invoke('yt:playlistMore', id, have),
+  // Every song of a long playlist at once, rather than page by page.
+  playlistTracks: (id: string): Promise<Track[]> => ipcRenderer.invoke('yt:playlistTracks', id),
   createPlaylist: (title: string, videoIds?: string[], privacy?: Privacy): Promise<string> =>
     ipcRenderer.invoke('yt:createPlaylist', title, videoIds, privacy),
   album: (id: string) => ipcRenderer.invoke('yt:album', id),

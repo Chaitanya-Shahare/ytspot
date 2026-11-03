@@ -39,12 +39,13 @@ const PAGE_JS = `(() => {
     s.pos--
     start()
   }
-  // Shuffle keeps the playing song and mixes up everything else after it, as on Spotify.
+  // Shuffle keeps the playing song and mixes up everything else after it, as on Spotify; off puts
+  // the queue back in the order it was given. Songs taken out of the queue stay out.
   const setShuffle = (mode) => {
     const on = mode !== 'off', playing = s.order[s.pos]
     s.shuffle = on ? 'on' : 'off'
     if (playing === undefined) return
-    s.order = on ? [playing, ...mix(s.tracks.map((_, i) => i).filter((i) => i !== playing))] : s.tracks.map((_, i) => i)
+    s.order = on ? [playing, ...mix(s.order.filter((i) => i !== playing))] : [...s.order].sort((x, y) => x - y)
     s.pos = s.order.indexOf(playing)
     bump()
   }

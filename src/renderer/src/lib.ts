@@ -30,7 +30,8 @@ export interface AppCtx {
   go: (r: Route) => void
   // Everything except the playback clock, so long lists don't re-render every tick.
   player: PlayerState | null
-  playTrack: (t: Track, playlistId?: string, from?: Source) => Promise<unknown> | void
+  // `shuffle`: Shuffle play (turns shuffle on for what starts playing).
+  playTrack: (t: Track, playlistId?: string, from?: Source, shuffle?: boolean) => Promise<unknown> | void
   source: Source | null
   openCard: (c: Card) => void
   playCard: (c: Card) => void
@@ -40,6 +41,8 @@ export interface AppCtx {
   prefs: Prefs
   setPrefs: (p: Partial<Prefs>) => void
   openQueue: () => void
+  // Signed in to YouTube Music: likes and playlists need it.
+  authed: boolean
 }
 
 export interface ToastAction {
@@ -70,6 +73,11 @@ export interface Prefs {
 const PREF_DEFAULTS: Prefs = { shortcuts: DEFAULT_PREFS, keepPlaying: true, openAtLogin: false, videoMode: false, keyboardNav: false, menuBar: 'both', menuBarIcon: 'note', autoUpdate: false, downloadQuality: 'high', chords: false, showChords: false }
 export const loadPrefs = (): Prefs => ({ ...PREF_DEFAULTS, ...JSON.parse(localStorage.getItem('prefs') ?? '{}') })
 export const savePrefs = (p: Prefs) => localStorage.setItem('prefs', JSON.stringify(p))
+
+// While Settings records a shortcut, keys only go to the recorder, not to whatever they're bound to.
+let recordingKeys = false
+export const isRecordingKeys = () => recordingKeys
+export const setRecordingKeys = (on: boolean) => void (recordingKeys = on)
 
 export const Ctx = createContext<AppCtx>(null as unknown as AppCtx)
 export const useApp = () => useContext(Ctx)

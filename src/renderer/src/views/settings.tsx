@@ -4,7 +4,7 @@ import type { DownloadQuality, MenuBarIcon, MenuBarMode, YtmSetting } from '../.
 import { Close, Plus } from '../components/icons'
 import { removeDownloads } from '../components/menus'
 import { ErrorBox } from '../components/ui'
-import { useApp, useCached, useDownloads, useUpdate } from '../lib'
+import { setRecordingKeys, useApp, useCached, useDownloads, useUpdate } from '../lib'
 import { megabytes } from './downloads'
 
 export function SettingsView({ authed }: { authed: boolean }) {
@@ -282,7 +282,8 @@ function ShortcutSettings() {
       } else finish(c)
     }
     window.addEventListener('keydown', onKey, true)
-    return () => (window.removeEventListener('keydown', onKey, true), clearTimeout(timer))
+    setRecordingKeys(true)
+    return () => (window.removeEventListener('keydown', onKey, true), clearTimeout(timer), setRecordingKeys(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recording])
 

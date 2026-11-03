@@ -652,6 +652,8 @@ export async function command(c: PlayerCommand): Promise<void> {
   }
   switch (c.type) {
     case 'play': {
+      // Checked against YTM's own mode here: the UI may be showing a downloaded song's.
+      if (c.shuffle && shuffleMode === 'off') await setShuffle('on')
       const mine = playSeq
       const ep = JSON.stringify({ watchEndpoint: { videoId: c.videoId, playlistId: c.playlistId } })
       await run(`document.querySelector('ytmusic-app').dispatchEvent(new CustomEvent('yt-navigate',
@@ -687,10 +689,12 @@ export async function command(c: PlayerCommand): Promise<void> {
         if (on) window.__ytspotPausedAt = Date.now()
         on ? p.pauseVideo() : p.playVideo()
       })(${P})`)
+    // Newer YTM builds (sometimes served signed out) have no player bar; the player's own next and
+    // previous do the same as its buttons (previous restarts a song a few seconds in, then goes back).
     case 'next':
-      return void run(click('.next-button'))
+      return void run(`(b => b ? b.click() : ${P}?.nextVideo?.())(document.querySelector('ytmusic-player-bar .next-button'))`)
     case 'prev':
-      return void run(click('.previous-button'))
+      return void run(`(b => b ? b.click() : ${P}?.previousVideo?.())(document.querySelector('ytmusic-player-bar .previous-button'))`)
     // Off → shuffle → Smart Shuffle → off, like Spotify's button.
     case 'shuffle':
       return setShuffle(NEXT_SHUFFLE[shuffleMode])
@@ -768,9 +772,10 @@ export async function command(c: PlayerCommand): Promise<void> {
   }
 }
 
-// A downloaded song is about to play instead (see local.ts).
+// A downloaded song is about to play instead (see local.ts). Held like a toggle's pause, in case
+// YTM was between songs and starts the next one by itself.
 export function pauseYtm(): Promise<unknown> {
-  return run(`document.getElementById('movie_player')?.pauseVideo()`)
+  return run(`(p => { if (!p) return; window.__ytspotHold = Date.now() + 10000; window.__ytspotPausedAt = Date.now(); p.pauseVideo() })(document.getElementById('movie_player'))`)
 }
 
 async function setShuffle(mode: ShuffleMode): Promise<void> {
@@ -880,10 +885,12 @@ export function ytmSettings(): Promise<YtmSetting[]> {
   settingsRead = run
   return run
 }
-export async function applyYtmSetting(endpoint: unknown): Promise<void> {
+// `resume`: pick YTM's song back up after a reload; not while a downloaded song plays instead,
+// which it would only play over.
+export async function applyYtmSetting(endpoint: unknown, resume = true): Promise<void> {
   if (!page) return
   const reloads = !!(endpoint as { setClientSettingEndpoint?: unknown })?.setClientSettingEndpoint
-  const before = reloads ? await getState() : null
+  const before = reloads && resume ? await getState() : null
   await page.executeJavaScript(SETTINGS_APPLY(endpoint), true).catch((e: Error) => {
     if (!reloads) throw e
   })
