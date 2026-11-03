@@ -76,6 +76,15 @@ export interface Lyrics {
   source: string
 }
 
+// Chords worked out from the song's own audio (main/chords.ts). Each runs from `time` to `end`
+// (seconds); only the parts of the song heard so far have any.
+export interface Chords {
+  videoId: string
+  key: string // e.g. "A minor"; '' until enough has been heard
+  chords: { time: number; end: number; name: string }[]
+  heard: number // how much of the song has been heard, 0..1
+}
+
 export interface SearchResult {
   top?: Card
   songs: Track[]
@@ -147,6 +156,7 @@ export interface MainPrefs {
   menuBar: MenuBarMode
   menuBarIcon: MenuBarIcon
   autoUpdate: boolean
+  chords: boolean
 }
 
 // Where the app's self-update is (see main/updater.ts); `current` is the running version.

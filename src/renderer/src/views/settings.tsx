@@ -59,6 +59,16 @@ export function SettingsView({ authed }: { authed: boolean }) {
 
       <DownloadSettings />
 
+      <section className="set-section">
+        <h2>Experimental</h2>
+        <Row
+          title="Guitar chords"
+          desc="Adds a chords button to the player bar. Turned on, it works out the chords by listening to the song as it plays and shows them over the lyrics; songs you’ve heard with it on show their chords ahead of time. Detection is rough: major and minor chords only. Uses a little extra CPU only while the button is on."
+        >
+          <Toggle on={prefs.chords} onChange={(v) => setPrefs({ chords: v })} />
+        </Row>
+      </section>
+
       {authed && <YtmSettings />}
       <ShortcutSettings />
 

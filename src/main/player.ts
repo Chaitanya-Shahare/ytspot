@@ -58,6 +58,7 @@ export function createPlayerWindow(): BaseWindow {
   p.on('dom-ready', () => {
     p.insertCSS(VIDEO_CSS)
     run(SETUP_JS(videoMode, shuffleMode))
+    if (chordCapture) run(CHROMA_JS(true))
   })
   blockAds(p).then(() => p.loadURL(YTM))
   return host
@@ -493,6 +494,74 @@ export function setVideoMode(on: boolean): void {
   videoMode = on
   run(`window.__ytspot && (window.__ytspot.video = ${on}, window.__ytspot.apply())`)
 }
+
+// Guitar chords (chords.ts) listen to the song through Web Audio: YTM's <video> is routed through
+// an AnalyserNode, whose FFT runs natively on the audio thread. Ten times a second, while playing,
+// the spectrum's peaks are folded into a chroma frame (how much of each of the 12 notes sounds,
+// plus the same for the bass alone and the loudness), stamped with the song time and kept until
+// main takes them. Off, the analyser is disconnected and the timer stopped; an element routed into
+// Web Audio can never leave it, so the song keeps playing through the (otherwise idle) graph.
+// Only MSE (blob:) media is routed: a cross-origin source would play through Web Audio as silence.
+const CHROMA_JS = (on: boolean) => `(() => {
+  const c = window.__ytspotChroma || (window.__ytspotChroma = { frames: [], timer: 0, srcs: new WeakMap() })
+  if (!${on}) { clearInterval(c.timer); c.timer = 0; c.an?.disconnect(); c.an = null; c.v = null; c.frames = []; return }
+  if (c.timer) return
+  c.take = () => {
+    const f = c.frames
+    c.frames = []
+    return { id: c.id || '', duration: document.getElementById('movie_player')?.getDuration?.() || 0, frames: f }
+  }
+  c.timer = setInterval(() => {
+    const p = document.getElementById('movie_player'), v = p?.querySelector('video')
+    if (!v || v.paused || v.ended || v.readyState < 3 || !v.src.startsWith('blob:')) return
+    if (c.v !== v) {
+      c.ctx ||= new AudioContext()
+      let src = c.srcs.get(v)
+      if (!src) (src = c.ctx.createMediaElementSource(v)), src.connect(c.ctx.destination), c.srcs.set(v, src)
+      c.an?.disconnect()
+      c.an = c.ctx.createAnalyser()
+      c.an.fftSize = 16384
+      c.an.smoothingTimeConstant = 0
+      src.connect(c.an)
+      c.v = v
+      // Each FFT bin's pitch class, from 40 Hz (below a guitar's low E) to 2 kHz; the bass is below 200 Hz.
+      const hz = c.ctx.sampleRate / c.an.fftSize
+      c.lo = Math.ceil(40 / hz); c.hi = Math.floor(2000 / hz); c.bass = Math.floor(200 / hz)
+      c.pc = new Int8Array(c.hi + 1)
+      for (let k = c.lo; k <= c.hi; k++) c.pc[k] = ((Math.round(69 + 12 * Math.log2((k * hz) / 440)) % 12) + 12) % 12
+      c.buf = new Float32Array(c.an.frequencyBinCount)
+    }
+    if (c.ctx.state === 'suspended') c.ctx.resume()
+    const id = p.getVideoData?.().video_id || ''
+    if (id !== c.id) (c.id = id), (c.frames = [])
+    c.an.getFloatFrequencyData(c.buf)
+    const b = c.buf, x = new Float64Array(25)
+    for (let k = c.lo; k <= c.hi; k++) {
+      // Spectral peaks only: the slopes around a note would smear it into its neighbours.
+      if (b[k] < -90 || b[k] < b[k - 1] || b[k] < b[k + 1]) continue
+      const m = 10 ** (b[k] / 20)
+      x[c.pc[k]] += m
+      if (k <= c.bass) x[12 + c.pc[k]] += m
+      x[24] += m * m
+    }
+    const top = Math.max(...x.subarray(0, 12)) || 1, low = Math.max(...x.subarray(12, 24)) || 1
+    // The analyser's window ends now and spans ~0.35 s of audio; stamp its middle.
+    c.frames.push(Math.round((v.currentTime - 0.17 * v.playbackRate) * 100) / 100)
+    for (let i = 0; i < 12; i++) c.frames.push(Math.round((x[i] / top) * 100))
+    for (let i = 12; i < 24; i++) c.frames.push(Math.round((x[i] / low) * 100))
+    c.frames.push(Math.round(10 * Math.log10(x[24] + 1e-12)))
+  }, 100)
+})()`
+
+let chordCapture = false
+export function setChordCapture(on: boolean): void {
+  if (on === chordCapture) return
+  chordCapture = on
+  run(CHROMA_JS(on))
+}
+
+// The chroma frames heard since the last call: 26 numbers each (time, 12 notes, 12 bass notes, dB).
+export const takeChroma = () => run<{ id: string; duration: number; frames: number[] }>('window.__ytspotChroma?.take?.() ?? null')
 
 // `rev` is the queue revision main already has; the queue is only sent when it differs.
 // "Is it playing?" for the movie player \`p\`, used by the play button and the toggle alike so

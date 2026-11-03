@@ -3,13 +3,14 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as yt from './api'
+import { chordsFor, saveChords, setChords } from './chords'
 import { lyrics, type LyricsQuery } from './lyrics'
 import { download, downloaded, downloadsState, initDownloads, MEDIA_SCHEME, removeDownloads, savedLyrics, serve } from './downloads'
 import { leaveLocal, localActive, localCommand, localState, playLocal, setLocalLiked } from './local'
 import { buildMenu } from './menu'
 import { initTray, setTrayMode, trayOn, updateTray } from './tray'
 import { checkForUpdates, initUpdater, promptUpdate, setAutoUpdate, updateState } from './updater'
-import { command, createPlayerWindow, fitVideo, parkVideo, pauseYtm, placeVideo, rateVideo, saveToLibrary, subscribe, getState, onLoggedIn, setVideoMode, applyYtmSetting, showLogin, signOut, uploadImage, ytmSession, ytmSettings } from './player'
+import { command, createPlayerWindow, fitVideo, parkVideo, pauseYtm, placeVideo, rateVideo, saveToLibrary, subscribe, getState, onLoggedIn, setVideoMode, setChordCapture, applyYtmSetting, showLogin, signOut, uploadImage, ytmSession, ytmSettings } from './player'
 import { bindings, DEFAULT_PREFS, type Action } from '../shared/shortcuts'
 import type { Download, DownloadQuality, MainPrefs, MenuBarIcon, MenuBarMode, PlayerCommand, PlayerState, Track, VideoRect } from '../shared/types'
 
@@ -240,7 +241,10 @@ function popup(e: Electron.IpcMainInvokeEvent, items: PopupItem[]) {
   })
 }
 
-app.on('before-quit', () => (quitting = true))
+app.on('before-quit', () => {
+  quitting = true
+  saveChords()
+})
 app.on('activate', () => showMain())
 
 app.whenReady().then(() => {
@@ -295,6 +299,7 @@ app.whenReady().then(() => {
   ipcMain.handle('dl:state', () => downloadsState())
   ipcMain.handle('dl:add', (_, tracks: Track[], quality: DownloadQuality) => download(tracks, quality))
   ipcMain.handle('dl:remove', (_, videoIds: string[]) => removeDownloads(videoIds))
+  ipcMain.handle('yt:chords', (_, id: string) => chordsFor(id))
   ipcMain.handle('player:cmd', (_, c: PlayerCommand) => playerCommand(c))
   ipcMain.handle('player:get', () => currentState())
   ipcMain.handle('update:state', () => updateState())
@@ -319,6 +324,8 @@ app.whenReady().then(() => {
   ipcMain.handle('ui:prefs', (_, p: MainPrefs) => {
     keepPlaying = p.keepPlaying
     setVideoMode(p.videoMode)
+    setChordCapture(p.chords)
+    setChords(p.chords, (c) => ui?.send('chords', c))
     if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: p.openAtLogin })
     if (p.menuBar !== menuBar || p.menuBarIcon !== menuBarIcon || p.autoUpdate !== autoUpdate) {
       const tray = p.menuBar !== menuBar || p.menuBarIcon !== menuBarIcon

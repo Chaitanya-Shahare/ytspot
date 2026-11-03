@@ -63,9 +63,11 @@ export interface Prefs {
   menuBarIcon: MenuBarIcon
   autoUpdate: boolean // download new versions in the background and install them on quit
   downloadQuality: DownloadQuality // for songs downloaded from now on
+  chords: boolean // experimental: offer the guitar chords button in the player bar
+  showChords: boolean // that button: work out the song's chords from its audio and show them with the lyrics
 }
 
-const PREF_DEFAULTS: Prefs = { shortcuts: DEFAULT_PREFS, keepPlaying: true, openAtLogin: false, videoMode: false, keyboardNav: false, menuBar: 'both', menuBarIcon: 'note', autoUpdate: false, downloadQuality: 'high' }
+const PREF_DEFAULTS: Prefs = { shortcuts: DEFAULT_PREFS, keepPlaying: true, openAtLogin: false, videoMode: false, keyboardNav: false, menuBar: 'both', menuBarIcon: 'note', autoUpdate: false, downloadQuality: 'high', chords: false, showChords: false }
 export const loadPrefs = (): Prefs => ({ ...PREF_DEFAULTS, ...JSON.parse(localStorage.getItem('prefs') ?? '{}') })
 export const savePrefs = (p: Prefs) => localStorage.setItem('prefs', JSON.stringify(p))
 

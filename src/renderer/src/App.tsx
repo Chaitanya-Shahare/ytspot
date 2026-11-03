@@ -74,8 +74,8 @@ export default function App() {
   const keys = useMemo(() => bindings(prefs.shortcuts), [prefs.shortcuts])
   useEffect(() => void window.ytm.setBindings(keys), [keys])
   useEffect(() => {
-    window.ytm.setPrefs({ keepPlaying: prefs.keepPlaying, videoMode: prefs.videoMode, openAtLogin: prefs.openAtLogin, menuBar: prefs.menuBar, menuBarIcon: prefs.menuBarIcon, autoUpdate: prefs.autoUpdate })
-  }, [prefs.keepPlaying, prefs.videoMode, prefs.openAtLogin, prefs.menuBar, prefs.menuBarIcon, prefs.autoUpdate])
+    window.ytm.setPrefs({ keepPlaying: prefs.keepPlaying, videoMode: prefs.videoMode, openAtLogin: prefs.openAtLogin, menuBar: prefs.menuBar, menuBarIcon: prefs.menuBarIcon, autoUpdate: prefs.autoUpdate, chords: prefs.chords && prefs.showChords })
+  }, [prefs.keepPlaying, prefs.videoMode, prefs.openAtLogin, prefs.menuBar, prefs.menuBarIcon, prefs.autoUpdate, prefs.chords, prefs.showChords])
   const searchRef = useRef<HTMLInputElement>(null)
   const route = history[pos]
 
@@ -1571,7 +1571,12 @@ function PlayerBar(props: {
 }) {
   const { rightOpen, onToggleRight } = props
   const ctx = useApp()
-  const { player: p, openQueue, route, go } = ctx
+  const { player: p, openQueue, route, go, prefs, setPrefs } = ctx
+  // Showing chords opens the lyrics they're shown with.
+  const toggleChords = () => {
+    setPrefs({ showChords: !prefs.showChords })
+    if (!prefs.showChords && route.name !== 'lyrics') props.onLyrics()
+  }
   return (
     <footer className="player-bar">
       <div className="pb-left">
@@ -1612,6 +1617,11 @@ function PlayerBar(props: {
         <button className={`icon-btn ${rightOpen ? 'green dot' : ''}`} onClick={onToggleRight} aria-label="Now playing view" title="Now playing view" data-shortcut="toggleRight">
           <I.NowPlaying />
         </button>
+        {prefs.chords && (
+          <button className={`icon-btn ${prefs.showChords ? 'green dot' : ''}`} onClick={toggleChords} aria-label="Guitar chords" title="Guitar chords">
+            <I.Chords />
+          </button>
+        )}
         <button
           className={`icon-btn ${route.name === 'lyrics' ? 'green dot' : ''}`}
           onClick={props.onLyrics}
