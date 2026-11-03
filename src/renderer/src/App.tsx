@@ -70,8 +70,8 @@ export default function App() {
   const keys = useMemo(() => bindings(prefs.shortcuts), [prefs.shortcuts])
   useEffect(() => void window.ytm.setBindings(keys), [keys])
   useEffect(() => {
-    window.ytm.setPrefs({ keepPlaying: prefs.keepPlaying, videoMode: prefs.videoMode, openAtLogin: prefs.openAtLogin, menuBar: prefs.menuBar })
-  }, [prefs.keepPlaying, prefs.videoMode, prefs.openAtLogin, prefs.menuBar])
+    window.ytm.setPrefs({ keepPlaying: prefs.keepPlaying, videoMode: prefs.videoMode, openAtLogin: prefs.openAtLogin, menuBar: prefs.menuBar, menuBarIcon: prefs.menuBarIcon, autoUpdate: prefs.autoUpdate })
+  }, [prefs.keepPlaying, prefs.videoMode, prefs.openAtLogin, prefs.menuBar, prefs.menuBarIcon, prefs.autoUpdate])
   const searchRef = useRef<HTMLInputElement>(null)
   const route = history[pos]
 
@@ -154,6 +154,16 @@ export default function App() {
     const t = setTimeout(() => setToastMsg((m) => m && { ...m, out: true }), toastMsg.action ? 5000 : 3000)
     return () => clearTimeout(t)
   }, [toastMsg])
+
+  // An update shows as a passing banner, not something that stays on screen: once when the daily
+  // check finds it, and once when its download starts. Restarting for it is a dialog (main/updater.ts).
+  // An automatic update only shows once it's downloaded.
+  useEffect(() => {
+    const offFound = window.ytm.onUpdateFound((v) => toast(`ytspot ${v} is available`, { label: 'Update', run: () => window.ytm.promptUpdate() }))
+    const offUpdate = window.ytm.onUpdate((s) => !prefs.autoUpdate && s.status === 'downloading' && s.percent === 0 && toast(`Downloading ytspot ${s.version}…`))
+    const offReady = window.ytm.onUpdateReady((v) => toast(`ytspot ${v} installs when you quit`, { label: 'Restart', run: () => window.ytm.promptUpdate() }))
+    return () => (offFound(), offUpdate(), offReady())
+  }, [toast, prefs.autoUpdate])
 
   const like = useCallback(() => {
     if (!player?.videoId) return

@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webFrame } from 'electron'
 import type { Action } from '../shared/shortcuts'
-import type { Card, HomeData, LibraryFilter, Lyrics, MainPrefs, More, PlayerCommand, PlayerState, Privacy, SearchFilter, Track, VideoRect, YtmSetting } from '../shared/types'
+import type { Card, HomeData, LibraryFilter, Lyrics, MainPrefs, More, PlayerCommand, PlayerState, Privacy, SearchFilter, Track, UpdateState, VideoRect, YtmSetting } from '../shared/types'
 import type { LyricsQuery } from '../main/lyrics'
 
 export interface PopupItem {
@@ -47,6 +47,10 @@ const bridge = {
   lyrics: (q: LyricsQuery): Promise<Lyrics | null> => ipcRenderer.invoke('yt:lyrics', q),
   cmd: (c: PlayerCommand) => ipcRenderer.invoke('player:cmd', c),
   state: (): Promise<PlayerState | null> => ipcRenderer.invoke('player:get'),
+  updateState: (): Promise<UpdateState> => ipcRenderer.invoke('update:state'),
+  // Both answer in a native dialog: check asks GitHub first, prompt acts on what's already known.
+  checkForUpdates: () => ipcRenderer.invoke('update:check'),
+  promptUpdate: () => ipcRenderer.invoke('update:prompt'),
   popup: (items: PopupItem[]): Promise<string | null> =>
     ipcRenderer.invoke('ui:popup', items),
   open: (url: string) => ipcRenderer.invoke('ui:open', url),
@@ -81,6 +85,23 @@ const bridge = {
     const fn = (_: unknown, ok: boolean) => cb(ok)
     ipcRenderer.on('auth', fn)
     return () => void ipcRenderer.removeListener('auth', fn)
+  },
+  onUpdate: (cb: (s: UpdateState) => void) => {
+    const fn = (_: unknown, s: UpdateState) => cb(s)
+    ipcRenderer.on('update', fn)
+    return () => void ipcRenderer.removeListener('update', fn)
+  },
+  // The daily check found a newer version (a manual check answers in a dialog instead).
+  onUpdateFound: (cb: (version: string) => void) => {
+    const fn = (_: unknown, v: string) => cb(v)
+    ipcRenderer.on('update:found', fn)
+    return () => void ipcRenderer.removeListener('update:found', fn)
+  },
+  // An automatic update finished downloading; it goes in when ytspot quits.
+  onUpdateReady: (cb: (version: string) => void) => {
+    const fn = (_: unknown, v: string) => cb(v)
+    ipcRenderer.on('update:ready', fn)
+    return () => void ipcRenderer.removeListener('update:ready', fn)
   }
 }
 

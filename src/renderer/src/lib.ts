@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ShortcutPrefs } from '../../shared/shortcuts'
 import { DEFAULT_PREFS } from '../../shared/shortcuts'
-import type { Card, MenuBarMode, More, PlayerState, Track } from '../../shared/types'
+import type { Card, MenuBarIcon, MenuBarMode, More, PlayerState, Track, UpdateState } from '../../shared/types'
 
 export type Route =
   | { name: 'home' }
@@ -59,14 +59,26 @@ export interface Prefs {
   videoMode: boolean
   keyboardNav: boolean // Tab moves focus and Space/Return press the focused button
   menuBar: MenuBarMode
+  menuBarIcon: MenuBarIcon
+  autoUpdate: boolean // download new versions in the background and install them on quit
 }
 
-const PREF_DEFAULTS: Prefs = { shortcuts: DEFAULT_PREFS, keepPlaying: true, openAtLogin: false, videoMode: false, keyboardNav: false, menuBar: 'both' }
+const PREF_DEFAULTS: Prefs = { shortcuts: DEFAULT_PREFS, keepPlaying: true, openAtLogin: false, videoMode: false, keyboardNav: false, menuBar: 'both', menuBarIcon: 'note', autoUpdate: false }
 export const loadPrefs = (): Prefs => ({ ...PREF_DEFAULTS, ...JSON.parse(localStorage.getItem('prefs') ?? '{}') })
 export const savePrefs = (p: Prefs) => localStorage.setItem('prefs', JSON.stringify(p))
 
 export const Ctx = createContext<AppCtx>(null as unknown as AppCtx)
 export const useApp = () => useContext(Ctx)
+
+// Where the self-update is (see main/updater.ts); null until main has answered.
+export function useUpdate(): UpdateState | null {
+  const [s, setS] = useState<UpdateState | null>(null)
+  useEffect(() => {
+    window.ytm.updateState().then(setS)
+    return window.ytm.onUpdate(setS)
+  }, [])
+  return s
+}
 
 // The playback clock lives outside React state, so a tick re-renders only what shows the time.
 let clock = 0

@@ -1,5 +1,6 @@
 import { app, BrowserWindow, Menu, webContents, type BaseWindow, type MenuItemConstructorOptions, type WebContents } from 'electron'
 import { accel, SHORTCUTS, type Action } from '../shared/shortcuts'
+import { checkForUpdates } from './updater'
 
 // Spotify-style menu bar. Accelerators are display-only and mirror the user's current bindings:
 // the renderer's keydown handler owns the keys (so typing in search still works), and menu
@@ -17,7 +18,13 @@ export function buildMenu(
     accelerator: accel(keys[action] ?? []),
     registerAccelerator: false,
     click: (_, win, e) => {
-      if (e.triggeredByAccelerator && webContents.getFocusedWebContents() === ui()) return
+      if (e.triggeredByAccelerator) {
+        // Keys pressed in the app window are its page's, which skips them while typing. Checked by
+        // window: which page has focus is unreliable, since the player page shown in that window
+        // (the video) can claim it too. In any other window (sign-in) a bare key is typing, too.
+        if (win === main() || webContents.getFocusedWebContents() === ui()) return
+        if (win && !e.metaKey && !e.ctrlKey && !e.altKey) return
+      }
       // Back/Forward in the sign-in window navigate that page instead of the app.
       const nav = win instanceof BrowserWindow && win !== main() ? win.webContents.navigationHistory : null
       if (nav && action === 'back') return nav.goBack()
@@ -37,7 +44,7 @@ export function buildMenu(
       {
         label: app.name,
         submenu: [
-          { role: 'about' }, sep, item('settings', 'Settings…'), sep,
+          { role: 'about' }, { label: 'Check for Updates…', click: () => checkForUpdates(true) }, sep, item('settings', 'Settings…'), sep,
           { role: 'services' }, sep, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, sep, { role: 'quit' }
         ]
       },

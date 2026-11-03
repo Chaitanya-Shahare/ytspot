@@ -34,11 +34,34 @@ Parser.setParserErrorHandler((e) => {
 // `fresh` reads the signed-in page's cookies as they are now: the page rotates some of them
 // (__Secure-*PSIDTS) while the app runs for days, so each request sends the current set instead
 // of the snapshot taken at sign-in.
+//
+// A request that fails before YouTube answers (a keep-alive connection that went stale while the
+// app sat idle, the Mac waking from sleep, a Wi-Fi switch) is sent again, as is one YouTube
+// answers with a server error or "slow down". One that hangs is given up on after a while, so a
+// search never spins forever.
+const TRIES = 3
+const TIMEOUT_MS = 15000
+const retryable = (status: number) => status >= 500 || status === 429
 export async function connect(cookie?: string, fresh?: () => Promise<string>): Promise<void> {
   const send: typeof fetch = async (input, init) => {
     const headers = init?.headers
     if (fresh && headers instanceof Headers && headers.has('Cookie')) headers.set('Cookie', (await fresh()) || headers.get('Cookie')!)
-    return fetch(input, init)
+    for (let n = 1; ; n++) {
+      const signal = AbortSignal.any([AbortSignal.timeout(TIMEOUT_MS), ...(init?.signal ? [init.signal] : [])])
+      try {
+        const res = await fetch(input, { ...init, signal })
+        if (n < TRIES && retryable(res.status)) {
+          await res.body?.cancel()
+          await new Promise((r) => setTimeout(r, 400 * n))
+          continue
+        }
+        return res
+      } catch (e) {
+        if (init?.signal?.aborted) throw e
+        if (n >= TRIES) throw new Error('Couldn’t reach YouTube Music. Check your internet connection.', { cause: e })
+        await new Promise((r) => setTimeout(r, 400 * n))
+      }
+    }
   }
   yt = await Innertube.create({ cookie, retrieve_player: false, fetch: send })
   homeFeed = null
@@ -509,7 +532,7 @@ export async function ytmLyrics(videoId: string): Promise<{ text: string; source
   const shelf: any = await api()
     .music.getLyrics(videoId)
     .catch((e: Error) => {
-      if (/fetch|network|timed? ?out|ENOTFOUND|ECONN/i.test(e.message)) throw e
+      if (/fetch|network|reach|timed? ?out|ENOTFOUND|ECONN/i.test(e.message)) throw e
     })
   const body = text(shelf?.description).trim()
   return body ? { text: body, source: text(shelf?.footer).replace(/^Source:\s*/, '') } : null

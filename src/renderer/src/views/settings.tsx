@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { bindings, comboLabel, comboOf, conflicts, SHORTCUTS, type Action } from '../../../shared/shortcuts'
-import type { MenuBarMode, YtmSetting } from '../../../shared/types'
+import type { MenuBarIcon, MenuBarMode, YtmSetting } from '../../../shared/types'
 import { Close, Plus } from '../components/icons'
 import { ErrorBox } from '../components/ui'
-import { useApp, useCached } from '../lib'
+import { useApp, useCached, useUpdate } from '../lib'
 
 export function SettingsView({ authed }: { authed: boolean }) {
   const { prefs, setPrefs } = useApp()
@@ -28,7 +28,7 @@ export function SettingsView({ authed }: { authed: boolean }) {
         </Row>
         <Row
           title="Now playing in the menu bar"
-          desc="Shows the song next to a ♫ icon at the top of your screen; click it for playback controls. On a Mac with a notch, macOS hides it when the menu bar is full, so pick a shorter option if it doesn’t show."
+          desc="Shows the song next to an icon at the top of your screen; click it for playback controls. On a Mac with a notch, macOS hides it when the menu bar is full, so pick a shorter option if it doesn’t show."
         >
           <select className="select" value={prefs.menuBar} onChange={(e) => setPrefs({ menuBar: e.target.value as MenuBarMode })}>
             <option value="both">Song and artist</option>
@@ -38,12 +38,21 @@ export function SettingsView({ authed }: { authed: boolean }) {
             <option value="off">Off</option>
           </select>
         </Row>
+        {prefs.menuBar !== 'off' && (
+          <Row title="Menu bar icon" desc="Play and pause show whether the song is playing or paused; they’re a status, not a button.">
+            <select className="select" value={prefs.menuBarIcon} onChange={(e) => setPrefs({ menuBarIcon: e.target.value as MenuBarIcon })}>
+              <option value="note">♫ Note</option>
+              <option value="status">Play / pause</option>
+            </select>
+          </Row>
+        )}
         <Row
           title="Keyboard navigation"
           desc="Move between buttons with Tab and press them with Space or Return. When off, Space always plays and pauses, wherever you last clicked."
         >
           <Toggle on={prefs.keyboardNav} onChange={(v) => setPrefs({ keyboardNav: v })} />
         </Row>
+        <UpdateRow />
       </section>
 
       {authed && <YtmSettings />}
@@ -60,6 +69,36 @@ export function SettingsView({ authed }: { authed: boolean }) {
         </section>
       )}
     </div>
+  )
+}
+
+function UpdateRow() {
+  const { prefs, setPrefs } = useApp()
+  const u = useUpdate()
+  if (!u) return null
+  const status =
+    u.status === 'latest' ? ' You’re up to date.'
+    : u.status === 'available' ? ` ytspot ${u.version} is available.`
+    : u.status === 'ready' ? ` ytspot ${u.version} is downloaded; restart to install it.`
+    : u.status === 'error' ? ` ${u.message}`
+    : ''
+  return (
+    <>
+      <Row title="Updates" desc={`Version ${u.current}. ytspot checks for updates once a day.${status}`}>
+        {u.status === 'available' || u.status === 'ready' ? (
+          <button className="outline-btn" onClick={() => window.ytm.promptUpdate()}>
+            {u.status === 'ready' ? 'Restart to update' : `Install ${u.version}`}
+          </button>
+        ) : (
+          <button className="outline-btn" disabled={u.status === 'checking' || u.status === 'downloading'} onClick={() => window.ytm.checkForUpdates()}>
+            {u.status === 'checking' ? 'Checking…' : u.status === 'downloading' ? `Downloading ${u.percent}%` : 'Check for updates'}
+          </button>
+        )}
+      </Row>
+      <Row title="Install updates automatically" desc="Downloads new versions in the background and installs them the next time you quit ytspot.">
+        <Toggle on={prefs.autoUpdate} onChange={(v) => setPrefs({ autoUpdate: v })} />
+      </Row>
+    </>
   )
 }
 
