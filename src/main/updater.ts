@@ -32,6 +32,7 @@ let staged: string | null = null // the new ytspot.app, unpacked and checked
 let lastCheck = 0
 let inFlight: Promise<void> | null = null
 let swapping = false
+let auto = false // Settings → App → Install updates automatically
 
 export const updateState = () => state
 
@@ -106,10 +107,24 @@ export async function checkForUpdates(manual = false): Promise<void> {
     await (inFlight ??= check().finally(() => (inFlight = null)))
   }
   if (manual) await promptUpdate()
-  else if (state.status === 'available') deps.page()?.send('update:found', state.version)
+  else if (state.status === 'available' && !(await installQuietly())) deps.page()?.send('update:found', state.version)
 }
 
-async function download(r: Release): Promise<void> {
+// With automatic updates on, a newer version downloads in the background and goes in the next
+// time ytspot quits (see swap), with no dialog. False when it has to be offered instead.
+async function installQuietly(): Promise<boolean> {
+  if (!auto || !release || !(await installable()) || state.status !== 'available') return false
+  void download(release, true)
+  return true
+}
+
+export function setAutoUpdate(on: boolean): void {
+  auto = on
+  void installQuietly()
+}
+
+// `quiet` (an automatic update) skips the dialogs; Settings shows how it went.
+async function download(r: Release, quiet = false): Promise<void> {
   const dir = join(app.getPath('temp'), 'ytspot-update')
   const zip = join(dir, ASSET)
   set({ status: 'downloading', version: r.version, percent: 0 })
@@ -149,11 +164,12 @@ async function download(r: Release): Promise<void> {
     await run('xattr', ['-dr', 'com.apple.quarantine', fresh]).catch(() => {})
     staged = fresh
     set({ status: 'ready', version: r.version })
-    await promptUpdate()
+    if (quiet) deps.page()?.send('update:ready', r.version)
+    else await promptUpdate()
   } catch (e) {
     await rm(dir, { recursive: true, force: true }).catch(() => {})
     set({ status: 'error', message: `Couldn’t download ytspot ${r.version}. ${(e as Error).message}` })
-    await promptUpdate()
+    if (!quiet) await promptUpdate()
   }
 }
 

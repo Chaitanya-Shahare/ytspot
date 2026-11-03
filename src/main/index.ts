@@ -6,7 +6,7 @@ import * as yt from './api'
 import { lyrics } from './lyrics'
 import { buildMenu } from './menu'
 import { initTray, setTrayMode, trayOn, updateTray } from './tray'
-import { checkForUpdates, initUpdater, promptUpdate, updateState } from './updater'
+import { checkForUpdates, initUpdater, promptUpdate, setAutoUpdate, updateState } from './updater'
 import { command, createPlayerWindow, fitVideo, parkVideo, placeVideo, rateVideo, saveToLibrary, subscribe, getState, onLoggedIn, setVideoMode, applyYtmSetting, showLogin, signOut, uploadImage, ytmSession, ytmSettings } from './player'
 import { bindings, DEFAULT_PREFS, type Action } from '../shared/shortcuts'
 import type { MainPrefs, MenuBarIcon, MenuBarMode, PlayerCommand, PlayerState, VideoRect } from '../shared/types'
@@ -24,7 +24,7 @@ if (testProfile) {
   app.commandLine.appendSwitch('disable-features', 'HardwareMediaKeyHandling,MediaSessionService')
 }
 const boundsFile = join(app.getPath('userData'), 'window.json')
-// Main's copy of the menu bar setting, so launch shows (or skips) the tray before the UI has loaded.
+// Main's copy of the menu bar and auto-update settings, so launch acts on them before the UI has loaded.
 const prefsFile = join(app.getPath('userData'), 'prefs.json')
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 
@@ -39,10 +39,12 @@ let quitting = false
 let keepPlaying = true
 let menuBar: MenuBarMode = 'both'
 let menuBarIcon: MenuBarIcon = 'note'
+let autoUpdate = false
 try {
   const saved = JSON.parse(readFileSync(prefsFile, 'utf8'))
   menuBar = saved.menuBar ?? menuBar
   menuBarIcon = saved.menuBarIcon ?? menuBarIcon
+  autoUpdate = saved.autoUpdate ?? autoUpdate
 } catch {
   // first launch: default
 }
@@ -286,11 +288,14 @@ app.whenReady().then(() => {
     keepPlaying = p.keepPlaying
     setVideoMode(p.videoMode)
     if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: p.openAtLogin })
-    if (p.menuBar !== menuBar || p.menuBarIcon !== menuBarIcon) {
+    if (p.menuBar !== menuBar || p.menuBarIcon !== menuBarIcon || p.autoUpdate !== autoUpdate) {
+      const tray = p.menuBar !== menuBar || p.menuBarIcon !== menuBarIcon
       menuBar = p.menuBar
       menuBarIcon = p.menuBarIcon
-      writeFileSync(prefsFile, JSON.stringify({ menuBar, menuBarIcon }))
-      applyMenuBar()
+      autoUpdate = p.autoUpdate
+      writeFileSync(prefsFile, JSON.stringify({ menuBar, menuBarIcon, autoUpdate }))
+      if (tray) applyMenuBar()
+      setAutoUpdate(autoUpdate)
     }
   })
 
@@ -300,6 +305,7 @@ app.whenReady().then(() => {
   initTray({ command: playerCommand, show: () => showMain(), quit: () => app.quit(), dump: trayDump })
   applyMenuBar()
   initUpdater({ window: () => main, page: () => ui })
+  setAutoUpdate(autoUpdate)
 
   let t: NodeJS.Timeout
   ses.cookies.on('changed', (_, cookie) => {

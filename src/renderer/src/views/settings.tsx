@@ -73,6 +73,7 @@ export function SettingsView({ authed }: { authed: boolean }) {
 }
 
 function UpdateRow() {
+  const { prefs, setPrefs } = useApp()
   const u = useUpdate()
   if (!u) return null
   const status =
@@ -82,17 +83,22 @@ function UpdateRow() {
     : u.status === 'error' ? ` ${u.message}`
     : ''
   return (
-    <Row title="Updates" desc={`Version ${u.current}. ytspot checks for updates once a day.${status}`}>
-      {u.status === 'available' || u.status === 'ready' ? (
-        <button className="outline-btn" onClick={() => window.ytm.promptUpdate()}>
-          {u.status === 'ready' ? 'Restart to update' : `Install ${u.version}`}
-        </button>
-      ) : (
-        <button className="outline-btn" disabled={u.status === 'checking' || u.status === 'downloading'} onClick={() => window.ytm.checkForUpdates()}>
-          {u.status === 'checking' ? 'Checking…' : u.status === 'downloading' ? `Downloading ${u.percent}%` : 'Check for updates'}
-        </button>
-      )}
-    </Row>
+    <>
+      <Row title="Updates" desc={`Version ${u.current}. ytspot checks for updates once a day.${status}`}>
+        {u.status === 'available' || u.status === 'ready' ? (
+          <button className="outline-btn" onClick={() => window.ytm.promptUpdate()}>
+            {u.status === 'ready' ? 'Restart to update' : `Install ${u.version}`}
+          </button>
+        ) : (
+          <button className="outline-btn" disabled={u.status === 'checking' || u.status === 'downloading'} onClick={() => window.ytm.checkForUpdates()}>
+            {u.status === 'checking' ? 'Checking…' : u.status === 'downloading' ? `Downloading ${u.percent}%` : 'Check for updates'}
+          </button>
+        )}
+      </Row>
+      <Row title="Install updates automatically" desc="Downloads new versions in the background and installs them the next time you quit ytspot.">
+        <Toggle on={prefs.autoUpdate} onChange={(v) => setPrefs({ autoUpdate: v })} />
+      </Row>
+    </>
   )
 }
 

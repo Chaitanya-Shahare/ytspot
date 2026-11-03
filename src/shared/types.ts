@@ -145,6 +145,7 @@ export interface MainPrefs {
   openAtLogin: boolean
   menuBar: MenuBarMode
   menuBarIcon: MenuBarIcon
+  autoUpdate: boolean
 }
 
 // Where the app's self-update is (see main/updater.ts); `current` is the running version.

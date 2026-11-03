@@ -96,6 +96,12 @@ const bridge = {
     const fn = (_: unknown, v: string) => cb(v)
     ipcRenderer.on('update:found', fn)
     return () => void ipcRenderer.removeListener('update:found', fn)
+  },
+  // An automatic update finished downloading; it goes in when ytspot quits.
+  onUpdateReady: (cb: (version: string) => void) => {
+    const fn = (_: unknown, v: string) => cb(v)
+    ipcRenderer.on('update:ready', fn)
+    return () => void ipcRenderer.removeListener('update:ready', fn)
   }
 }
 
