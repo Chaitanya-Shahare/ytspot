@@ -1,16 +1,18 @@
-import { app, BaseWindow, BrowserWindow, clipboard, ipcMain, Menu, shell, WebContentsView, type WebContents } from 'electron'
+import { app, BaseWindow, BrowserWindow, clipboard, ipcMain, Menu, protocol, shell, WebContentsView, type WebContents } from 'electron'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as yt from './api'
 import { chordsFor, saveChords, setChords } from './chords'
-import { lyrics } from './lyrics'
+import { lyrics, type LyricsQuery } from './lyrics'
+import { download, downloaded, downloadsState, initDownloads, MEDIA_SCHEME, removeDownloads, savedLyrics, serve } from './downloads'
+import { leaveLocal, localActive, localCommand, localState, playLocal, setLocalLiked } from './local'
 import { buildMenu } from './menu'
 import { initTray, setTrayMode, trayOn, updateTray } from './tray'
 import { checkForUpdates, initUpdater, promptUpdate, setAutoUpdate, updateState } from './updater'
-import { command, createPlayerWindow, fitVideo, parkVideo, placeVideo, rateVideo, saveToLibrary, subscribe, getState, onLoggedIn, setVideoMode, setChordCapture, applyYtmSetting, showLogin, signOut, uploadImage, ytmSession, ytmSettings } from './player'
+import { command, createPlayerWindow, fitVideo, parkVideo, pauseYtm, placeVideo, rateVideo, saveToLibrary, subscribe, getState, onLoggedIn, setVideoMode, setChordCapture, applyYtmSetting, showLogin, signOut, uploadImage, ytmSession, ytmSettings } from './player'
 import { bindings, DEFAULT_PREFS, type Action } from '../shared/shortcuts'
-import type { MainPrefs, MenuBarIcon, MenuBarMode, PlayerCommand, PlayerState, VideoRect } from '../shared/types'
+import type { Download, DownloadQuality, MainPrefs, MenuBarIcon, MenuBarMode, PlayerCommand, PlayerState, Track, VideoRect } from '../shared/types'
 
 const dir = fileURLToPath(new URL('.', import.meta.url))
 // Test runs (YTSPOT_PROFILE=<dir>) get their own profile so they never share data, the keychain
@@ -28,6 +30,9 @@ const boundsFile = join(app.getPath('userData'), 'window.json')
 // Main's copy of the menu bar and auto-update settings, so launch acts on them before the UI has loaded.
 const prefsFile = join(app.getPath('userData'), 'prefs.json')
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
+// Downloaded songs and their artwork (see downloads.ts): a secure, streamable scheme so the audio
+// can seek and the UI can show the artwork.
+protocol.registerSchemesAsPrivileged([{ scheme: MEDIA_SCHEME, privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } }])
 
 // The app window and the page drawn in it. The page is a view of its own (not a BrowserWindow's
 // built-in page) so the player's video can be stacked beneath it in full screen.
@@ -149,7 +154,7 @@ let pendingSince: { id: string; at: number } | null = null
 async function pushState(): Promise<void> {
   const shown = !!main && (main.isVisible() || headless)
   if (!shown && !trayOn()) return
-  const s = await getState()
+  const s = await currentState()
   updateTray(s)
   if (!s || !ui || !shown) return
   if (s.pending) {
@@ -167,8 +172,30 @@ async function pushState(): Promise<void> {
   }
 }
 
+// Whichever is playing: YouTube Music, or downloaded songs from disk (local.ts).
+const currentState = () => (localActive() ? localState() : getState())
+
+const songsOf = async (ids: string[]) => (await Promise.all(ids.map(downloaded))).filter((d): d is Download => !!d)
+
 async function playerCommand(c: PlayerCommand): Promise<void> {
-  await command(c)
+  if (c.type === 'playLocal') {
+    const songs = await songsOf(c.videoIds)
+    const at = Math.max(0, songs.findIndex((d) => d.videoId === c.videoIds[c.index]))
+    if (!songs.length) return
+    // Carry the volume over, so switching to a downloaded song isn't suddenly louder.
+    const ytm = localActive() ? null : await getState()
+    if (ytm?.playing) await pauseYtm()
+    await playLocal(songs, at, ytm ? (ytm.muted ? 0 : ytm.volume) : undefined)
+  } else if (c.type === 'play' || c.type === 'videoMode' || !localActive()) {
+    if (c.type === 'play' && localActive()) leaveLocal()
+    await command(c)
+  } else if (c.type === 'like') {
+    const s = await localState()
+    if (s) {
+      setLocalLiked(s.videoId, !s.liked)
+      rateVideo(s.videoId, !s.liked).catch(() => undefined)
+    }
+  } else await localCommand(c, songsOf)
   setTimeout(pushState, 150)
 }
 
@@ -266,10 +293,15 @@ app.whenReady().then(() => {
   ipcMain.handle('yt:album', data(yt.album))
   ipcMain.handle('yt:artist', data(yt.artist))
   ipcMain.handle('yt:search', data(yt.search))
-  ipcMain.handle('yt:lyrics', data(lyrics))
+  // A downloaded song's lyrics were saved with it, so they show offline too.
+  const onlineLyrics = data(lyrics)
+  ipcMain.handle('yt:lyrics', async (e, q: LyricsQuery) => (await savedLyrics(q.videoId)) ?? onlineLyrics(e, q))
+  ipcMain.handle('dl:state', () => downloadsState())
+  ipcMain.handle('dl:add', (_, tracks: Track[], quality: DownloadQuality) => download(tracks, quality))
+  ipcMain.handle('dl:remove', (_, videoIds: string[]) => removeDownloads(videoIds))
   ipcMain.handle('yt:chords', (_, id: string) => chordsFor(id))
   ipcMain.handle('player:cmd', (_, c: PlayerCommand) => playerCommand(c))
-  ipcMain.handle('player:get', () => getState())
+  ipcMain.handle('player:get', () => currentState())
   ipcMain.handle('update:state', () => updateState())
   ipcMain.handle('update:check', () => checkForUpdates(true))
   ipcMain.handle('update:prompt', () => promptUpdate())
@@ -306,6 +338,8 @@ app.whenReady().then(() => {
     }
   })
 
+  protocol.handle(MEDIA_SCHEME, serve)
+  initDownloads((s) => ui?.send('downloads', s))
   createPlayerWindow()
   createMain()
   rebuildMenu()

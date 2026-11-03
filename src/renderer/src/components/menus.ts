@@ -1,12 +1,51 @@
 import type { PopupItem } from '../../../preload'
-import type { Card } from '../../../shared/types'
-import { libraryChanged, playlistChanged, routeFor, savablePlaylists, type AppCtx } from '../lib'
+import type { Card, Track } from '../../../shared/types'
+import { getDownloads, libraryChanged, playlistChanged, routeFor, savablePlaylists, type AppCtx } from '../lib'
 
+// A song as rows, the queue and Now Playing know it; whatever details they have go with a download.
 export interface MenuSong {
   videoId: string
   title: string
   artistId?: string
   albumId?: string
+  artists?: string // a track row's
+  artist?: string // a queue row's
+  album?: string
+  duration?: string
+  thumb?: string
+  art?: string
+}
+
+const trackOf = (s: MenuSong): Track => ({
+  videoId: s.videoId,
+  title: s.title,
+  artists: s.artists ?? s.artist ?? '',
+  artistId: s.artistId,
+  album: s.album,
+  albumId: s.albumId,
+  duration: s.duration ?? '',
+  thumb: s.art ?? s.thumb ?? ''
+})
+
+// Saves songs for offline listening; `what` names them in the toast once they're done
+// ("Downloaded Abbey Road"). Main downloads them even if this window closes meanwhile.
+export async function downloadSongs(ctx: AppCtx, tracks: Track[], what?: string): Promise<void> {
+  const todo = tracks.filter((t) => !getDownloads().ids.has(t.videoId))
+  if (!todo.length) return ctx.toast(what ? `${what} is already downloaded` : 'Already downloaded')
+  ctx.toast(todo.length === 1 && !what ? 'Downloading…' : `Downloading ${todo.length} ${todo.length === 1 ? 'song' : 'songs'}`)
+  try {
+    const { failed } = await window.ytm.download(todo, ctx.prefs.downloadQuality)
+    if (!failed.length) return ctx.toast(what ? `Downloaded ${what}` : `Downloaded ${todo[0].title || 'song'}`)
+    const retry = { label: 'Try again', run: () => void downloadSongs(ctx, tracks, what) }
+    ctx.toast(failed.length === 1 ? `Couldn’t download ${failed[0]}` : `Couldn’t download ${failed.length} songs`, retry)
+  } catch {
+    ctx.toast('Couldn’t download — check your connection')
+  }
+}
+
+export async function removeDownloads(ctx: AppCtx, videoIds: string[]): Promise<void> {
+  await window.ytm.removeDownloads(videoIds)
+  ctx.toast(videoIds.length === 1 ? 'Removed from Downloads' : `Removed ${videoIds.length} songs from Downloads`)
 }
 
 interface Where {
@@ -97,7 +136,7 @@ async function removeFromLibrary(c: Card, own: boolean, ctx: AppCtx): Promise<vo
 
 // Right-click / "…" menu for a card: songs get the song menu; albums and playlists can be queued.
 export async function cardMenu(c: Card, ctx: AppCtx, lib?: InLibrary): Promise<void> {
-  if (c.kind === 'song' || c.kind === 'video') return songMenu({ videoId: c.id, title: c.title }, ctx)
+  if (c.kind === 'song' || c.kind === 'video') return songMenu({ videoId: c.id, title: c.title, thumb: c.thumb }, ctx)
   const { go, toast, playCard } = ctx
   const own = !!lib && c.kind === 'playlist' && (await savablePlaylists(ANY_VIDEO).catch(() => [])).some((p) => p.id === c.id)
   const kindName = c.kind === 'album' ? 'album' : c.kind === 'artist' ? 'artist' : 'playlist'
@@ -112,7 +151,8 @@ export async function cardMenu(c: Card, ctx: AppCtx, lib?: InLibrary): Promise<v
     ...(songs
       ? [
           { id: 'next', label: 'Play next' },
-          { id: 'queue', label: 'Add to queue' }
+          { id: 'queue', label: 'Add to queue' },
+          { id: 'download', label: 'Download' }
         ]
       : []),
     ...(lib
@@ -146,6 +186,16 @@ export async function cardMenu(c: Card, ctx: AppCtx, lib?: InLibrary): Promise<v
     cardSongs(c)
       .then((ids) => queue(ids, pick === 'next'))
       .then(() => toast(pick === 'next' ? 'Playing next' : 'Added to queue'), () => toast('That didn’t work — try again'))
+  if (pick === 'download')
+    (c.kind === 'album' ? window.ytm.album(c.id) : window.ytm.playlist(c.id)).then(
+      (col: { tracks: Track[]; thumb: string }) =>
+        downloadSongs(
+          ctx,
+          c.kind === 'album' ? col.tracks.map((t) => ({ ...t, thumb: t.thumb || col.thumb, album: t.album ?? c.title, albumId: t.albumId ?? c.id })) : col.tracks,
+          c.title
+        ),
+      () => toast('Couldn’t download — check your connection')
+    )
   if (pick === 'go' && r) go(r)
   if (pick === 'copy') window.ytm.copy(url).then(() => toast('Link copied to clipboard'))
   if (pick === 'open') window.ytm.open(url)
@@ -177,6 +227,9 @@ export async function songMenu(song: MenuSong, ctx: AppCtx, where: Where = {}): 
           { id: 'next', label: 'Play next' },
           { id: 'queue', label: 'Add to queue' }
         ]),
+    getDownloads().ids.has(song.videoId)
+      ? { id: 'undownload', label: 'Remove download' }
+      : { id: 'download', label: 'Download', enabled: !getDownloads().progress.has(song.videoId) },
     { id: '-', label: '-' },
     { id: 'radio', label: 'Go to song radio' },
     { id: 'artist', label: 'Go to artist', enabled: !!song.artistId },
@@ -200,6 +253,8 @@ export async function songMenu(song: MenuSong, ctx: AppCtx, where: Where = {}): 
       () => toast('You can only remove songs from your own playlists')
     )
   if (pick === 'like' || pick === 'unlike') setLiked(ctx, song.videoId, pick === 'like')
+  if (pick === 'download') downloadSongs(ctx, [trackOf(song)])
+  if (pick === 'undownload') removeDownloads(ctx, [song.videoId])
   if (pick === 'next') queue([song.videoId], true).then(done('Playing next'))
   if (pick === 'queue') queue([song.videoId], false).then(done('Added to queue'))
   if (pick === 'remove-q' && where.queueIndex !== undefined)

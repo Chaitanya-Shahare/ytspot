@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ArtistPage, Card, LibraryFilter, PlayerState, QueueItem, ShuffleMode, Track } from '../../shared/types'
 import * as I from './components/icons'
-import { Ctx, fmt, getClock, libraryChanged, loadPrefs, onLibraryChange, playlistChanged, resetCache, routeFor, savePrefs, setClock, sized, useApp, useCached, useColor, useTime, type AppCtx, type Prefs, type Route, type SaveSong, type Source, type ToastAction, sameRoute } from './lib'
+import { Ctx, downloadsSource, fmt, getClock, getDownloads, libraryChanged, loadPrefs, onLibraryChange, playlistChanged, resetCache, routeFor, savePrefs, setClock, sized, useApp, useCached, useColor, useDownloads, useTime, type AppCtx, type Prefs, type Route, type SaveSong, type Source, type ToastAction, sameRoute } from './lib'
 import { bindings, comboLabel, comboOf, SHORTCUTS, type Action } from '../../shared/shortcuts'
 import { cardMenu, songMenu } from './components/menus'
 import { Boundary, Img } from './components/ui'
@@ -10,8 +10,12 @@ import { SettingsView } from './views/settings'
 import { FullScreenLyrics, LyricsCard, LyricsView, lyricsBackground } from './views/lyrics'
 import { MoodView, SearchView } from './views/search'
 import { ArtistView, CollectionView, ExploreView, HomeView, MoreView, resetHome } from './views/views'
+import { DownloadsView } from './views/downloads'
 
 const LIKED: Card = { kind: 'playlist', id: 'LM', title: 'Liked Songs', subtitle: 'Playlist', thumb: '' }
+// Songs saved for offline listening, listed under Liked Songs once there are any.
+const DOWNLOADED_ID = 'ytspot:downloaded'
+const libraryRoute = (c: Card): Route | null => (c.id === DOWNLOADED_ID ? { name: 'downloads' } : routeFor(c))
 type LibrarySort = 'Recents' | 'Alphabetical' | 'Creator'
 // Spotify's "View as": rows with artwork, text-only rows, or a grid of covers.
 type LibraryView = 'List' | 'Compact' | 'Grid'
@@ -193,12 +197,13 @@ export default function App() {
   const shuffle = useCallback(
     (mode?: ShuffleMode) => {
       const from = player?.shuffle ?? 'off'
-      const to = mode ?? NEXT_SHUFFLE[from]
+      // Downloaded songs have no Smart Shuffle (its picks come from YouTube Music).
+      const to = mode ?? (player?.local && from === 'on' ? 'off' : NEXT_SHUFFLE[from])
       if (to === from) return
       window.ytm.cmd({ type: 'shuffleMode', mode: to })
       toast(SHUFFLE_TOAST[to])
     },
-    [player?.shuffle, toast]
+    [player?.shuffle, player?.local, toast]
   )
 
   // The Queue and Now Playing buttons each open their view, or close it when it's already showing.
@@ -218,10 +223,23 @@ export default function App() {
   )
 
   const [source, setSource] = useState<Source | null>(null)
-  const playTrack = useCallback((t: Track, playlistId?: string, from?: Source) => {
-    setSource(from ?? null)
-    window.ytm.cmd({ type: 'play', videoId: t.videoId, playlistId })
-  }, [])
+  // Downloaded songs play from disk when started from Downloaded, and wherever they're started
+  // while offline; the page's other downloaded songs follow them.
+  const playTrack = useCallback(
+    (t: Track, playlistId?: string, from?: Source) => {
+      if (from?.route.name !== 'downloads' && navigator.onLine) {
+        setSource(from ?? null)
+        return window.ytm.cmd({ type: 'play', videoId: t.videoId, playlistId })
+      }
+      const { ids, songs } = getDownloads()
+      if (!ids.has(t.videoId)) return void toast('You’re offline. Only downloaded songs can play.')
+      const list = (from?.ids ?? songs.map((d) => d.videoId)).filter((id) => ids.has(id))
+      setSource(from ?? downloadsSource(list))
+      return window.ytm.cmd({ type: 'playLocal', videoIds: list, index: list.indexOf(t.videoId) })
+    },
+    [toast]
+  )
+  const playSong = useCallback((videoId: string, title: string) => playTrack({ videoId, title, artists: '', duration: '', thumb: '' }), [playTrack])
 
   // Albums, playlists and artists open their page; songs and videos play.
   const openCard = useCallback(
@@ -229,38 +247,31 @@ export default function App() {
       const r = routeFor(c)
       if (r) return go(r)
       if (c.kind !== 'song' && c.kind !== 'video') return toast('That can’t be played here yet')
-      setSource(null)
-      window.ytm.cmd({ type: 'play', videoId: c.id })
+      playSong(c.id, c.title)
     },
-    [go, toast]
+    [go, toast, playSong]
   )
 
   const playCard = useCallback(
     async (c: Card) => {
       const r = routeFor(c)
       try {
-        if (c.kind === 'song' || c.kind === 'video') {
-          setSource(null)
-          return void (await window.ytm.cmd({ type: 'play', videoId: c.id }))
-        }
+        if (c.kind === 'song' || c.kind === 'video') return void (await playSong(c.id, c.title))
         if (!r) return toast('That can’t be played here yet')
         // Artists play their top songs as a list, the same as their page's play button.
         if (c.kind === 'artist') {
           const a = await window.ytm.artist(c.id)
           if (!a.songs[0]) return
-          setSource({ route: r, title: c.title, ids: a.songs.map((t: Track) => t.videoId) })
-          window.ytm.cmd({ type: 'play', videoId: a.songs[0].videoId, playlistId: a.songsMore?.browseId.replace(/^VL/, '') })
-          return
+          return void playTrack(a.songs[0], a.songsMore?.browseId.replace(/^VL/, ''), { route: r, title: c.title, ids: a.songs.map((t: Track) => t.videoId) })
         }
         const col = c.kind === 'album' ? await window.ytm.album(c.id) : await window.ytm.playlist(c.id, true)
         if (!col.tracks[0]) return
-        setSource({ route: r, title: c.title, ids: col.tracks.map((t: Track) => t.videoId) })
-        window.ytm.cmd({ type: 'play', videoId: col.tracks[0].videoId, playlistId: col.playlistId })
+        playTrack(col.tracks[0], col.playlistId, { route: r, title: c.title, ids: col.tracks.map((t: Track) => t.videoId) })
       } catch {
         toast('Couldn’t play that — check your connection')
       }
     },
-    [toast]
+    [toast, playSong, playTrack]
   )
 
   // Volume as last set here, so holding the volume key steps from the newest value rather than
@@ -455,6 +466,7 @@ export default function App() {
             {route.name === 'settings' && <SettingsView authed={authed} />}
             {route.name === 'lyrics' && <LyricsView />}
             {route.name === 'more' && <MoreView title={route.title} browseId={route.browseId} params={route.params} />}
+            {route.name === 'downloads' && <DownloadsView />}
             </Boundary>
           </div>
         </main>
@@ -617,7 +629,8 @@ function TopBar(p: {
 
 function LibraryPanel({ authed, collapsed, onToggle }: { authed: boolean; collapsed: boolean; onToggle: () => void }) {
   const ctx = useApp()
-  const { go, route, player, toast, source, playCard } = ctx
+  const { go, route, player, toast, source, playCard, playTrack } = ctx
+  const downloads = useDownloads()
   // No chip picked shows everything, as in Spotify; clicking the picked chip clears it.
   const [filter, setFilter] = useState<LibraryFilter | null>(null)
   const [sort, setSortState] = useState<LibrarySort>(() => (localStorage.getItem('library-sort') as LibrarySort) || 'Recents')
@@ -666,7 +679,12 @@ function LibraryPanel({ authed, collapsed, onToggle }: { authed: boolean; collap
     }
   }
   const listed = new Set(lists.Playlists.map((c) => c.id))
-  const playlists = [LIKED, ...made.filter((c) => !listed.has(c.id)), ...lists.Playlists.filter((c) => c.id !== 'VLLM')]
+  const savedCount = downloads.songs.length
+  const downloaded: Card[] = savedCount
+    ? [{ kind: 'playlist', id: DOWNLOADED_ID, title: 'Downloaded', subtitle: `Playlist • ${savedCount} ${savedCount === 1 ? 'song' : 'songs'}`, thumb: '' }]
+    : []
+  // Signed out, downloads are all there is to list.
+  const playlists = authed ? [LIKED, ...downloaded, ...made.filter((c) => !listed.has(c.id)), ...lists.Playlists.filter((c) => c.id !== 'VLLM')] : downloaded
   let list = filter === 'Artists' ? lists.Artists : filter === 'Albums' ? lists.Albums : filter ? playlists : [...playlists, ...lists.Albums, ...lists.Artists]
   if (find) list = list.filter((c) => `${c.title} ${c.subtitle}`.toLowerCase().includes(find.toLowerCase()))
   // "Recents" keeps YouTube Music's own order (most recent first); Liked Songs stays pinned on top.
@@ -679,9 +697,10 @@ function LibraryPanel({ authed, collapsed, onToggle }: { authed: boolean; collap
     const key = (c: Card) => (sort === 'Creator' ? creator(c) || c.title : c.title).toLowerCase()
     list = [...list.filter((c) => c.id === 'LM'), ...list.filter((c) => c.id !== 'LM').sort((a, b) => key(a).localeCompare(key(b)))]
   }
-  // Pinned items follow Liked Songs, in the order they were pinned (Spotify's pins).
-  const isPinned = (c: Card) => c.id === 'LM' || pins.includes(c.kind + c.id)
-  const pinRank = (c: Card) => (c.id === 'LM' ? -1 : pins.indexOf(c.kind + c.id))
+  // Pinned items follow Liked Songs and Downloaded, in the order they were pinned (Spotify's pins).
+  const fixed = (c: Card) => c.id === 'LM' || c.id === DOWNLOADED_ID
+  const isPinned = (c: Card) => fixed(c) || pins.includes(c.kind + c.id)
+  const pinRank = (c: Card) => (c.id === 'LM' ? -2 : c.id === DOWNLOADED_ID ? -1 : pins.indexOf(c.kind + c.id))
   list = [...list.filter(isPinned).sort((a, b) => pinRank(a) - pinRank(b)), ...list.filter((c) => !isPinned(c))]
   const sortMenu = async () => {
     const pick = await window.ytm.popup([
@@ -769,20 +788,25 @@ function LibraryPanel({ authed, collapsed, onToggle }: { authed: boolean; collap
             <span className="sub">Try searching again using a different spelling or keyword.</span>
           </div>
         )}
-        {authed && list.map((c) => {
-          const r = routeFor(c)
+        {(authed || savedCount > 0) && list.map((c) => {
+          const r = libraryRoute(c)
           const active = r && JSON.stringify(r) === JSON.stringify(route)
           const playing = !!player?.playing && (sameRoute(r, source?.route) || (c.kind === 'album' && c.title === player.album))
           const current = !!player?.videoId && sameRoute(r, source?.route)
           // Play from the sidebar without opening the page (pause if it's what's playing).
-          const play = (e: React.MouseEvent) => (e.stopPropagation(), current ? window.ytm.cmd({ type: 'toggle' }) : playCard(c))
+          const play = (e: React.MouseEvent) => {
+            e.stopPropagation()
+            if (current) return void window.ytm.cmd({ type: 'toggle' })
+            if (c.id !== DOWNLOADED_ID) return void playCard(c)
+            if (downloads.songs[0]) playTrack(downloads.songs[0], undefined, downloadsSource(downloads.songs.map((d) => d.videoId)))
+          }
           const grid = shownView === 'Grid'
           return (
             <div
               key={c.kind + c.id}
               className={`lib-item ${active ? 'active' : ''}`}
               onClick={() => r && go(r)}
-              onContextMenu={(e) => (e.preventDefault(), c.id !== 'LM' && cardMenu(c, ctx, { pinned: isPinned(c), onPin: () => togglePin(c) }))}
+              onContextMenu={(e) => (e.preventDefault(), !fixed(c) && cardMenu(c, ctx, { pinned: isPinned(c), onPin: () => togglePin(c) }))}
               title={collapsed ? c.title : undefined}
             >
               {shownView !== 'Compact' && (
@@ -790,6 +814,10 @@ function LibraryPanel({ authed, collapsed, onToggle }: { authed: boolean; collap
                   {c.id === 'LM' ? (
                     <span className="liked-art">
                       <I.HeartFill size={grid ? 40 : collapsed ? 20 : 16} />
+                    </span>
+                  ) : c.id === DOWNLOADED_ID ? (
+                    <span className="liked-art downloads-art">
+                      <I.Downloaded size={grid ? 40 : collapsed ? 20 : 16} />
                     </span>
                   ) : (
                     <Img src={sized(c.thumb, grid ? 160 : 48)} artist={c.kind === 'artist'} />
@@ -890,7 +918,7 @@ function NowPlayingPanel({ onClose, onPlus, onQueue, onFullLyrics, covered }: { 
   const { player, go, prefs, setPrefs } = ctx
   if (!player) return null
   const next = upcomingOf(player)[0] ?? (player.autoplay[0] && { q: player.autoplay[0], i: -1 })
-  const current = { videoId: player.videoId, title: player.title, artistId: player.artistId, albumId: player.albumId }
+  const current = { videoId: player.videoId, title: player.title, artist: player.artist, artistId: player.artistId, album: player.album, albumId: player.albumId, thumb: player.thumb }
   const switchVideo = () => {
     setPrefs({ videoMode: !prefs.videoMode })
     ctx.toast(prefs.videoMode ? 'We’ll only play audio from now on.' : 'We’ll play video when available, from now on.')
@@ -935,11 +963,14 @@ function NowPlayingPanel({ onClose, onPlus, onQueue, onFullLyrics, covered }: { 
           </div>
           <PlusButton liked={player.liked} onPlus={onPlus} size={24} />
         </div>
-        <div className="np-video">
-          <button className="outline-btn small" onClick={switchVideo}>
-            {prefs.videoMode ? 'Switch to audio' : 'Switch to video'}
-          </button>
-        </div>
+        {/* A downloaded song is audio only. */}
+        {!player.local && (
+          <div className="np-video">
+            <button className="outline-btn small" onClick={switchVideo}>
+              {prefs.videoMode ? 'Switch to audio' : 'Switch to video'}
+            </button>
+          </div>
+        )}
         <LyricsCard player={player} onOpen={() => go({ name: 'lyrics' })} onFull={onFullLyrics} />
         {player.artistId && <AboutArtist id={player.artistId} />}
         <div className="np-card">
@@ -1008,7 +1039,7 @@ function QueuePanel({ onClose }: { onClose: () => void }) {
             <QueueRow
               q={{ videoId: player.videoId, title: player.title, artist: player.artist, artistId: player.artistId, albumId: player.albumId, duration: '', thumb: player.thumb, selected: true }}
               playing
-              menu={() => songMenu({ videoId: player.videoId, title: player.title, artistId: player.artistId, albumId: player.albumId }, ctx, { liked: player.liked })}
+              menu={() => songMenu({ videoId: player.videoId, title: player.title, artist: player.artist, artistId: player.artistId, album: player.album, albumId: player.albumId, thumb: player.thumb }, ctx, { liked: player.liked })}
             />
             {upcoming.length > 0 && <h3 className="queue-h">Next in queue</h3>}
             {upcoming.map(({ q, i }) => (
@@ -1308,7 +1339,7 @@ function Controls({ onShuffle, big }: { onShuffle: (mode?: ShuffleMode) => void;
     const pick = await window.ytm.popup([
       { id: 'off', label: 'Play in order', checked: mode === 'off' },
       { id: 'on', label: 'Shuffle', checked: mode === 'on' },
-      { id: 'smart', label: 'Smart Shuffle', checked: mode === 'smart' }
+      { id: 'smart', label: 'Smart Shuffle', checked: mode === 'smart', enabled: !p?.local }
     ])
     if (pick) onShuffle(pick as ShuffleMode)
   }
@@ -1319,8 +1350,8 @@ function Controls({ onShuffle, big }: { onShuffle: (mode?: ShuffleMode) => void;
         disabled={off}
         onClick={() => onShuffle()}
         onContextMenu={shuffleMenu}
-        aria-label={SHUFFLE_LABEL[mode]}
-        title={SHUFFLE_LABEL[mode]}
+        aria-label={p?.local && mode === 'on' ? 'Disable shuffle' : SHUFFLE_LABEL[mode]}
+        title={p?.local && mode === 'on' ? 'Disable shuffle' : SHUFFLE_LABEL[mode]}
         data-shortcut="shuffle"
       >
         {mode === 'smart' ? <I.ShuffleSmart size={big ? 24 : 16} /> : <I.Shuffle size={big ? 24 : 16} />}
@@ -1569,7 +1600,7 @@ function PlayerBar(props: {
             <PlusButton liked={p.liked} onPlus={props.onPlus} />
             <button
               className="icon-btn pb-more"
-              onClick={() => songMenu({ videoId: p.videoId, title: p.title, artistId: p.artistId, albumId: p.albumId }, ctx, { liked: p.liked })}
+              onClick={() => songMenu({ videoId: p.videoId, title: p.title, artist: p.artist, artistId: p.artistId, album: p.album, albumId: p.albumId, thumb: p.thumb }, ctx, { liked: p.liked })}
               aria-label={`More options for ${p.title}`}
               title="More options"
             >

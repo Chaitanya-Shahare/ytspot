@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
 import { bindings, comboLabel, comboOf, conflicts, SHORTCUTS, type Action } from '../../../shared/shortcuts'
-import type { MenuBarIcon, MenuBarMode, YtmSetting } from '../../../shared/types'
+import type { DownloadQuality, MenuBarIcon, MenuBarMode, YtmSetting } from '../../../shared/types'
 import { Close, Plus } from '../components/icons'
+import { removeDownloads } from '../components/menus'
 import { ErrorBox } from '../components/ui'
-import { useApp, useCached, useUpdate } from '../lib'
+import { useApp, useCached, useDownloads, useUpdate } from '../lib'
+import { megabytes } from './downloads'
 
 export function SettingsView({ authed }: { authed: boolean }) {
   const { prefs, setPrefs } = useApp()
@@ -55,6 +57,8 @@ export function SettingsView({ authed }: { authed: boolean }) {
         <UpdateRow />
       </section>
 
+      <DownloadSettings />
+
       <section className="set-section">
         <h2>Experimental</h2>
         <Row
@@ -79,6 +83,40 @@ export function SettingsView({ authed }: { authed: boolean }) {
         </section>
       )}
     </div>
+  )
+}
+
+function DownloadSettings() {
+  const ctx = useApp()
+  const { prefs, setPrefs } = ctx
+  const { songs } = useDownloads()
+  const bytes = songs.reduce((n, d) => n + d.bytes, 0)
+  const removeAll = () =>
+    confirm(`Remove all ${songs.length} downloaded songs from this Mac? You can download them again later.`) &&
+    removeDownloads(ctx, songs.map((d) => d.videoId))
+  return (
+    <section className="set-section">
+      <h2>Downloads</h2>
+      <Row title="Download quality" desc="Higher quality takes more space. Songs you’ve already downloaded keep their quality.">
+        <select className="select" value={prefs.downloadQuality} onChange={(e) => setPrefs({ downloadQuality: e.target.value as DownloadQuality })}>
+          <option value="low">Low (about 50 kbps, 0.4 MB a minute)</option>
+          <option value="normal">Normal (about 70 kbps, 0.5 MB a minute)</option>
+          <option value="high">High (about 130 kbps, 1 MB a minute)</option>
+        </select>
+      </Row>
+      <Row
+        title="Downloaded songs"
+        desc={
+          songs.length
+            ? `${songs.length} ${songs.length === 1 ? 'song uses' : 'songs use'} ${megabytes(bytes)} on this Mac. They play without an internet connection, from Downloaded in Your Library.`
+            : 'Download songs, albums and playlists to listen without an internet connection.'
+        }
+      >
+        <button className="outline-btn" disabled={!songs.length} onClick={removeAll}>
+          Remove all
+        </button>
+      </Row>
+    </section>
   )
 }
 

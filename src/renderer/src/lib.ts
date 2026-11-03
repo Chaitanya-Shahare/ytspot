@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ShortcutPrefs } from '../../shared/shortcuts'
 import { DEFAULT_PREFS } from '../../shared/shortcuts'
-import type { Card, MenuBarIcon, MenuBarMode, More, PlayerState, Track, UpdateState } from '../../shared/types'
+import type { Card, DownloadQuality, DownloadsState, MenuBarIcon, MenuBarMode, More, PlayerState, Track, UpdateState } from '../../shared/types'
 
 export type Route =
   | { name: 'home' }
@@ -14,6 +14,7 @@ export type Route =
   | { name: 'settings' }
   | { name: 'lyrics' }
   | { name: 'more'; title: string; browseId: string; params?: string }
+  | { name: 'downloads' }
 
 // Where playback was started from (a playlist, album or artist page), for "Playing from".
 export interface Source {
@@ -29,7 +30,7 @@ export interface AppCtx {
   go: (r: Route) => void
   // Everything except the playback clock, so long lists don't re-render every tick.
   player: PlayerState | null
-  playTrack: (t: Track, playlistId?: string, from?: Source) => void
+  playTrack: (t: Track, playlistId?: string, from?: Source) => Promise<unknown> | void
   source: Source | null
   openCard: (c: Card) => void
   playCard: (c: Card) => void
@@ -61,11 +62,12 @@ export interface Prefs {
   menuBar: MenuBarMode
   menuBarIcon: MenuBarIcon
   autoUpdate: boolean // download new versions in the background and install them on quit
+  downloadQuality: DownloadQuality // for songs downloaded from now on
   chords: boolean // experimental: offer the guitar chords button in the player bar
   showChords: boolean // that button: work out the song's chords from its audio and show them with the lyrics
 }
 
-const PREF_DEFAULTS: Prefs = { shortcuts: DEFAULT_PREFS, keepPlaying: true, openAtLogin: false, videoMode: false, keyboardNav: false, menuBar: 'both', menuBarIcon: 'note', autoUpdate: false, chords: false, showChords: false }
+const PREF_DEFAULTS: Prefs = { shortcuts: DEFAULT_PREFS, keepPlaying: true, openAtLogin: false, videoMode: false, keyboardNav: false, menuBar: 'both', menuBarIcon: 'note', autoUpdate: false, downloadQuality: 'high', chords: false, showChords: false }
 export const loadPrefs = (): Prefs => ({ ...PREF_DEFAULTS, ...JSON.parse(localStorage.getItem('prefs') ?? '{}') })
 export const savePrefs = (p: Prefs) => localStorage.setItem('prefs', JSON.stringify(p))
 
@@ -81,6 +83,34 @@ export function useUpdate(): UpdateState | null {
   }, [])
   return s
 }
+
+// Songs saved for offline listening (main/downloads.ts), shared by every view that marks them.
+// `ids` and `progress` are rebuilt with each change, so rows can look a song up cheaply.
+export interface Downloads extends DownloadsState {
+  ids: Set<string>
+  progress: Map<string, number> // songs still downloading
+}
+const withIndex = (s: DownloadsState): Downloads => ({
+  ...s,
+  ids: new Set(s.songs.map((d) => d.videoId)),
+  progress: new Map(s.queue.map((q) => [q.videoId, q.progress]))
+})
+let downloads: Downloads = withIndex({ songs: [], queue: [] })
+const downloadSubs = new Set<() => void>()
+let watching = false
+const subscribeDownloads = (f: () => void) => {
+  if (!watching) {
+    watching = true
+    const set = (s: DownloadsState) => ((downloads = withIndex(s)), downloadSubs.forEach((g) => g()))
+    window.ytm.downloads().then(set)
+    window.ytm.onDownloads(set)
+  }
+  downloadSubs.add(f)
+  return () => void downloadSubs.delete(f)
+}
+export const getDownloads = () => downloads
+export const useDownloads = () => useSyncExternalStore(subscribeDownloads, getDownloads)
+export const downloadsSource = (ids?: string[]): Source => ({ route: { name: 'downloads' }, title: 'Downloaded', ids })
 
 // The playback clock lives outside React state, so a tick re-renders only what shows the time.
 let clock = 0

@@ -63,6 +63,7 @@ The UI is a separate React app, not a restyle of the YouTube Music website. Its 
 ### Listening
 
 - **No ads, with or without Premium.** Ads are stripped from YouTube Music's player responses before the player sees them, and ad requests are blocked. If one slips through anyway, it's muted and fast-forwarded.
+- **Download for offline listening.** Download a song from its ⋯ menu, or a whole album or playlist with the ↓ button. Downloaded songs (with their artwork and lyrics) show up under **Downloaded** in Your Library and play without an internet connection. Pick Low, Normal or High download quality in Settings.
 - **Audio-only by default.** Songs stream without the video. Turn on **Switch to video** to watch the music video in the Now Playing panel.
 - **Synced lyrics**, Spotify style: the current line is highlighted as the song plays, and clicking a line seeks to it. A lyrics card in the Now Playing panel follows along. Lyrics come from [LRCLIB](https://lrclib.net), with YouTube Music's own lyrics as a fallback.
 - **Full screen, three ways:** the artwork as in Spotify, the music video filling the screen, or full-screen synced lyrics. The controls fade out after 3 seconds without mouse movement.

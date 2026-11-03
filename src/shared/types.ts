@@ -130,6 +130,7 @@ export interface PlayerState {
   queue: QueueItem[]
   autoplay: QueueItem[]
   pending?: boolean // the song just changed and its details haven't arrived yet
+  local?: boolean // playing a downloaded file (see main/local.ts), not through YouTube Music
 }
 
 // Where the UI wants the video, in CSS pixels. `full`: the full-screen player's video, which fills
@@ -169,6 +170,8 @@ export type UpdateState = UpdateStatus & { current: string }
 
 export type PlayerCommand =
   | { type: 'play'; videoId: string; playlistId?: string }
+  // Downloaded songs, played from disk in this order starting at `index` (works offline).
+  | { type: 'playLocal'; videoIds: string[]; index: number }
   | { type: 'toggle' | 'next' | 'prev' | 'shuffle' | 'repeat' | 'like' | 'dislike' | 'mute' }
   | { type: 'seek'; seconds: number }
   | { type: 'volume'; value: number }
@@ -198,3 +201,18 @@ export type SearchFilter = 'all' | 'song' | 'video' | 'album' | 'artist' | 'play
 export type LibraryFilter = 'Playlists' | 'Albums' | 'Artists'
 
 export type Privacy = 'PUBLIC' | 'UNLISTED' | 'PRIVATE'
+
+// Audio quality for new downloads: YouTube's Opus streams at about 50 and 70 kbps, or its best (~130 kbps).
+export type DownloadQuality = 'low' | 'normal' | 'high'
+
+// A song saved for offline listening (main/downloads.ts). `thumb` is the artwork saved with it.
+export interface Download extends Track {
+  bytes: number
+  added: number // when it was downloaded (ms); sorts the list, newest first
+}
+
+// Everything downloaded, newest first, and what's still on its way (`progress` 0–1).
+export interface DownloadsState {
+  songs: Download[]
+  queue: { videoId: string; title: string; progress: number }[]
+}
