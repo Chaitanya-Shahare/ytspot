@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-import type { Lyrics, PlayerState } from '../../../shared/types'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { Chords, Lyrics, PlayerState } from '../../../shared/types'
 import * as I from '../components/icons'
 import { ErrorBox } from '../components/ui'
 import { liveClock, setClock, useApp, useCached, useColor } from '../lib'
@@ -53,6 +53,10 @@ function seekTo(t: number | undefined, playing: boolean): void {
 
 function SongLyrics({ player, full }: { player: PlayerState; full?: boolean }) {
   const { data, error, retry } = useLyrics(player)
+  const { prefs } = useApp()
+  const chords = useChords(player.videoId, prefs.chords && prefs.showChords)
+  // Placed once per chords update, not on every line change.
+  const placed = useMemo(() => (chords && data?.synced ? data.lines.map((_, i) => lineChords(data, chords, i)) : null), [chords, data])
   const bg = lyricsBackground(useColor(player.thumb))
   const active = useActiveLine(data, player.playing)
   const box = useRef<HTMLDivElement>(null)
@@ -77,6 +81,7 @@ function SongLyrics({ player, full }: { player: PlayerState; full?: boolean }) {
 
   return (
     <div ref={pageRef} className={`page lyrics-page ${full ? 'full' : ''}`} style={{ '--lyrics-bg': bg } as React.CSSProperties} onWheel={() => data?.synced && setAway(true)}>
+      {chords && <ChordBar chords={chords} playing={player.playing} />}
       {error && data === undefined ? (
         <ErrorBox error={error} onRetry={retry} />
       ) : data === undefined ? (
@@ -89,14 +94,14 @@ function SongLyrics({ player, full }: { player: PlayerState; full?: boolean }) {
       ) : (
         <div className="lyrics-wrap">
           {!data.synced && <p className="lyrics-unsynced">These lyrics aren’t synced to the song yet.</p>}
-          <div ref={box} className={`lyrics ${data.synced ? 'synced' : ''}`}>
+          <div ref={box} className={`lyrics ${data.synced ? 'synced' : ''} ${placed ? 'jam' : ''}`}>
             {data.lines.map((l, i) => (
               <div
                 key={i}
                 className={`lyric ${!data.synced ? '' : i === active ? 'active' : i < active ? 'passed' : ''}`}
                 onClick={() => data.synced && seek(l.time)}
               >
-                {l.text || '♪'}
+                {placed ? <ChordLine text={l.text || '♪'} at={placed[i]} /> : l.text || '♪'}
               </div>
             ))}
           </div>
@@ -108,6 +113,100 @@ function SongLyrics({ player, full }: { player: PlayerState; full?: boolean }) {
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+// The song's chords (main/chords.ts) while the setting is on: what's known now, then each update.
+function useChords(videoId: string, on: boolean): Chords | null {
+  const [chords, setChords] = useState<Chords | null>(null)
+  useEffect(() => {
+    setChords(null)
+    if (!on) return
+    let live = true
+    window.ytm.chords(videoId).then((c) => live && setChords(c))
+    const off = window.ytm.onChords((c) => c.videoId === videoId && setChords(c))
+    return () => {
+      live = false
+      off()
+    }
+  }, [videoId, on])
+  return chords
+}
+
+// The chords starting during lyric line i (the one already sounding at its start included), each
+// at the character its time falls on, moved to the start of that word. Lines only have start
+// times, so this assumes the words are sung at an even pace.
+function lineChords(data: Lyrics, chords: Chords, i: number): { at: number; name: string }[] {
+  const start = data.lines[i].time ?? 0, next = data.lines[i + 1]?.time ?? start + 8
+  const text = data.lines[i].text || '♪'
+  const out: { at: number; name: string }[] = []
+  const during = chords.chords.filter((c) => c.end > start && c.time < next)
+  // A chord carried over from the line before gives way to one changing right as the line starts.
+  const changesAtStart = during.some((c) => c.time >= start && c.time < start + 0.15 * (next - start))
+  for (const c of during) {
+    if (c.time < start && changesAtStart) continue
+    let at = Math.round((Math.max(0, c.time - start) / (next - start)) * text.length)
+    while (at > 0 && at < text.length && text[at - 1] !== ' ') at--
+    // Keep labels from running into each other; ones that don't fit trail after the words.
+    const prev = out[out.length - 1]
+    if (prev) at = Math.max(at, prev.at + prev.name.length + 1)
+    if (prev?.name === c.name) continue
+    out.push({ at, name: c.name })
+  }
+  return out
+}
+
+function ChordLine({ text, at }: { text: string; at: { at: number; name: string }[] }) {
+  const parts: React.ReactNode[] = []
+  let from = 0
+  for (const [k, c] of at.entries()) {
+    const to = Math.min(c.at, text.length)
+    parts.push(text.slice(from, to))
+    // Past the end of the words: leave room for the label after them.
+    const tail = c.at >= text.length
+    parts.push(
+      <span key={k} className={`chord-at ${tail ? 'tail' : ''}`} style={tail ? { width: `${c.name.length * 0.35 + 0.4}em` } : undefined}>
+        <b className="chord">{c.name}</b>
+      </span>
+    )
+    from = to
+  }
+  parts.push(text.slice(from))
+  return <>{parts}</>
+}
+
+// The chord sounding now and the ones coming next, for playing along.
+function ChordBar({ chords, playing }: { chords: Chords; playing: boolean }) {
+  const [t, setT] = useState(() => liveClock(playing))
+  useEffect(() => {
+    const id = setInterval(() => setT(liveClock(playing)), 100)
+    return () => clearInterval(id)
+  }, [playing])
+  const list = chords.chords
+  let i = -1
+  while (i + 1 < list.length && list[i + 1].time <= t) i++
+  // On a first listen the newest chord ends where the analysis has got to, a second or so behind
+  // the song: it's still the one sounding.
+  const now = i >= 0 && (list[i].end > t || (i === list.length - 1 && t - list[i].end < 3)) ? list[i] : null
+  const coming = list.slice(i + 1, i + 5)
+  const soon = coming[0] ? Math.max(0, coming[0].time - t) : 0
+  return (
+    <div className="chord-bar">
+      <div className="chord-now">{now?.name ?? '–'}</div>
+      <div className="chord-next">
+        {coming.map((c, k) => (
+          <span key={k} className="chord-chip" style={k === 0 ? ({ '--soon': Math.min(1, soon / 4) } as React.CSSProperties) : undefined}>
+            {c.name}
+          </span>
+        ))}
+        {/* Nothing ahead yet: on a first listen, chords appear as they're heard. */}
+        {!coming.length && <span className="chord-wait">Listening for chords…</span>}
+      </div>
+      <div className="chord-meta">
+        {chords.key && <span>Key: {chords.key}</span>}
+        <span>{chords.heard >= 0.97 ? 'Whole song heard' : `${Math.round(chords.heard * 100)}% of the song heard`}</span>
+      </div>
     </div>
   )
 }

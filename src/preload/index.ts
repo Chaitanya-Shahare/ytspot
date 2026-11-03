@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webFrame } from 'electron'
 import type { Action } from '../shared/shortcuts'
-import type { Card, HomeData, LibraryFilter, Lyrics, MainPrefs, More, PlayerCommand, PlayerState, Privacy, SearchFilter, Track, UpdateState, VideoRect, YtmSetting } from '../shared/types'
+import type { Card, Chords, HomeData, LibraryFilter, Lyrics, MainPrefs, More, PlayerCommand, PlayerState, Privacy, SearchFilter, Track, UpdateState, VideoRect, YtmSetting } from '../shared/types'
 import type { LyricsQuery } from '../main/lyrics'
 
 export interface PopupItem {
@@ -45,6 +45,7 @@ const bridge = {
   artist: (id: string) => ipcRenderer.invoke('yt:artist', id),
   search: (q: string, filter?: SearchFilter) => ipcRenderer.invoke('yt:search', q, filter),
   lyrics: (q: LyricsQuery): Promise<Lyrics | null> => ipcRenderer.invoke('yt:lyrics', q),
+  chords: (videoId: string): Promise<Chords> => ipcRenderer.invoke('yt:chords', videoId),
   cmd: (c: PlayerCommand) => ipcRenderer.invoke('player:cmd', c),
   state: (): Promise<PlayerState | null> => ipcRenderer.invoke('player:get'),
   updateState: (): Promise<UpdateState> => ipcRenderer.invoke('update:state'),
@@ -70,6 +71,12 @@ const bridge = {
     const fn = (_: unknown, t: number) => cb(t)
     ipcRenderer.on('player:time', fn)
     return () => void ipcRenderer.removeListener('player:time', fn)
+  },
+  // The playing song's chords, as they're worked out (only while the chords setting is on).
+  onChords: (cb: (c: Chords) => void) => {
+    const fn = (_: unknown, c: Chords) => cb(c)
+    ipcRenderer.on('chords', fn)
+    return () => void ipcRenderer.removeListener('chords', fn)
   },
   onMenu: (cb: (a: Action) => void) => {
     const fn = (_: unknown, a: Action) => cb(a)
