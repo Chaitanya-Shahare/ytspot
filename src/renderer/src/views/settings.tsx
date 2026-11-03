@@ -3,7 +3,7 @@ import { bindings, comboLabel, comboOf, conflicts, SHORTCUTS, type Action } from
 import type { MenuBarMode, YtmSetting } from '../../../shared/types'
 import { Close, Plus } from '../components/icons'
 import { ErrorBox } from '../components/ui'
-import { useApp, useCached } from '../lib'
+import { useApp, useCached, useUpdate } from '../lib'
 
 export function SettingsView({ authed }: { authed: boolean }) {
   const { prefs, setPrefs } = useApp()
@@ -44,6 +44,7 @@ export function SettingsView({ authed }: { authed: boolean }) {
         >
           <Toggle on={prefs.keyboardNav} onChange={(v) => setPrefs({ keyboardNav: v })} />
         </Row>
+        <UpdateRow />
       </section>
 
       {authed && <YtmSettings />}
@@ -60,6 +61,30 @@ export function SettingsView({ authed }: { authed: boolean }) {
         </section>
       )}
     </div>
+  )
+}
+
+function UpdateRow() {
+  const u = useUpdate()
+  if (!u) return null
+  const status =
+    u.status === 'latest' ? ' You’re up to date.'
+    : u.status === 'available' ? ` ytspot ${u.version} is available.`
+    : u.status === 'ready' ? ` ytspot ${u.version} is downloaded; restart to install it.`
+    : u.status === 'error' ? ` ${u.message}`
+    : ''
+  return (
+    <Row title="Updates" desc={`Version ${u.current}. ytspot checks for updates once a day.${status}`}>
+      {u.status === 'available' || u.status === 'ready' ? (
+        <button className="outline-btn" onClick={() => window.ytm.promptUpdate()}>
+          {u.status === 'ready' ? 'Restart to update' : `Install ${u.version}`}
+        </button>
+      ) : (
+        <button className="outline-btn" disabled={u.status === 'checking' || u.status === 'downloading'} onClick={() => window.ytm.checkForUpdates()}>
+          {u.status === 'checking' ? 'Checking…' : u.status === 'downloading' ? `Downloading ${u.percent}%` : 'Check for updates'}
+        </button>
+      )}
+    </Row>
   )
 }
 

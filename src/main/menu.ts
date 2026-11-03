@@ -1,5 +1,6 @@
 import { app, BrowserWindow, Menu, webContents, type BaseWindow, type MenuItemConstructorOptions, type WebContents } from 'electron'
 import { accel, SHORTCUTS, type Action } from '../shared/shortcuts'
+import { checkForUpdates } from './updater'
 
 // Spotify-style menu bar. Accelerators are display-only and mirror the user's current bindings:
 // the renderer's keydown handler owns the keys (so typing in search still works), and menu
@@ -37,7 +38,7 @@ export function buildMenu(
       {
         label: app.name,
         submenu: [
-          { role: 'about' }, sep, item('settings', 'Settings…'), sep,
+          { role: 'about' }, { label: 'Check for Updates…', click: () => checkForUpdates(true) }, sep, item('settings', 'Settings…'), sep,
           { role: 'services' }, sep, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, sep, { role: 'quit' }
         ]
       },

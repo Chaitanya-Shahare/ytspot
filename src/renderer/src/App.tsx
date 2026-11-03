@@ -155,6 +155,14 @@ export default function App() {
     return () => clearTimeout(t)
   }, [toastMsg])
 
+  // An update shows as a passing banner, not something that stays on screen: once when the daily
+  // check finds it, and once when its download starts. Restarting for it is a dialog (main/updater.ts).
+  useEffect(() => {
+    const offFound = window.ytm.onUpdateFound((v) => toast(`ytspot ${v} is available`, { label: 'Update', run: () => window.ytm.promptUpdate() }))
+    const offUpdate = window.ytm.onUpdate((s) => s.status === 'downloading' && s.percent === 0 && toast(`Downloading ytspot ${s.version}…`))
+    return () => (offFound(), offUpdate())
+  }, [toast])
+
   const like = useCallback(() => {
     if (!player?.videoId) return
     window.ytm.cmd({ type: 'like' })

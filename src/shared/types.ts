@@ -144,6 +144,15 @@ export interface MainPrefs {
   menuBar: MenuBarMode
 }
 
+// Where the app's self-update is (see main/updater.ts); `current` is the running version.
+export type UpdateStatus =
+  | { status: 'idle' | 'checking' | 'latest' }
+  | { status: 'available'; version: string }
+  | { status: 'downloading'; version: string; percent: number }
+  | { status: 'ready'; version: string }
+  | { status: 'error'; message: string }
+export type UpdateState = UpdateStatus & { current: string }
+
 export type PlayerCommand =
   | { type: 'play'; videoId: string; playlistId?: string }
   | { type: 'toggle' | 'next' | 'prev' | 'shuffle' | 'repeat' | 'like' | 'dislike' | 'mute' }

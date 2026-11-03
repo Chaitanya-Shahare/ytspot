@@ -6,6 +6,7 @@ import * as yt from './api'
 import { lyrics } from './lyrics'
 import { buildMenu } from './menu'
 import { initTray, setTrayMode, trayOn, updateTray } from './tray'
+import { checkForUpdates, initUpdater, promptUpdate, updateState } from './updater'
 import { command, createPlayerWindow, fitVideo, parkVideo, placeVideo, rateVideo, saveToLibrary, subscribe, getState, onLoggedIn, setVideoMode, applyYtmSetting, showLogin, signOut, uploadImage, ytmSession, ytmSettings } from './player'
 import { bindings, DEFAULT_PREFS, type Action } from '../shared/shortcuts'
 import type { MainPrefs, MenuBarMode, PlayerCommand, PlayerState, VideoRect } from '../shared/types'
@@ -257,6 +258,9 @@ app.whenReady().then(() => {
   ipcMain.handle('yt:lyrics', data(lyrics))
   ipcMain.handle('player:cmd', (_, c: PlayerCommand) => playerCommand(c))
   ipcMain.handle('player:get', () => getState())
+  ipcMain.handle('update:state', () => updateState())
+  ipcMain.handle('update:check', () => checkForUpdates(true))
+  ipcMain.handle('update:prompt', () => promptUpdate())
   ipcMain.handle('ui:popup', popup)
   ipcMain.handle('ui:open', (_, url: string) => shell.openExternal(url))
   ipcMain.handle('ui:copy', (_, text: string) => clipboard.writeText(text))
@@ -289,6 +293,7 @@ app.whenReady().then(() => {
   rebuildMenu()
   initTray({ command: playerCommand, show: () => showMain(), quit: () => app.quit() })
   applyMenuBar()
+  initUpdater({ window: () => main, page: () => ui })
 
   let t: NodeJS.Timeout
   ses.cookies.on('changed', (_, cookie) => {

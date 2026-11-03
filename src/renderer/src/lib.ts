@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ShortcutPrefs } from '../../shared/shortcuts'
 import { DEFAULT_PREFS } from '../../shared/shortcuts'
-import type { Card, MenuBarMode, More, PlayerState, Track } from '../../shared/types'
+import type { Card, MenuBarMode, More, PlayerState, Track, UpdateState } from '../../shared/types'
 
 export type Route =
   | { name: 'home' }
@@ -67,6 +67,16 @@ export const savePrefs = (p: Prefs) => localStorage.setItem('prefs', JSON.string
 
 export const Ctx = createContext<AppCtx>(null as unknown as AppCtx)
 export const useApp = () => useContext(Ctx)
+
+// Where the self-update is (see main/updater.ts); null until main has answered.
+export function useUpdate(): UpdateState | null {
+  const [s, setS] = useState<UpdateState | null>(null)
+  useEffect(() => {
+    window.ytm.updateState().then(setS)
+    return window.ytm.onUpdate(setS)
+  }, [])
+  return s
+}
 
 // The playback clock lives outside React state, so a tick re-renders only what shows the time.
 let clock = 0
