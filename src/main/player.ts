@@ -217,8 +217,9 @@ const SETUP_JS = (videoMode: boolean, shuffleMode: ShuffleMode) => `(() => {
   // ---- Shuffle, as in Spotify: off, on, or Smart Shuffle (on, plus a recommendation after every
   // 3 songs). Done on YTM's queue store, because YTM's own shuffle button jumps to another song
   // when it's turned on or off. \`order\` is the queue's own order (item ids), \`queued\` the songs
-  // the user added, \`recs\` the ones Smart Shuffle added.
-  const sh = { mode: ${JSON.stringify(shuffleMode)}, order: [], queued: new Set(), recs: new Set(), fresh: true, wantRecs: false, asked: false, busy: false }
+  // the user added (\`atEnd\`: those added to the end, with "Add to queue"), \`recs\` the ones Smart
+  // Shuffle added.
+  const sh = { mode: ${JSON.stringify(shuffleMode)}, order: [], queued: new Set(), atEnd: new Set(), recs: new Set(), fresh: true, wantRecs: false, asked: false, busy: false }
   const queueEl = () => document.querySelector('#queue')
   const items = () => store()?.items || []
   const current = () => items()[queueEl()?.queue?.getCurrentItemIndex?.() ?? -1]
@@ -234,30 +235,34 @@ const SETUP_JS = (videoMode: boolean, shuffleMode: ShuffleMode) => `(() => {
     queueEl().dispatch({ type: 'RESET_ITEMS', payload: list })
     queueEl().dispatch({ type: 'SET_INDEX', payload: list.indexOf(cur) })
   })
-  // The current song first, then songs the user queued after it, then everything else in random
-  // order. (The songs before it go too, so "previous" restarts the song, as in YTM's own shuffle.)
+  // The current song first, then songs the user put next after it, then everything else in random
+  // order, then songs the user added to the end. (The songs before it go too, so "previous"
+  // restarts the song, as in YTM's own shuffle.)
   const shuffleAll = () => {
     const list = items(), cur = current()
     if (!cur) return
     const queued = list.slice(list.indexOf(cur) + 1).filter((it) => sh.queued.has(key(it)))
-    put([cur, ...queued, ...mix(list.filter((it) => it !== cur && !queued.includes(it)))], cur)
+    const next = queued.filter((it) => !sh.atEnd.has(key(it))), last = queued.filter((it) => sh.atEnd.has(key(it)))
+    put([cur, ...next, ...mix(list.filter((it) => it !== cur && !queued.includes(it))), ...last], cur)
   }
   // Back to the queue's own order, carrying on from the current song. Songs that aren't part of it
-  // (ones the user queued) stay right after the song they followed.
+  // (ones the user queued) stay right after the song they followed, except ones added to the end
+  // that are still to come: those go back to the end.
   const unshuffle = () => {
-    const pos = new Map(sh.order.map((k, i) => [k, i])), cur = current()
+    const pos = new Map(sh.order.map((k, i) => [k, i])), cur = current(), from = items().indexOf(cur)
     let at = -1
     const ranked = items().map((it, i) => {
       const own = pos.has(key(it))
       if (own) at = pos.get(key(it))
-      return { it, at, own, i }
+      return { it, at: !own && i > from && sh.atEnd.has(key(it)) ? Infinity : at, own, i }
     })
     ranked.sort((a, b) => a.at - b.at || b.own - a.own || a.i - b.i)
     if (cur) put(ranked.map((r) => r.it), cur)
   }
   // Songs YTM loads into a shuffled queue later (the rest of a long playlist) go in at random
-  // places among the songs still to come, after any the user queued. A recommendation that turns
-  // out to be one of them goes, so the song doesn't play twice.
+  // places among the songs still to come, between the ones the user put next and the ones they
+  // added to the end. A recommendation that turns out to be one of them goes, so the song doesn't
+  // play twice.
   const spread = (added) => {
     const cur = current()
     if (!cur || added.includes(cur)) return shuffleAll()
@@ -265,8 +270,10 @@ const SETUP_JS = (videoMode: boolean, shuffleMode: ShuffleMode) => `(() => {
     const dup = (it) => it !== cur && sh.recs.has(key(it)) && ids.has(primary(it)?.videoId)
     const out = items().filter((it) => !added.includes(it) && !dup(it))
     let from = out.indexOf(cur) + 1
-    while (from < out.length && sh.queued.has(key(out[from]))) from++
-    for (const it of added) out.splice(from + Math.floor(Math.random() * (out.length - from + 1)), 0, it)
+    while (from < out.length && sh.queued.has(key(out[from])) && !sh.atEnd.has(key(out[from]))) from++
+    let to = out.length
+    while (to > from && sh.atEnd.has(key(out[to - 1]))) to--
+    for (const it of added) out.splice(from + Math.floor(Math.random() * (to - from + 1)), 0, it), to++
     put(out, cur)
   }
   // Smart Shuffle's recommendations are YTM's autoplay songs for this queue (its radio), moved up
@@ -351,10 +358,13 @@ const SETUP_JS = (videoMode: boolean, shuffleMode: ShuffleMode) => `(() => {
       if (a.type === 'CLEAR') {
         sh.order = []
         sh.queued.clear()
+        sh.atEnd.clear()
         sh.recs.clear()
         sh.fresh = true
         sh.asked = false
-      } else if (a.type === 'ADD_ITEMS' && sh.adding) a.payload.items.forEach((it) => sh.queued.add(key(it)))
+      } else if (a.type === 'ADD_ITEMS' && sh.adding) {
+        a.payload.items.forEach((it) => (sh.queued.add(key(it)), sh.adding === 'end' && sh.atEnd.add(key(it))))
+      }
       else if (a.type === 'SHIFT_AUTOPLAY_ITEMS') sh.order.push(...a.payload.map(key))
       if (['CLEAR', 'ADD_ITEMS', 'ADD_AUTOMIX_ITEMS', 'UPDATE_ITEMS', 'RESET_ITEMS', 'REFRESH_ITEMS'].includes(a.type)) {
         clearTimeout(sh.t)
@@ -380,12 +390,17 @@ const SETUP_JS = (videoMode: boolean, shuffleMode: ShuffleMode) => `(() => {
     if (mode === 'smart') mixInRecs()
   }
 
-  const rows = (list) => (list || []).map((it) => {
-    // A wrapper pairs a song with its music video; whichever one is playing describes the row.
+  // Which video is playing: for a song paired with its music video, says which of the two.
+  const playingId = () => document.getElementById('movie_player')?.getVideoData?.().video_id || ''
+  // \`cur\` is the index of the playing item. YTM's own \`selected\` flags can't say: the video twin
+  // of a song played earlier keeps its flag, so the old row would still read as playing.
+  const rows = (list, cur = -1, id = '') => (list || []).map((it, i) => {
+    // A wrapper pairs a song with its music video; the playing row shows whichever one plays,
+    // the others their song.
     const w = it.playlistPanelVideoWrapperRenderer
     const prim = primary(it)
     const cp = w?.counterpart?.[0]?.counterpartRenderer?.playlistPanelVideoRenderer
-    const r = cp?.selected ? cp : prim
+    const r = i === cur && cp && cp.videoId === id ? cp : prim
     if (!r) return null
     // Square album art (from the song version, when there is one) at Now Playing size; otherwise
     // the largest thumbnail, which for a music video is a frame of the video.
@@ -401,22 +416,24 @@ const SETUP_JS = (videoMode: boolean, shuffleMode: ShuffleMode) => `(() => {
     return {
       videoId: r.videoId, title: t(r.title), artist: t(r.shortBylineText), artistId, albumId,
       duration: t(r.lengthText), thumb: thumbs(r)[0]?.url || '', art, square: !!album,
-      selected: !!prim?.selected || !!cp?.selected, rec: sh.recs.has(key(it))
+      selected: i === cur, rec: sh.recs.has(key(it))
     }
   })
-  const queue = () => rows(document.querySelector('#queue')?.queue?.getItems?.())
+  const queue = () => rows(queueEl()?.queue?.getItems?.(), queueEl()?.queue?.getCurrentItemIndex?.() ?? -1, playingId())
   // YTM's autoplay recommendations ("Dynamic queue") that play after the queue runs out.
   const autoplay = () => (store()?.autoplay ? rows(store().automixItems).filter(Boolean) : [])
   const s = window.__ytspot = {
     video: ${videoMode}, t, queue, autoplay, sh, setShuffle,
-    // Queue rows are rebuilt only when YTM's queue store changes; it's immutable, so identity says
-    // whether anything changed. \`rev\` tells main whether its copy is current (unique per page load).
+    // Queue rows are rebuilt only when YTM's queue store changes (it's immutable, so identity says
+    // whether anything changed) or another video starts. \`rev\` tells main whether its copy is
+    // current (unique per page load).
     page: Math.random().toString(36).slice(2), n: 0,
     snap() {
       hook()
-      const st = store()
-      if (st === s.src && s.q) return
+      const st = store(), id = playingId()
+      if (st === s.src && id === s.id && s.q) return
       s.src = st
+      s.id = id
       s.rev = s.page + ':' + ++s.n
       s.q = queue().map((q) => q || { videoId: '', title: '', artist: '', duration: '', thumb: '', selected: false })
       s.a = autoplay()
@@ -636,10 +653,9 @@ export async function command(c: PlayerCommand): Promise<void> {
           queueContextParams: store.getState().queue.queueContextParams,
           queueInsertPosition: pos, videoIds: ${JSON.stringify(c.videoIds)}
         }).then((res) => {
-          const items = store.getState().queue.items
-          const sel = items.findIndex((e) => (e.playlistPanelVideoRenderer || e.playlistPanelVideoWrapperRenderer?.primaryRenderer.playlistPanelVideoRenderer)?.selected)
+          const items = store.getState().queue.items, sel = q.queue.getCurrentItemIndex()
           // Marked as the user's, so shuffle leaves them where they were put.
-          window.__ytspot.sh.adding = true
+          window.__ytspot.sh.adding = pos === 'INSERT_AT_END' ? 'end' : 'next'
           try {
             q.dispatch({ type: 'ADD_ITEMS', payload: {
               nextQueueItemId: store.getState().queue.nextQueueItemId,
