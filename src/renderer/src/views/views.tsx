@@ -4,6 +4,7 @@ import { CheckCircle, Close, Edit, HeartFill, More, PlusCircle, Search, Shuffle,
 import { cardMenu, queue } from '../components/menus'
 import { CardTile, ErrorBox, GreenPlay, Img, Loading, ShelfRow, StickyHead, TrackTable } from '../components/ui'
 import { DeletePlaylist, EditDetails, PlaylistExtras } from './playlist'
+import { DownloadButton } from './downloads'
 import { libraryChanged, moreRoute, routeFor, sameRoute, sized, useApp, useCached, useColor } from '../lib'
 
 // "55 songs • 3 hours, 9 minutes" -> "55 songs, 3 hr 9 min", as Spotify writes it.
@@ -302,6 +303,14 @@ export function CollectionView({ kind, id }: { kind: 'playlist' | 'album'; id: s
           >
             {data.saved ? <CheckCircle size={28} /> : <PlusCircle size={28} />}
           </button>
+        )}
+        {data.tracks.length > 0 && (
+          <DownloadButton
+            // An album's rows have no artwork or album of their own; the downloads keep the album's.
+            tracks={kind === 'album' ? data.tracks.map((t) => ({ ...t, thumb: t.thumb || data.thumb, album: t.album ?? data.title, albumId: t.albumId ?? id })) : data.tracks}
+            title={data.title}
+            loading={data.more}
+          />
         )}
         <button className="icon-btn big" aria-label="More options" title="More options" onClick={more}>
           <More size={24} />

@@ -1,7 +1,7 @@
 import type { Card, Shelf, Track } from '../../../shared/types'
 import { Component, memo, useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
-import { moreRoute, routeFor, sameRoute, sized, useApp, type AppCtx, type Source } from '../lib'
-import { ChevronLeft, ChevronRight, Clock, More, Note, Pause, Play } from './icons'
+import { moreRoute, routeFor, sameRoute, sized, useApp, useDownloads, type AppCtx, type Source } from '../lib'
+import { ChevronLeft, ChevronRight, Clock, Downloaded, More, Note, Pause, Play } from './icons'
 import { cardMenu, songMenu } from './menus'
 
 // Artwork that fades in once loaded (Spotify) and shows a placeholder when there's none or it fails.
@@ -165,6 +165,7 @@ export function TrackTable({
 }) {
   const ctx = useApp()
   const { player, playTrack, go } = ctx
+  const downloads = useDownloads()
   // Rows are memoised; read the latest props and context through refs so their callbacks stay stable.
   const ctxRef = useRef(ctx)
   ctxRef.current = ctx
@@ -245,6 +246,7 @@ export function TrackTable({
           showAlbum={showAlbum}
           showPlays={showPlays}
           state={player?.videoId !== t.videoId ? '' : player.playing ? 'playing' : 'current'}
+          saved={downloads.ids.has(t.videoId) ? 'yes' : downloads.progress.has(t.videoId) ? 'pending' : ''}
           selected={i === sel}
           tabbable={i === sel || (sel < 0 && i === 0)}
           play={play}
@@ -265,6 +267,7 @@ const Row = memo(function Row({
   showAlbum,
   showPlays,
   state,
+  saved,
   selected,
   tabbable,
   play,
@@ -278,6 +281,7 @@ const Row = memo(function Row({
   showAlbum: boolean
   showPlays?: boolean
   state: '' | 'current' | 'playing'
+  saved: '' | 'pending' | 'yes' // downloaded for offline listening, or on its way
   selected: boolean
   tabbable: boolean
   play: (t: Track) => void
@@ -318,6 +322,7 @@ const Row = memo(function Row({
               go({ name: 'artist', id: t.artistId })
             }}
           >
+            {saved && <Downloaded size={12} className={`saved-mark ${saved}`} aria-label={saved === 'yes' ? 'Downloaded' : 'Downloading'} />}
             {t.artists}
           </span>
         </span>
@@ -435,15 +440,30 @@ export function Loading({ kind = 'shelves' }: { kind?: SkeletonKind }) {
 }
 
 export function ErrorBox({ error, onRetry }: { error: string; onRetry?: () => void }) {
+  const { go } = useApp()
+  const { songs } = useDownloads()
+  // Offline, the downloaded songs still play.
+  const offline = !navigator.onLine
   return (
     <div className="page error-box">
-      <h2>Something went wrong</h2>
-      <p className="sub">{error.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')}</p>
-      {onRetry && (
-        <button className="pill-btn" onClick={onRetry}>
-          Try again
-        </button>
-      )}
+      <h2>{offline ? 'You’re offline' : 'Something went wrong'}</h2>
+      <p className="sub">
+        {offline
+          ? songs.length ? 'Your downloaded songs still play.' : 'Connect to the internet to listen. Songs you download play offline.'
+          : error.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')}
+      </p>
+      <div className="error-actions">
+        {offline && songs.length > 0 && (
+          <button className="pill-btn" onClick={() => go({ name: 'downloads' })}>
+            Go to Downloaded
+          </button>
+        )}
+        {onRetry && (
+          <button className={offline && songs.length ? 'outline-btn' : 'pill-btn'} onClick={onRetry}>
+            Try again
+          </button>
+        )}
+      </div>
     </div>
   )
 }

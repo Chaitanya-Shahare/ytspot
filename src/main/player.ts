@@ -699,6 +699,11 @@ export async function command(c: PlayerCommand): Promise<void> {
   }
 }
 
+// A downloaded song is about to play instead (see local.ts).
+export function pauseYtm(): Promise<unknown> {
+  return run(`document.getElementById('movie_player')?.pauseVideo()`)
+}
+
 async function setShuffle(mode: ShuffleMode): Promise<void> {
   shuffleMode = mode
   await run(`window.__ytspot?.setShuffle(${JSON.stringify(mode)})`)

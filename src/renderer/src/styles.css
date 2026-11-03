@@ -825,3 +825,17 @@ html:has(.fs-video.shown) .app { visibility: hidden; }
 .home-chips.scrolled { mask-image: none; }
 /* Keyboard shortcut beside a tooltip's label, as in Spotify ("Next  ⌘ →"). */
 .tip-key { margin-left: 8px; color: var(--text-subdued); font-size: 13px; }
+
+/* Downloads: the Downloaded tile (library and page), the mark on downloaded rows, and the
+   download button's progress ring. */
+.downloads-art { background: linear-gradient(135deg, #0d5d36, var(--green)); color: #fff; }
+.hero-art.downloads-art { display: grid; place-items: center; }
+.saved-mark { flex: none; color: var(--green); vertical-align: -1px; margin-right: 6px; }
+.saved-mark.pending { color: var(--text-subdued); animation: saved-pulse 1.2s ease-in-out infinite alternate; }
+@keyframes saved-pulse { from { opacity: .35; } to { opacity: 1; } }
+.download-btn { position: relative; }
+.download-btn.busy svg { opacity: .5; }
+.download-btn.busy::after { content: ''; position: absolute; inset: 0; border-radius: 50%; background: conic-gradient(var(--green) calc(var(--done, 0) * 360deg), #ffffff33 0); -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2.5px)); }
+.downloading-note { margin: -8px 0 16px; }
+.error-actions { display: flex; gap: 12px; align-items: center; }
+.error-actions .outline-btn { margin-top: 8px; height: 40px; padding: 0 24px; }

@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webFrame } from 'electron'
 import type { Action } from '../shared/shortcuts'
-import type { Card, HomeData, LibraryFilter, Lyrics, MainPrefs, More, PlayerCommand, PlayerState, Privacy, SearchFilter, Track, UpdateState, VideoRect, YtmSetting } from '../shared/types'
+import type { Card, DownloadQuality, DownloadsState, HomeData, LibraryFilter, Lyrics, MainPrefs, More, PlayerCommand, PlayerState, Privacy, SearchFilter, Track, UpdateState, VideoRect, YtmSetting } from '../shared/types'
 import type { LyricsQuery } from '../main/lyrics'
 
 export interface PopupItem {
@@ -45,6 +45,10 @@ const bridge = {
   artist: (id: string) => ipcRenderer.invoke('yt:artist', id),
   search: (q: string, filter?: SearchFilter) => ipcRenderer.invoke('yt:search', q, filter),
   lyrics: (q: LyricsQuery): Promise<Lyrics | null> => ipcRenderer.invoke('yt:lyrics', q),
+  downloads: (): Promise<DownloadsState> => ipcRenderer.invoke('dl:state'),
+  // Resolves once they've all finished, naming any that couldn't be downloaded.
+  download: (tracks: Track[], quality: DownloadQuality): Promise<{ failed: string[] }> => ipcRenderer.invoke('dl:add', tracks, quality),
+  removeDownloads: (videoIds: string[]): Promise<void> => ipcRenderer.invoke('dl:remove', videoIds),
   cmd: (c: PlayerCommand) => ipcRenderer.invoke('player:cmd', c),
   state: (): Promise<PlayerState | null> => ipcRenderer.invoke('player:get'),
   updateState: (): Promise<UpdateState> => ipcRenderer.invoke('update:state'),
@@ -70,6 +74,11 @@ const bridge = {
     const fn = (_: unknown, t: number) => cb(t)
     ipcRenderer.on('player:time', fn)
     return () => void ipcRenderer.removeListener('player:time', fn)
+  },
+  onDownloads: (cb: (s: DownloadsState) => void) => {
+    const fn = (_: unknown, s: DownloadsState) => cb(s)
+    ipcRenderer.on('downloads', fn)
+    return () => void ipcRenderer.removeListener('downloads', fn)
   },
   onMenu: (cb: (a: Action) => void) => {
     const fn = (_: unknown, a: Action) => cb(a)

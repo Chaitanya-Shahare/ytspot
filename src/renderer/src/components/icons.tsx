@@ -94,6 +94,22 @@ export const CheckCircle = svg(
   false,
   true
 )
+// Spotify's download button: an arrow in a circle, filled in once the songs are on this Mac.
+export const Download = svg(
+  <>
+    <circle cx="8" cy="8" r="6.5" />
+    <path d="M8 4.75v6.5M5.25 8.5 8 11.25l2.75-2.75" />
+  </>,
+  true
+)
+export const Downloaded = svg(
+  <path
+    fillRule="evenodd"
+    d="M8 15A7 7 0 1 0 8 1a7 7 0 0 0 0 14zm.75-10.25a.75.75 0 0 0-1.5 0v4.69L5.78 7.97a.75.75 0 0 0-1.06 1.06l2.75 2.75a.75.75 0 0 0 1.06 0l2.75-2.75a.75.75 0 0 0-1.06-1.06L8.75 9.44z"
+  />,
+  false,
+  true
+)
 export const Home = svg(<path d="M8 1.9 1.75 6.9v7.35H5.5V9.75h5v4.5h3.75V6.9z" />)
 export const HomeOutline = svg(<path d="M8 1.9 1.75 6.9v7.35h3.75V9.75h5v4.5h3.75V6.9z" />, true)
 export const Search = svg(
