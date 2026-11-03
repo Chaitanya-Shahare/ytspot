@@ -652,6 +652,8 @@ export async function command(c: PlayerCommand): Promise<void> {
   }
   switch (c.type) {
     case 'play': {
+      // Checked against YTM's own mode here: the UI may be showing a downloaded song's.
+      if (c.shuffle && shuffleMode === 'off') await setShuffle('on')
       const mine = playSeq
       const ep = JSON.stringify({ watchEndpoint: { videoId: c.videoId, playlistId: c.playlistId } })
       await run(`document.querySelector('ytmusic-app').dispatchEvent(new CustomEvent('yt-navigate',
@@ -687,10 +689,12 @@ export async function command(c: PlayerCommand): Promise<void> {
         if (on) window.__ytspotPausedAt = Date.now()
         on ? p.pauseVideo() : p.playVideo()
       })(${P})`)
+    // Newer YTM builds (sometimes served signed out) have no player bar; the player's own next and
+    // previous do the same as its buttons (previous restarts a song a few seconds in, then goes back).
     case 'next':
-      return void run(click('.next-button'))
+      return void run(`(b => b ? b.click() : ${P}?.nextVideo?.())(document.querySelector('ytmusic-player-bar .next-button'))`)
     case 'prev':
-      return void run(click('.previous-button'))
+      return void run(`(b => b ? b.click() : ${P}?.previousVideo?.())(document.querySelector('ytmusic-player-bar .previous-button'))`)
     // Off → shuffle → Smart Shuffle → off, like Spotify's button.
     case 'shuffle':
       return setShuffle(NEXT_SHUFFLE[shuffleMode])

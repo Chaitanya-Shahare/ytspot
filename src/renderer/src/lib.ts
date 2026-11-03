@@ -30,7 +30,8 @@ export interface AppCtx {
   go: (r: Route) => void
   // Everything except the playback clock, so long lists don't re-render every tick.
   player: PlayerState | null
-  playTrack: (t: Track, playlistId?: string, from?: Source) => Promise<unknown> | void
+  // `shuffle`: Shuffle play (turns shuffle on for what starts playing).
+  playTrack: (t: Track, playlistId?: string, from?: Source, shuffle?: boolean) => Promise<unknown> | void
   source: Source | null
   openCard: (c: Card) => void
   playCard: (c: Card) => void

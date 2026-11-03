@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { ArtistPage, Card, Collection, HomeData, PlayerState, Shelf, Track } from '../../../shared/types'
+import type { ArtistPage, Card, Collection, HomeData, Shelf, Track } from '../../../shared/types'
 import { CheckCircle, Close, Edit, HeartFill, More, PlusCircle, Search, Shuffle, ViewList } from '../components/icons'
 import { cardMenu, queue } from '../components/menus'
 import { CardTile, ErrorBox, GreenPlay, Img, Loading, ShelfRow, StickyHead, TrackTable } from '../components/ui'
@@ -112,9 +112,6 @@ type SortOrder = (typeof SORT_ORDERS)[number]
 
 const shuffled = (tracks: Track[]) => tracks[Math.floor(Math.random() * tracks.length)]
 
-// Shuffle play turns shuffle on (Smart Shuffle stays on if it is), so the list shuffles as it loads.
-const shuffleOn = (player: PlayerState | null) => player?.shuffle === 'off' && window.ytm.cmd({ type: 'shuffleMode', mode: 'on' })
-
 export function CollectionView({ kind, id }: { kind: 'playlist' | 'album'; id: string }) {
   const { player, playTrack, toast, go, source } = useApp()
   const [dialog, setDialog] = useState<'edit' | 'delete' | null>(null)
@@ -191,8 +188,8 @@ export function CollectionView({ kind, id }: { kind: 'playlist' | 'album'; id: s
   const shufflePlay = () => {
     const t = shuffled(data.tracks)
     if (!t) return
-    shuffleOn(player)
-    playTrack(t, data.playlistId, from)
+    // Shuffle goes on with it (Smart Shuffle stays on if it is), so the list shuffles as it loads.
+    playTrack(t, data.playlistId, from, true)
     toast('Shuffling ' + data.title)
   }
   // YTM's subtitle is "Album • 2016" / "Playlist • Public • 2024": the first part names the kind.
@@ -408,8 +405,7 @@ export function ArtistView({ id }: { id: string }) {
   const shufflePlay = () => {
     const t = shuffled(data.songs)
     if (!t) return
-    shuffleOn(player)
-    playTrack(t, list, from)
+    playTrack(t, list, from, true)
     toast('Shuffling ' + data.title)
   }
   const follow = async () => {

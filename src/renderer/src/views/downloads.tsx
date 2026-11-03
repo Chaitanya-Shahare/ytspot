@@ -20,8 +20,7 @@ export function DownloadsView() {
   const shufflePlay = async () => {
     const t = songs[Math.floor(Math.random() * songs.length)]
     if (!t) return
-    await playTrack(t, undefined, from)
-    await window.ytm.cmd({ type: 'shuffleMode', mode: 'on' })
+    await playTrack(t, undefined, from, true)
     toast('Shuffling Downloaded')
   }
   const bytes = songs.reduce((n, d) => n + d.bytes, 0)

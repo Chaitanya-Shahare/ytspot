@@ -186,14 +186,15 @@ export async function cardMenu(c: Card, ctx: AppCtx, lib?: InLibrary): Promise<v
     cardSongs(c)
       .then((ids) => queue(ids, pick === 'next'))
       .then(() => toast(pick === 'next' ? 'Playing next' : 'Added to queue'), () => toast('That didn’t work — try again'))
+  // A playlist's every page, not just the first, so a long one downloads whole.
   if (pick === 'download')
-    (c.kind === 'album' ? window.ytm.album(c.id) : window.ytm.playlist(c.id)).then(
-      (col: { tracks: Track[]; thumb: string }) =>
-        downloadSongs(
-          ctx,
-          c.kind === 'album' ? col.tracks.map((t) => ({ ...t, thumb: t.thumb || col.thumb, album: t.album ?? c.title, albumId: t.albumId ?? c.id })) : col.tracks,
-          c.title
-        ),
+    (c.kind === 'album'
+      ? window.ytm.album(c.id).then((col: { tracks: Track[]; thumb: string }) =>
+          col.tracks.map((t) => ({ ...t, thumb: t.thumb || col.thumb, album: t.album ?? c.title, albumId: t.albumId ?? c.id }))
+        )
+      : window.ytm.playlistTracks(c.id)
+    ).then(
+      (tracks: Track[]) => downloadSongs(ctx, tracks, c.title),
       () => toast('Couldn’t download — check your connection')
     )
   if (pick === 'go' && r) go(r)

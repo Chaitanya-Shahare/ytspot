@@ -169,7 +169,8 @@ export type UpdateStatus =
 export type UpdateState = UpdateStatus & { current: string }
 
 export type PlayerCommand =
-  | { type: 'play'; videoId: string; playlistId?: string }
+  // `shuffle` (Shuffle play): turn shuffle on first, unless it's on already (Smart Shuffle included).
+  | { type: 'play'; videoId: string; playlistId?: string; shuffle?: boolean }
   // Downloaded songs, played from disk in this order starting at `index` (works offline).
   | { type: 'playLocal'; videoIds: string[]; index: number }
   | { type: 'toggle' | 'next' | 'prev' | 'shuffle' | 'repeat' | 'like' | 'dislike' | 'mute' }

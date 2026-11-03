@@ -289,6 +289,7 @@ app.whenReady().then(() => {
   ipcMain.handle('yt:library', data(yt.library))
   ipcMain.handle('yt:playlist', data(yt.playlist))
   ipcMain.handle('yt:playlistMore', data(yt.playlistMore))
+  ipcMain.handle('yt:playlistTracks', data(yt.playlistTracks))
   ipcMain.handle('yt:createPlaylist', data(yt.createPlaylist))
   ipcMain.handle('yt:album', data(yt.album))
   ipcMain.handle('yt:artist', data(yt.artist))

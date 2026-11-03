@@ -226,16 +226,19 @@ export default function App() {
   // Downloaded songs play from disk when started from Downloaded, and wherever they're started
   // while offline; the page's other downloaded songs follow them.
   const playTrack = useCallback(
-    (t: Track, playlistId?: string, from?: Source) => {
+    (t: Track, playlistId?: string, from?: Source, shuffle?: boolean) => {
       if (from?.route.name !== 'downloads' && navigator.onLine) {
         setSource(from ?? null)
-        return window.ytm.cmd({ type: 'play', videoId: t.videoId, playlistId })
+        return window.ytm.cmd({ type: 'play', videoId: t.videoId, playlistId, shuffle })
       }
       const { ids, songs } = getDownloads()
       if (!ids.has(t.videoId)) return void toast('You’re offline. Only downloaded songs can play.')
       const list = (from?.ids ?? songs.map((d) => d.videoId)).filter((id) => ids.has(id))
       setSource(from ?? downloadsSource(list))
-      return window.ytm.cmd({ type: 'playLocal', videoIds: list, index: list.indexOf(t.videoId) })
+      // Shuffle goes on once they're loaded, so it's the downloaded songs that get shuffled.
+      return window.ytm
+        .cmd({ type: 'playLocal', videoIds: list, index: list.indexOf(t.videoId) })
+        .then(() => shuffle && window.ytm.cmd({ type: 'shuffleMode', mode: 'on' }))
     },
     [toast]
   )
