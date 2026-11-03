@@ -18,7 +18,13 @@ export function buildMenu(
     accelerator: accel(keys[action] ?? []),
     registerAccelerator: false,
     click: (_, win, e) => {
-      if (e.triggeredByAccelerator && webContents.getFocusedWebContents() === ui()) return
+      if (e.triggeredByAccelerator) {
+        // Keys pressed in the app window are its page's, which skips them while typing. Checked by
+        // window: which page has focus is unreliable, since the player page shown in that window
+        // (the video) can claim it too. In any other window (sign-in) a bare key is typing, too.
+        if (win === main() || webContents.getFocusedWebContents() === ui()) return
+        if (win && !e.metaKey && !e.ctrlKey && !e.altKey) return
+      }
       // Back/Forward in the sign-in window navigate that page instead of the app.
       const nav = win instanceof BrowserWindow && win !== main() ? win.webContents.navigationHistory : null
       if (nav && action === 'back') return nav.goBack()
