@@ -3,11 +3,12 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as yt from './api'
+import { chordsFor, saveChords, setChords } from './chords'
 import { lyrics } from './lyrics'
 import { buildMenu } from './menu'
 import { initTray, setTrayMode, trayOn, updateTray } from './tray'
 import { checkForUpdates, initUpdater, promptUpdate, setAutoUpdate, updateState } from './updater'
-import { command, createPlayerWindow, fitVideo, parkVideo, placeVideo, rateVideo, saveToLibrary, subscribe, getState, onLoggedIn, setVideoMode, applyYtmSetting, showLogin, signOut, uploadImage, ytmSession, ytmSettings } from './player'
+import { command, createPlayerWindow, fitVideo, parkVideo, placeVideo, rateVideo, saveToLibrary, subscribe, getState, onLoggedIn, setVideoMode, setChordCapture, applyYtmSetting, showLogin, signOut, uploadImage, ytmSession, ytmSettings } from './player'
 import { bindings, DEFAULT_PREFS, type Action } from '../shared/shortcuts'
 import type { MainPrefs, MenuBarIcon, MenuBarMode, PlayerCommand, PlayerState, VideoRect } from '../shared/types'
 
@@ -213,7 +214,10 @@ function popup(e: Electron.IpcMainInvokeEvent, items: PopupItem[]) {
   })
 }
 
-app.on('before-quit', () => (quitting = true))
+app.on('before-quit', () => {
+  quitting = true
+  saveChords()
+})
 app.on('activate', () => showMain())
 
 app.whenReady().then(() => {
@@ -263,6 +267,7 @@ app.whenReady().then(() => {
   ipcMain.handle('yt:artist', data(yt.artist))
   ipcMain.handle('yt:search', data(yt.search))
   ipcMain.handle('yt:lyrics', data(lyrics))
+  ipcMain.handle('yt:chords', (_, id: string) => chordsFor(id))
   ipcMain.handle('player:cmd', (_, c: PlayerCommand) => playerCommand(c))
   ipcMain.handle('player:get', () => getState())
   ipcMain.handle('update:state', () => updateState())
@@ -287,6 +292,8 @@ app.whenReady().then(() => {
   ipcMain.handle('ui:prefs', (_, p: MainPrefs) => {
     keepPlaying = p.keepPlaying
     setVideoMode(p.videoMode)
+    setChordCapture(p.chords)
+    setChords(p.chords, (c) => ui?.send('chords', c))
     if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: p.openAtLogin })
     if (p.menuBar !== menuBar || p.menuBarIcon !== menuBarIcon || p.autoUpdate !== autoUpdate) {
       const tray = p.menuBar !== menuBar || p.menuBarIcon !== menuBarIcon

@@ -461,6 +461,20 @@ kbd { font-family: inherit; font-size: 12px; color: var(--text-base); padding: 2
 @container (width > 1024px) { .lyrics-note { font-size: 3rem; } }
 .lyrics-sync { position: sticky; bottom: 32px; align-self: flex-end; margin-right: 32px; height: 48px; padding: 0 32px; border-radius: 500px; background: #fff; color: #000; font-size: 16px; font-weight: 700; box-shadow: 0 8px 24px #00000080; }
 .lyrics-sync:hover { transform: scale(1.04); }
+.lyrics.jam { line-height: 2.1; }
+.lyrics.jam .lyric { margin-bottom: 0; }
+.chord-at { position: relative; display: inline-block; width: 0; }
+.chord-at.tail { margin-left: .3em; }
+.chord { position: absolute; left: 0; bottom: 1.6em; font-size: .5em; line-height: 1; font-weight: 800; color: #fff; white-space: nowrap; letter-spacing: 0; }
+.lyrics.synced .lyric:not(.active):not(.passed) .chord { color: #000000b3; }
+.chord-bar { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 24px; padding: 16px 64px; background: var(--lyrics-bg); box-shadow: 0 8px 16px -8px #00000060; }
+.chord-now { min-width: 3.2ch; font-size: 48px; font-weight: 800; color: #fff; line-height: 1; }
+.chord-next { display: flex; gap: 10px; flex: 1; align-items: center; min-height: 40px; }
+.chord-chip { padding: 6px 14px; border-radius: 500px; background: #00000033; color: #ffffffcc; font-size: 20px; font-weight: 700; }
+.chord-chip:first-child { background: rgb(255 255 255 / calc(0.9 - var(--soon, 1) * 0.6)); color: #000; }
+.chord-wait { color: #000000b3; font-size: 14px; font-weight: 700; }
+.chord-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; color: #000000b3; font-size: 13px; font-weight: 700; }
+.lyrics-page.full .chord-bar { top: 120px; background: transparent; box-shadow: none; }
 
 /* ---------- full-screen player ---------- */
 .fs { animation: fs-in .25s ease-out; position: fixed; inset: 0; z-index: 30; background: var(--tint); display: flex; flex-direction: column; justify-content: space-between; padding: 40px 48px 32px; overflow: hidden; }
