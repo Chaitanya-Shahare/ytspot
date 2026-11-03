@@ -9,7 +9,7 @@ import { initTray, setTrayMode, trayOn, updateTray } from './tray'
 import { checkForUpdates, initUpdater, promptUpdate, updateState } from './updater'
 import { command, createPlayerWindow, fitVideo, parkVideo, placeVideo, rateVideo, saveToLibrary, subscribe, getState, onLoggedIn, setVideoMode, applyYtmSetting, showLogin, signOut, uploadImage, ytmSession, ytmSettings } from './player'
 import { bindings, DEFAULT_PREFS, type Action } from '../shared/shortcuts'
-import type { MainPrefs, MenuBarMode, PlayerCommand, PlayerState, VideoRect } from '../shared/types'
+import type { MainPrefs, MenuBarIcon, MenuBarMode, PlayerCommand, PlayerState, VideoRect } from '../shared/types'
 
 const dir = fileURLToPath(new URL('.', import.meta.url))
 // Test runs (YTSPOT_PROFILE=<dir>) get their own profile so they never share data, the keychain
@@ -38,8 +38,11 @@ let loggedIn: boolean | null = null // unknown until the first cookie check
 let quitting = false
 let keepPlaying = true
 let menuBar: MenuBarMode = 'both'
+let menuBarIcon: MenuBarIcon = 'note'
 try {
-  menuBar = JSON.parse(readFileSync(prefsFile, 'utf8')).menuBar ?? menuBar
+  const saved = JSON.parse(readFileSync(prefsFile, 'utf8'))
+  menuBar = saved.menuBar ?? menuBar
+  menuBarIcon = saved.menuBarIcon ?? menuBarIcon
 } catch {
   // first launch: default
 }
@@ -166,9 +169,11 @@ async function playerCommand(c: PlayerCommand): Promise<void> {
   setTimeout(pushState, 150)
 }
 
-// Headless test runs stay off the user's menu bar. Fill a newly shown tray in right away.
+// Headless test runs stay off the user's menu bar, unless YTSPOT_TRAY_DUMP=<dir> asks for the item
+// to be drawn into files there instead (see tray.ts). Fill a newly shown tray in right away.
+const trayDump = headless ? process.env.YTSPOT_TRAY_DUMP : undefined
 function applyMenuBar(): void {
-  setTrayMode(headless ? 'off' : menuBar)
+  setTrayMode(headless && !trayDump ? 'off' : menuBar, menuBarIcon)
   pushState()
 }
 
@@ -281,9 +286,10 @@ app.whenReady().then(() => {
     keepPlaying = p.keepPlaying
     setVideoMode(p.videoMode)
     if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: p.openAtLogin })
-    if (p.menuBar !== menuBar) {
+    if (p.menuBar !== menuBar || p.menuBarIcon !== menuBarIcon) {
       menuBar = p.menuBar
-      writeFileSync(prefsFile, JSON.stringify({ menuBar }))
+      menuBarIcon = p.menuBarIcon
+      writeFileSync(prefsFile, JSON.stringify({ menuBar, menuBarIcon }))
       applyMenuBar()
     }
   })
@@ -291,7 +297,7 @@ app.whenReady().then(() => {
   createPlayerWindow()
   createMain()
   rebuildMenu()
-  initTray({ command: playerCommand, show: () => showMain(), quit: () => app.quit() })
+  initTray({ command: playerCommand, show: () => showMain(), quit: () => app.quit(), dump: trayDump })
   applyMenuBar()
   initUpdater({ window: () => main, page: () => ui })
 

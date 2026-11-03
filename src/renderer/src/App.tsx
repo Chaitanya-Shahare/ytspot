@@ -70,8 +70,8 @@ export default function App() {
   const keys = useMemo(() => bindings(prefs.shortcuts), [prefs.shortcuts])
   useEffect(() => void window.ytm.setBindings(keys), [keys])
   useEffect(() => {
-    window.ytm.setPrefs({ keepPlaying: prefs.keepPlaying, videoMode: prefs.videoMode, openAtLogin: prefs.openAtLogin, menuBar: prefs.menuBar })
-  }, [prefs.keepPlaying, prefs.videoMode, prefs.openAtLogin, prefs.menuBar])
+    window.ytm.setPrefs({ keepPlaying: prefs.keepPlaying, videoMode: prefs.videoMode, openAtLogin: prefs.openAtLogin, menuBar: prefs.menuBar, menuBarIcon: prefs.menuBarIcon })
+  }, [prefs.keepPlaying, prefs.videoMode, prefs.openAtLogin, prefs.menuBar, prefs.menuBarIcon])
   const searchRef = useRef<HTMLInputElement>(null)
   const route = history[pos]
 

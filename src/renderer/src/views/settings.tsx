@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { bindings, comboLabel, comboOf, conflicts, SHORTCUTS, type Action } from '../../../shared/shortcuts'
-import type { MenuBarMode, YtmSetting } from '../../../shared/types'
+import type { MenuBarIcon, MenuBarMode, YtmSetting } from '../../../shared/types'
 import { Close, Plus } from '../components/icons'
 import { ErrorBox } from '../components/ui'
 import { useApp, useCached, useUpdate } from '../lib'
@@ -28,7 +28,7 @@ export function SettingsView({ authed }: { authed: boolean }) {
         </Row>
         <Row
           title="Now playing in the menu bar"
-          desc="Shows the song next to a ♫ icon at the top of your screen; click it for playback controls. On a Mac with a notch, macOS hides it when the menu bar is full, so pick a shorter option if it doesn’t show."
+          desc="Shows the song next to an icon at the top of your screen; click it for playback controls. On a Mac with a notch, macOS hides it when the menu bar is full, so pick a shorter option if it doesn’t show."
         >
           <select className="select" value={prefs.menuBar} onChange={(e) => setPrefs({ menuBar: e.target.value as MenuBarMode })}>
             <option value="both">Song and artist</option>
@@ -38,6 +38,14 @@ export function SettingsView({ authed }: { authed: boolean }) {
             <option value="off">Off</option>
           </select>
         </Row>
+        {prefs.menuBar !== 'off' && (
+          <Row title="Menu bar icon" desc="Play and pause show whether the song is playing or paused; they’re a status, not a button.">
+            <select className="select" value={prefs.menuBarIcon} onChange={(e) => setPrefs({ menuBarIcon: e.target.value as MenuBarIcon })}>
+              <option value="note">♫ Note</option>
+              <option value="status">Play / pause</option>
+            </select>
+          </Row>
+        )}
         <Row
           title="Keyboard navigation"
           desc="Move between buttons with Tab and press them with Space or Return. When off, Space always plays and pauses, wherever you last clicked."

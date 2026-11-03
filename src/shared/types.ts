@@ -135,6 +135,8 @@ export interface VideoRect {
 
 // What the menu bar item shows next to its icon; 'off' removes it.
 export type MenuBarMode = 'both' | 'song' | 'artist' | 'icon' | 'off'
+// The menu bar item's icon: always the ♫ note, or a play/pause status for the song on show.
+export type MenuBarIcon = 'note' | 'status'
 
 // The settings main acts on. The renderer owns them (localStorage) and sends them over 'ui:prefs'.
 export interface MainPrefs {
@@ -142,6 +144,7 @@ export interface MainPrefs {
   videoMode: boolean
   openAtLogin: boolean
   menuBar: MenuBarMode
+  menuBarIcon: MenuBarIcon
 }
 
 // Where the app's self-update is (see main/updater.ts); `current` is the running version.

@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ShortcutPrefs } from '../../shared/shortcuts'
 import { DEFAULT_PREFS } from '../../shared/shortcuts'
-import type { Card, MenuBarMode, More, PlayerState, Track, UpdateState } from '../../shared/types'
+import type { Card, MenuBarIcon, MenuBarMode, More, PlayerState, Track, UpdateState } from '../../shared/types'
 
 export type Route =
   | { name: 'home' }
@@ -59,9 +59,10 @@ export interface Prefs {
   videoMode: boolean
   keyboardNav: boolean // Tab moves focus and Space/Return press the focused button
   menuBar: MenuBarMode
+  menuBarIcon: MenuBarIcon
 }
 
-const PREF_DEFAULTS: Prefs = { shortcuts: DEFAULT_PREFS, keepPlaying: true, openAtLogin: false, videoMode: false, keyboardNav: false, menuBar: 'both' }
+const PREF_DEFAULTS: Prefs = { shortcuts: DEFAULT_PREFS, keepPlaying: true, openAtLogin: false, videoMode: false, keyboardNav: false, menuBar: 'both', menuBarIcon: 'note' }
 export const loadPrefs = (): Prefs => ({ ...PREF_DEFAULTS, ...JSON.parse(localStorage.getItem('prefs') ?? '{}') })
 export const savePrefs = (p: Prefs) => localStorage.setItem('prefs', JSON.stringify(p))
 
