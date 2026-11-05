@@ -11,8 +11,14 @@ import type { UpdateState, UpdateStatus } from '../shared/types'
 // ytspot isn't signed with a Developer ID, which Electron's own autoUpdater (Squirrel.Mac) needs.
 // So it updates itself the way a user would: download the release zip from GitHub, unpack it, and
 // swap the app bundle for the new one after ytspot quits.
+//
+// Everything comes from the releases' public download links, as Homebrew's does. GitHub's API
+// would allow 60 requests an hour per IP address, shared by everyone behind the same one (an
+// office, a mobile network), so checks there failed for reasons that had nothing to do with ytspot.
 const REPO = 'Chaitanya-Shahare/ytspot'
 const ASSET = 'ytspot-mac-arm64.zip'
+// Published with each release (scripts/update-manifest.mjs): its version, the zip's SHA-256 and notes.
+const MANIFEST = 'ytspot-update.json'
 const DAY = 24 * 60 * 60 * 1000
 const run = promisify(execFile)
 
@@ -21,7 +27,6 @@ interface Release {
   notes: string
   page: string
   zip?: string
-  size?: number
   sha256?: string
 }
 
@@ -81,22 +86,27 @@ const plain = (md: string) => {
 
 async function check(): Promise<void> {
   lastCheck = Date.now()
+  let res: Response
   try {
-    const res = await net.fetch(`https://api.github.com/repos/${REPO}/releases/latest`, { headers: { Accept: 'application/vnd.github+json' } })
+    res = await net.fetch(`https://github.com/${REPO}/releases/latest/download/${MANIFEST}`)
+  } catch (e) {
+    return set({ status: 'error', message: `Couldn’t reach GitHub. Check your connection and try again. (${(e as Error).message})` })
+  }
+  try {
     if (!res.ok) throw new Error(`GitHub answered ${res.status}.`)
-    const r = await res.json()
-    const asset = r.assets?.find((a: { name: string }) => a.name === ASSET)
+    const m = (await res.json()) as { version: string; sha256?: string; notes?: string }
+    const version = String(m.version).replace(/^v/, '')
+    if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('The latest release has no version.')
     release = {
-      version: String(r.tag_name).replace(/^v/, ''),
-      notes: r.body ?? '',
-      page: r.html_url,
-      zip: asset?.browser_download_url,
-      size: asset?.size,
-      sha256: asset?.digest?.replace(/^sha256:/, '')
+      version,
+      notes: m.notes ?? '',
+      page: `https://github.com/${REPO}/releases/tag/v${version}`,
+      zip: `https://github.com/${REPO}/releases/download/v${version}/${ASSET}`,
+      sha256: m.sha256
     }
     set(newer(release.version, app.getVersion()) ? { status: 'available', version: release.version } : { status: 'latest' })
   } catch (e) {
-    set({ status: 'error', message: `Couldn’t reach GitHub. Check your connection and try again. (${(e as Error).message})` })
+    set({ status: 'error', message: `Couldn’t check for updates. (${(e as Error).message})` })
   }
 }
 
@@ -133,7 +143,7 @@ async function download(r: Release, quiet = false): Promise<void> {
     await mkdir(dir, { recursive: true })
     const res = await net.fetch(r.zip!)
     if (!res.ok || !res.body) throw new Error(`GitHub answered ${res.status}.`)
-    const total = Number(res.headers.get('content-length')) || r.size || 0
+    const total = Number(res.headers.get('content-length')) || 0
     const hash = createHash('sha256')
     const out = createWriteStream(zip)
     const reader = res.body.getReader()
