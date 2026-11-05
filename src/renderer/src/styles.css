@@ -467,9 +467,10 @@ kbd { font-family: inherit; font-size: 12px; color: var(--text-base); padding: 2
 .chord-at.tail { margin-left: .3em; }
 .chord { position: absolute; left: 0; bottom: 1.6em; font-size: .5em; line-height: 1; font-weight: 800; color: #fff; white-space: nowrap; letter-spacing: 0; }
 .lyrics.synced .lyric:not(.active):not(.passed) .chord { color: #000000b3; }
-.chord-bar { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 24px; min-height: 88px; padding: 16px 64px; background: var(--lyrics-bg); box-shadow: 0 8px 16px -8px #00000060; transition: background-color .25s ease-out; }
+.chord-bar { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; column-gap: 24px; row-gap: 10px; min-height: 88px; padding: 16px 64px 12px; background: var(--lyrics-bg); box-shadow: 0 8px 16px -8px #00000060; transition: background-color .25s ease-out; }
 /* A fixed width, so the chords coming up don't shift sideways as the name changes length. */
-.chord-now { flex: none; width: 112px; font-size: 48px; font-weight: 800; color: #fff; line-height: 1; cursor: default; }
+.chord-now { flex: none; display: flex; flex-direction: column; width: 112px; font-size: 48px; font-weight: 800; color: #fff; line-height: 1; cursor: default; }
+.chord-numeral { height: 16px; margin-top: 4px; color: #000000b3; font-size: 15px; font-weight: 800; letter-spacing: .02em; }
 .chord-now.none { color: #0000004d; }
 .chord-next { display: flex; gap: 10px; flex: 1; align-items: center; min-height: 40px; min-width: 0; overflow: hidden; }
 .chord-chip { flex: none; padding: 6px 14px; border-radius: 500px; background: #00000033; color: #ffffffcc; font-size: 20px; font-weight: 700; cursor: default; }
@@ -488,6 +489,14 @@ kbd { font-family: inherit; font-size: 12px; color: var(--text-base); padding: 2
 /* Full screen: the bar covers the lyrics scrolling up behind it (the title floats over it), with a
    soft edge rather than the panel's shadow. */
 .lyrics-page.full .chord-bar { top: 0; padding-top: 120px; box-shadow: none; }
+/* The song's loops in Roman numerals (with the chords under them), the one sounding lit up. */
+.chord-loops { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 28px; min-height: 38px; }
+.chord-loop { display: flex; align-items: center; gap: 4px; }
+.loop-step { display: flex; flex-direction: column; align-items: center; min-width: 38px; padding: 3px 8px; border-radius: 6px; color: #000000b3; cursor: default; transition: background-color .15s, color .15s; }
+.loop-step b { font-size: 16px; font-weight: 800; line-height: 1.1; letter-spacing: .02em; }
+.loop-step small { font-size: 11px; font-weight: 700; opacity: .8; }
+.loop-step.on { background: #ffffffe6; color: #000; }
+.loop-times { margin-left: 4px; color: #00000080; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .lyrics-page.full .chord-bar::after { content: ''; position: absolute; left: 0; right: 0; top: 100%; height: 40px; background: linear-gradient(var(--lyrics-bg), transparent); pointer-events: none; }
 .chord { cursor: default; }
 .chord:hover { text-decoration: underline; }

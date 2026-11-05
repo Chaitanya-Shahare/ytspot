@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Chords, Lyrics, PlayerState } from '../../../shared/types'
-import { transpose, useChordShapes } from '../components/chords'
+import { numeral, progressions, transpose, useChordShapes } from '../components/chords'
 import * as I from '../components/icons'
 import { ErrorBox } from '../components/ui'
 import { liveClock, setClock, useApp, useCached, useColor } from '../lib'
@@ -241,6 +241,9 @@ function ChordBar({ chords, playing, song, setSong, bind }: {
     return () => clearInterval(id)
   }, [playing])
   const list = chords?.chords ?? []
+  // The song's loops in Roman numerals, to jam along without reading every chord.
+  const loops = useMemo(() => progressions(chords?.chords ?? []), [chords])
+  const key = chords?.key ?? ''
   let i = -1
   while (i + 1 < list.length && list[i + 1].time <= t) i++
   // While listening live the newest chord ends where the analysis has got to, a second or so
@@ -256,6 +259,7 @@ function ChordBar({ chords, playing, song, setSong, bind }: {
     <div className="chord-bar">
       <div className={`chord-now ${now ? '' : 'none'}`} {...(now ? bind(now.name) : {})}>
         {now?.name ?? '–'}
+        <span className="chord-numeral">{now ? numeral(now.name, key) : ''}</span>
       </div>
       <div className="chord-next">
         {coming.map((c, k) => (
@@ -291,6 +295,20 @@ function ChordBar({ chords, playing, song, setSong, bind }: {
           )}
           {!whole && chords && !chords.working && chords.heard > 0 && <span>{Math.round(chords.heard * 100)}% of the song heard</span>}
         </div>
+      </div>
+      {/* Always there (empty while working), so the bar doesn't change height when they arrive. */}
+      <div className="chord-loops" aria-label="Chord progressions">
+        {loops.map((p, k) => (
+          <div key={k} className="chord-loop">
+            {p.loop.map((c, j) => (
+              <span key={j} className={`loop-step ${c === now?.name ? 'on' : ''}`} {...bind(c)}>
+                <b>{numeral(c, key) || c}</b>
+                {numeral(c, key) && <small>{c}</small>}
+              </span>
+            ))}
+            <span className="loop-times">×{p.times}</span>
+          </div>
+        ))}
       </div>
     </div>
   )

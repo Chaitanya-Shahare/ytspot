@@ -20,6 +20,66 @@ export function transpose(name: string, by: number): string {
   return [NOTES[(root + by + 120) % 12] + m![2], ...rest].join(' ')
 }
 
+// ---- Roman numerals ----
+
+// Scale degrees by semitones above the tonic. In a minor key the numerals count from its own
+// tonic (i, III, iv, VI, VII…), as players of minor-key songs usually call them.
+const DEGREES = {
+  major: ['I', 'bII', 'II', 'bIII', 'III', 'IV', '#IV', 'V', 'bVI', 'VI', 'bVII', 'VII'],
+  minor: ['I', 'bII', 'II', 'III', '#III', 'IV', '#IV', 'V', 'VI', '#VI', 'VII', '#VII']
+}
+
+// "Bm" in "F# minor" → "iv": upper case for a major chord, lower for a minor one. '' without a key.
+export function numeral(name: string, key: string): string {
+  const [tonic, mode] = key.split(' ')
+  const t = NOTES.indexOf(tonic)
+  const c = parse(name)
+  if (t < 0 || !c || (mode !== 'major' && mode !== 'minor')) return ''
+  const n = DEGREES[mode][(c.root - t + 12) % 12]
+  return c.minor ? n.replace(/[IV]+/, (r) => r.toLowerCase()) : n
+}
+
+// The song's main chord loops, for jamming along: the run of chords that repeats the most (most of
+// the song in it, the shortest loop if several do), then the most-repeated one in what's left (often
+// the chorus against the verse). Each comes with how many times it goes round.
+export function progressions(chords: { name: string }[]): { loop: string[]; times: number }[] {
+  const seq: string[] = []
+  for (const c of chords) if (c.name !== seq[seq.length - 1]) seq.push(c.name)
+  const used = new Array<boolean>(seq.length).fill(false)
+  const out: { loop: string[]; times: number }[] = []
+  for (let round = 0; round < 2; round++) {
+    let best: { at: number; len: number; times: number } | null = null
+    for (let len = 2; len <= 8; len++) {
+      const free = (i: number) => !used.slice(i, i + len).some(Boolean)
+      const keys = seq.map((_, i) => (i + len <= seq.length && free(i) ? seq.slice(i, i + len).join('|') : ''))
+      const seen = new Set<string>()
+      for (let at = 0; at + len <= seq.length; at++) {
+        const key = keys[at]
+        if (!key || seen.has(key)) continue
+        seen.add(key)
+        // A loop that's a smaller loop twice over ("A B A B") is that smaller loop.
+        const w = seq.slice(at, at + len)
+        if (len % 2 === 0 && w.slice(0, len / 2).join() === w.slice(len / 2).join()) continue
+        let times = 0
+        for (let i = at; i + len <= seq.length; ) keys[i] === key ? (times++, (i += len)) : i++
+        if (times < 2) continue
+        if (!best || times * len > best.times * best.len || (times * len === best.times * best.len && len < best.len)) best = { at, len, times }
+      }
+    }
+    // A second loop only if it's a real part of the song, not a stray pair repeated.
+    if (!best || (round && best.times * best.len < seq.length * 0.15)) break
+    const w = seq.slice(best.at, best.at + best.len)
+    out.push({ loop: w, times: best.times })
+    for (let i = 0; i + best.len <= seq.length; ) {
+      if (seq.slice(i, i + best.len).join() === w.join()) {
+        for (let k = i; k < i + best.len; k++) used[k] = true
+        i += best.len
+      } else i++
+    }
+  }
+  return out
+}
+
 // ---- Chord shapes ----
 
 // Strings low E to high e, as pitch classes.
