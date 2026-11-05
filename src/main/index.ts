@@ -151,10 +151,13 @@ function showMain(then?: (page: WebContents) => void): void {
 // A track change briefly has no trustworthy title/artwork (see player.ts); hold the update back
 // for up to a second so the UI never shows the old song's art under the new song.
 let pendingSince: { id: string; at: number } | null = null
+// The song on show, for the chords (see chords.ts), which follow it whichever player it's in.
+let nowPlaying = ''
 async function pushState(): Promise<void> {
   const shown = !!main && (main.isVisible() || headless)
   if (!shown && !trayOn()) return
   const s = await currentState()
+  nowPlaying = s?.videoId ?? ''
   updateTray(s)
   if (!s || !ui || !shown) return
   if (s.pending) {
@@ -330,7 +333,7 @@ app.whenReady().then(() => {
     keepPlaying = p.keepPlaying
     setVideoMode(p.videoMode)
     setChordCapture(p.chords)
-    setChords(p.chords, (c) => ui?.send('chords', c))
+    setChords(p.chords, (c) => ui?.send('chords', c), () => nowPlaying)
     if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: p.openAtLogin })
     if (p.menuBar !== menuBar || p.menuBarIcon !== menuBarIcon || p.autoUpdate !== autoUpdate) {
       const tray = p.menuBar !== menuBar || p.menuBarIcon !== menuBarIcon

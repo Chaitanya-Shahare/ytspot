@@ -1,13 +1,17 @@
-// Guitar chords for the playing song, worked out from its audio alone. The YTM page listens to the
-// song as it plays (CHROMA_JS in player.ts) and hands over chroma frames: how strongly each of the
-// 12 notes sounds, ten times a second. Here they're laid out on the song's timeline and decoded
-// into chords: each frame is scored against the 24 major and minor triads, then a Viterbi pass
-// picks the likeliest sequence, where changing chord costs a little (so one stray frame doesn't
-// flicker the chord). A song's frames are saved, so a song heard before has its chords from the start.
-import { app } from 'electron'
+// Guitar chords for the playing song, worked out from its audio alone, as chroma frames: how
+// strongly each of the 12 notes sounds, ten times a second. As soon as a song starts, its whole
+// audio is fetched at full speed (the downloaded file, or the low-quality stream) and a hidden page
+// runs it through an AnalyserNode offline (ANALYZE_JS), so all its chords are there in a few
+// seconds, along with its tempo. Should that fail, the YTM page listens to the song as it plays
+// (CHROMA_JS in player.ts) and hands over the same frames as it goes. Here they're laid out on the
+// song's timeline and decoded into chords: each frame is scored against the 24 major and minor
+// triads, then a Viterbi pass picks the likeliest sequence, where changing chord costs a little (so
+// one stray frame doesn't flicker the chord). A song's frames are saved, so it's only worked out once.
+import { app, BrowserWindow, type WebContents } from 'electron'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Chords } from '../shared/types'
+import { audioForAnalysis, MEDIA_SCHEME } from './downloads'
 import { takeChroma } from './player'
 
 const FPS = 10 // timeline frames per second of song
@@ -22,6 +26,8 @@ interface Song {
   db: Int8Array
   have: Uint8Array
   dirty: boolean
+  full?: boolean // worked out from the whole song at once (not just the parts heard)
+  bpm?: number
   result?: Chords
 }
 
@@ -52,6 +58,8 @@ function load(id: string): Song {
       const have = Buffer.from(f.have, 'base64')
       s = blank(id, have.length)
       s.duration = f.duration
+      s.full = !!f.full
+      s.bpm = f.bpm || undefined
       s.have.set(have)
       s.chroma.set(Buffer.from(f.chroma, 'base64'))
       const db = Buffer.from(f.db, 'base64')
@@ -72,7 +80,10 @@ function save(s: Song): void {
   try {
     mkdirSync(dir(), { recursive: true })
     const b64 = (a: Uint8Array | Int8Array) => Buffer.from(a.buffer, a.byteOffset, a.byteLength).toString('base64')
-    writeFileSync(join(dir(), `${s.id}.json`), JSON.stringify({ duration: s.duration, have: b64(s.have), chroma: b64(s.chroma), db: b64(s.db) }))
+    writeFileSync(
+      join(dir(), `${s.id}.json`),
+      JSON.stringify({ duration: s.duration, full: s.full, bpm: s.bpm, have: b64(s.have), chroma: b64(s.chroma), db: b64(s.db) })
+    )
   } catch (e) {
     console.error('[chords] save', e)
   }
@@ -146,7 +157,13 @@ function analyze(s: Song): Chords {
   const n = s.have.length
   const heard: number[] = []
   for (let f = 0; f < n; f++) if (s.have[f]) heard.push(f)
-  const result: Chords = { videoId: s.id, key: '', chords: [], heard: s.duration ? Math.min(1, heard.length / (s.duration * FPS)) : 0 }
+  const result: Chords = {
+    videoId: s.id,
+    key: '',
+    chords: [],
+    heard: s.full ? 1 : s.duration ? Math.min(1, heard.length / (s.duration * FPS)) : 0,
+    tempo: s.bpm
+  }
   if (heard.length < FPS) return result
 
   // Quiet: well below the song's typical loudness (intros, gaps, the fade-out).
@@ -222,40 +239,210 @@ function analyze(s: Song): Chords {
   return result
 }
 
-const result = (s: Song) => (s.result ??= analyze(s))
+// `working`: the whole song is being worked out right now. Meanwhile what's been heard live isn't
+// shown, so the chords appear once, complete, rather than a few that then change.
+const result = (s: Song): Chords =>
+  working === s.id ? { videoId: s.id, key: '', chords: [], heard: 0, working: true } : (s.result ??= analyze(s))
 
 export function chordsFor(id: string): Chords {
   if (!VALID_ID.test(id)) return { videoId: id, key: '', chords: [], heard: 0 }
-  return result(load(id))
+  const s = songOf(id)
+  if (timer) want(id)
+  return result(s)
 }
 
-// While on, take the page's new frames every second and send the playing song's chords when they change.
+// The playing song's own copy, even if lookups of other songs have pushed it out of `songs`.
+const songOf = (id: string) => (current?.id === id ? current : load(id))
+
+// ---- The whole song at once ----
+
+// Runs in a hidden page (blank, on ytspot-media:// so it can fetch the song): decodes the song,
+// plays it through an AnalyserNode offline, reading it every 0.1 s just as the YTM page does while
+// a song plays (CHROMA_JS), and works out its tempo. Returns the frames (26 numbers each, as from
+// CHROMA_JS), the duration and the beats per minute.
+const ANALYZE_JS = `window.__analyze = async (url) => {
+  const RATE = 22050, FFT = 8192, STEP = 0.1, HOP = 220
+  const data = await (await fetch(url)).arrayBuffer()
+  const buf = await new OfflineAudioContext(1, 1, RATE).decodeAudioData(data)
+  const n = buf.length, dur = buf.duration
+
+  // Chroma, read every 0.1 s as the song renders (much faster than it plays).
+  const ctx = new OfflineAudioContext(1, n, RATE)
+  const src = ctx.createBufferSource()
+  src.buffer = buf
+  const an = ctx.createAnalyser()
+  an.fftSize = FFT
+  an.smoothingTimeConstant = 0
+  src.connect(an).connect(ctx.destination)
+  const hz = RATE / FFT, lo = Math.ceil(40 / hz), hi = Math.floor(2000 / hz), bass = Math.floor(200 / hz)
+  const pc = new Int8Array(hi + 1)
+  for (let k = lo; k <= hi; k++) pc[k] = ((Math.round(69 + 12 * Math.log2((k * hz) / 440)) % 12) + 12) % 12
+  const b = new Float32Array(an.frequencyBinCount), frames = []
+  const read = (t) => {
+    an.getFloatFrequencyData(b)
+    const x = new Float64Array(25)
+    for (let k = lo; k <= hi; k++) {
+      if (b[k] < -90 || b[k] < b[k - 1] || b[k] < b[k + 1]) continue
+      const m = 10 ** (b[k] / 20)
+      x[pc[k]] += m
+      if (k <= bass) x[12 + pc[k]] += m
+      x[24] += m * m
+    }
+    const top = Math.max(...x.subarray(0, 12)) || 1, low = Math.max(...x.subarray(12, 24)) || 1
+    // The window ends at t; stamp its middle.
+    frames.push(Math.round((t - FFT / RATE / 2) * 100) / 100)
+    for (let i = 0; i < 12; i++) frames.push(Math.round((x[i] / top) * 100))
+    for (let i = 12; i < 24; i++) frames.push(Math.round((x[i] / low) * 100))
+    frames.push(Math.round(10 * Math.log10(x[24] + 1e-12)))
+  }
+  for (let i = 0, t = FFT / RATE; t < dur; t = FFT / RATE + ++i * STEP) {
+    const at = t
+    ctx.suspend(at).then(() => (read(at), ctx.resume()))
+  }
+  src.start()
+  const mono = (await ctx.startRendering()).getChannelData(0)
+
+  // Tempo: how sharply the sound (and the bass alone) gets louder every 10 ms, and the beat period
+  // that lines those onsets up best, favouring tempos near 120 as people tap along.
+  const lowCtx = new OfflineAudioContext(1, n, RATE)
+  const src2 = lowCtx.createBufferSource()
+  src2.buffer = buf
+  const lp = lowCtx.createBiquadFilter()
+  lp.type = 'lowpass'
+  lp.frequency.value = 150
+  src2.connect(lp).connect(lowCtx.destination)
+  src2.start()
+  const lows = (await lowCtx.startRendering()).getChannelData(0)
+  const m = Math.floor(n / HOP), onset = new Float64Array(m)
+  let prevA = 0, prevB = 0
+  for (let i = 0; i < m; i++) {
+    let ea = 1e-9, eb = 1e-9
+    for (let j = i * HOP; j < (i + 1) * HOP; j++) (ea += mono[j] * mono[j]), (eb += lows[j] * lows[j])
+    const la = Math.log(ea), lb = Math.log(eb)
+    if (i) onset[i] = Math.max(0, la - prevA) + Math.max(0, lb - prevB)
+    prevA = la
+    prevB = lb
+  }
+  let mean = 0
+  for (const v of onset) mean += v / m
+  for (let i = 0; i < m; i++) onset[i] -= mean
+  const fps = RATE / HOP, minLag = Math.floor((fps * 60) / 200), maxLag = Math.ceil((fps * 60) / 60)
+  const ac = new Float64Array(2 * maxLag + 2)
+  for (let l = minLag; l < ac.length && l < m; l++) {
+    let sum = 0
+    for (let i = 0; i + l < m; i++) sum += onset[i] * onset[i + l]
+    ac[l] = sum / (m - l)
+  }
+  let best = 0, bestScore = -Infinity
+  const score = (l) => ac[l] + 0.5 * (ac[2 * l] || 0)
+  for (let l = minLag; l <= maxLag; l++) {
+    const bpm = (60 * fps) / l, prior = Math.exp(-0.5 * Math.log2(bpm / 120) ** 2)
+    if (score(l) * prior > bestScore) (bestScore = score(l) * prior), (best = l)
+  }
+  // Between whole lags, from the curve's shape around the best one.
+  const a = score(best - 1), c = score(best + 1), mid = score(best), d = a - 2 * mid + c
+  const lag = best + (d < 0 ? (0.5 * (a - c)) / d : 0)
+  return { frames, duration: dur, bpm: best && bestScore > 0 ? Math.round((60 * fps) / lag) : 0 }
+}`
+
+let analyzer: Promise<WebContents> | null = null
+let analyzerWin: BrowserWindow | null = null
+function analysisPage(): Promise<WebContents> {
+  return (analyzer ??= (async () => {
+    const win = (analyzerWin = new BrowserWindow({ show: false, webPreferences: { spellcheck: false, backgroundThrottling: false } }))
+    win.on('closed', () => ((analyzer = null), (analyzerWin = null)))
+    await win.loadURL(`${MEDIA_SCHEME}://player/`)
+    // (Ends with null: the assignment's value, a function, can't be sent back.)
+    await win.webContents.executeJavaScript(`${ANALYZE_JS}\nnull`)
+    return win.webContents
+  })().catch((e) => ((analyzer = null), Promise.reject(e))))
+}
+
+// One song at a time, the latest asked for first; one that couldn't be worked out isn't tried
+// again for a while (live listening covers it meanwhile).
+let wanted: string | null = null
+let working: string | null = null
+const failed = new Map<string, number>()
+const RETRY_MS = 10 * 60 * 1000
+function want(id: string): void {
+  wanted = id
+  if (!working) void work()
+}
+async function work(): Promise<void> {
+  while (wanted) {
+    const id = wanted
+    wanted = null
+    const s = songOf(id)
+    if (s.full || Date.now() - (failed.get(id) ?? 0) < RETRY_MS) continue
+    working = id
+    push()
+    let done: (() => void) | undefined
+    try {
+      const audio = await audioForAnalysis(id)
+      done = audio.done
+      const r = (await (await analysisPage()).executeJavaScript(`window.__analyze(${JSON.stringify(audio.url)})`)) as {
+        frames: number[]
+        duration: number
+        bpm: number
+      }
+      // The whole song replaces what was heard of it.
+      Object.assign(s, { ...blank(id, Math.ceil(r.duration * FPS) + 1), result: undefined })
+      ingest(s, r.duration, r.frames)
+      s.full = true
+      s.bpm = r.bpm || undefined
+      save(s)
+    } catch (e) {
+      console.error('[chords]', id, (e as Error).message)
+      failed.set(id, Date.now())
+    } finally {
+      done?.()
+      working = null
+    }
+    push()
+  }
+}
+
+// While on, follow the playing song: work it out whole, take any frames heard live (until it's
+// whole), and send its chords whenever they change.
 let timer: NodeJS.Timeout | null = null
 let current: Song | null = null
 let lastSent = ''
 let lastSave = 0
-export function setChords(on: boolean, send: (c: Chords) => void): void {
+let send: (c: Chords) => void = () => undefined
+let playing: () => string = () => ''
+function push(): void {
+  if (!current) return
+  const r = result(current)
+  const json = JSON.stringify(r)
+  if (json !== lastSent) (lastSent = json), send(r)
+}
+export function setChords(on: boolean, onChords: (c: Chords) => void, nowPlaying: () => string): void {
+  send = onChords
+  playing = nowPlaying
   if (!on) {
     if (timer) clearInterval(timer)
     timer = null
     for (const s of songs.values()) save(s)
+    analyzerWin?.destroy()
     return
   }
   if (timer) return
-  timer = setInterval(async () => {
-    const t = await takeChroma()
-    if (!t?.id || !VALID_ID.test(t.id)) return
-    if (current?.id !== t.id) {
+  const tick = async () => {
+    const id = playing()
+    if (!id || !VALID_ID.test(id)) return
+    if (current?.id !== id) {
       if (current) save(current)
-      current = load(t.id)
+      current = load(id)
+      want(id)
     }
-    if (t.frames.length) ingest(current, t.duration, t.frames)
+    // Live frames are tagged with the YTM page's song, which isn't this one while a downloaded song plays.
+    const t = await takeChroma()
+    if (t?.id === id && t.frames.length && !current.full) ingest(current, t.duration, t.frames)
     if (Date.now() - lastSave > 30000) (lastSave = Date.now()), save(current)
-    // The song being heard, even if lookups of other songs have pushed it out of `songs`.
-    const r = result(current)
-    const json = JSON.stringify(r)
-    if (json !== lastSent) (lastSent = json), send(r)
-  }, 1000)
+    push()
+  }
+  timer = setInterval(tick, 1000)
+  void tick()
 }
 
 export const saveChords = () => songs.forEach(save)

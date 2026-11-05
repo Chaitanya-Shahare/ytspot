@@ -82,7 +82,9 @@ export interface Chords {
   videoId: string
   key: string // e.g. "A minor"; '' until enough has been heard
   chords: { time: number; end: number; name: string }[]
-  heard: number // how much of the song has been heard, 0..1
+  heard: number // how much of the song has been heard (or worked out), 0..1
+  tempo?: number // beats per minute, once the whole song has been worked out
+  working?: boolean // the whole song is being worked out right now
 }
 
 export interface SearchResult {

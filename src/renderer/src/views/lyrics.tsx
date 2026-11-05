@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Chords, Lyrics, PlayerState } from '../../../shared/types'
+import { transpose, useChordShapes } from '../components/chords'
 import * as I from '../components/icons'
 import { ErrorBox } from '../components/ui'
 import { liveClock, setClock, useApp, useCached, useColor } from '../lib'
@@ -54,10 +55,20 @@ function seekTo(t: number | undefined, playing: boolean): void {
 function SongLyrics({ player, full }: { player: PlayerState; full?: boolean }) {
   const { data, error, retry } = useLyrics(player)
   const { prefs } = useApp()
-  const chords = useChords(player.videoId, prefs.chords && prefs.showChords)
+  const chordsOn = prefs.chords && prefs.showChords
+  const heard = useChords(player.videoId, chordsOn)
+  const [song, setSong] = useSongChordPrefs(player.videoId)
+  // Everything below shows the chords as transposed.
+  const chords = useMemo(
+    () => (heard && song.transpose ? { ...heard, key: transpose(heard.key, song.transpose), chords: heard.chords.map((c) => ({ ...c, name: transpose(c.name, song.transpose) })) } : heard),
+    [heard, song.transpose]
+  )
   // Placed once per chords update, not on every line change.
   const placed = useMemo(() => (chords && data?.synced ? data.lines.map((_, i) => lineChords(data, chords, i)) : null), [chords, data])
-  const bg = lyricsBackground(useColor(player.thumb))
+  const shapes = useChordShapes()
+  const tint = useColor(player.thumb, lastLyricsColor)
+  useEffect(() => void (lastLyricsColor = tint), [tint])
+  const bg = lyricsBackground(tint)
   const active = useActiveLine(data, player.playing)
   const box = useRef<HTMLDivElement>(null)
   // Each song starts at its first line: the page scrolls in the main view, which outlives the song,
@@ -81,7 +92,8 @@ function SongLyrics({ player, full }: { player: PlayerState; full?: boolean }) {
 
   return (
     <div ref={pageRef} className={`page lyrics-page ${full ? 'full' : ''}`} style={{ '--lyrics-bg': bg } as React.CSSProperties} onWheel={() => data?.synced && setAway(true)}>
-      {chords && <ChordBar chords={chords} playing={player.playing} />}
+      {chordsOn && <ChordBar chords={chords} playing={player.playing} song={song} setSong={setSong} bind={shapes.bind} />}
+      {shapes.popover}
       {error && data === undefined ? (
         <ErrorBox error={error} onRetry={retry} />
       ) : data === undefined ? (
@@ -94,14 +106,15 @@ function SongLyrics({ player, full }: { player: PlayerState; full?: boolean }) {
       ) : (
         <div className="lyrics-wrap">
           {!data.synced && <p className="lyrics-unsynced">These lyrics aren’t synced to the song yet.</p>}
-          <div ref={box} className={`lyrics ${data.synced ? 'synced' : ''} ${placed ? 'jam' : ''}`}>
+          {/* Spaced for chords as soon as they're on, so the lines don't jump when they arrive. */}
+          <div ref={box} className={`lyrics ${data.synced ? 'synced' : ''} ${chordsOn && data.synced ? 'jam' : ''}`}>
             {data.lines.map((l, i) => (
               <div
                 key={i}
                 className={`lyric ${!data.synced ? '' : i === active ? 'active' : i < active ? 'passed' : ''}`}
                 onClick={() => data.synced && seek(l.time)}
               >
-                {placed ? <ChordLine text={l.text || '♪'} at={placed[i]} /> : l.text || '♪'}
+                {placed ? <ChordLine text={l.text || '♪'} at={placed[i]} bind={shapes.bind} /> : l.text || '♪'}
               </div>
             ))}
           </div>
@@ -115,6 +128,30 @@ function SongLyrics({ player, full }: { player: PlayerState; full?: boolean }) {
       )}
     </div>
   )
+}
+
+// The colour behind the lyrics, so the next song's page starts from it rather than flashing grey.
+let lastLyricsColor: string | undefined
+
+// Per song: how far its chords are transposed, and its tempo halved or doubled (when the beat found
+// is twice or half what it feels like). Kept for the most recent songs.
+interface SongChordPrefs {
+  transpose: number
+  tempo: 0.5 | 1 | 2
+}
+const SONG_PREFS = 'chord-song-prefs'
+function useSongChordPrefs(videoId: string): [SongChordPrefs, (p: Partial<SongChordPrefs>) => void] {
+  const read = (): Record<string, Partial<SongChordPrefs>> => JSON.parse(localStorage.getItem(SONG_PREFS) ?? '{}')
+  const [p, setP] = useState<SongChordPrefs>(() => ({ transpose: 0, tempo: 1, ...read()[videoId] }))
+  const set = (next: Partial<SongChordPrefs>) => {
+    const merged = { ...p, ...next }
+    setP(merged)
+    const all = read()
+    delete all[videoId]
+    if (merged.transpose || merged.tempo !== 1) all[videoId] = merged
+    localStorage.setItem(SONG_PREFS, JSON.stringify(Object.fromEntries(Object.entries(all).slice(-300))))
+  }
+  return [p, set]
 }
 
 // The song's chords (main/chords.ts) while the setting is on: what's known now, then each update.
@@ -157,17 +194,30 @@ function lineChords(data: Lyrics, chords: Chords, i: number): { at: number; name
   return out
 }
 
-function ChordLine({ text, at }: { text: string; at: { at: number; name: string }[] }) {
+type BindChord = ReturnType<typeof useChordShapes>['bind']
+
+function ChordLine({ text, at, bind }: { text: string; at: { at: number; name: string }[]; bind: BindChord }) {
   const parts: React.ReactNode[] = []
   let from = 0
+  // Rough widths in the line's em: a lyric character, and a chord label's (half size, bold).
+  const CH = 0.5, LABEL = 0.36
   for (const [k, c] of at.entries()) {
     const to = Math.min(c.at, text.length)
     parts.push(text.slice(from, to))
-    // Past the end of the words: leave room for the label after them.
+    // Past the end of the words: leave room for the label after them, and start clear of a label
+    // still running over from within the words (a short line such as ♪).
     const tail = c.at >= text.length
+    const prev = at[k - 1]
+    const clear = prev && prev.at < text.length ? prev.at * CH + prev.name.length * LABEL + 0.25 - text.length * CH : 0
     parts.push(
-      <span key={k} className={`chord-at ${tail ? 'tail' : ''}`} style={tail ? { width: `${c.name.length * 0.35 + 0.4}em` } : undefined}>
-        <b className="chord">{c.name}</b>
+      <span
+        key={k}
+        className={`chord-at ${tail ? 'tail' : ''}`}
+        style={tail ? { width: `${c.name.length * LABEL + 0.4}em`, marginLeft: `${Math.max(0.3, clear)}em` } : undefined}
+      >
+        <b className="chord" {...bind(c.name)}>
+          {c.name}
+        </b>
       </span>
     )
     from = to
@@ -176,36 +226,71 @@ function ChordLine({ text, at }: { text: string; at: { at: number; name: string 
   return <>{parts}</>
 }
 
-// The chord sounding now and the ones coming next, for playing along.
-function ChordBar({ chords, playing }: { chords: Chords; playing: boolean }) {
+// The chord sounding now and the ones coming next, for playing along, with the key, the tempo and
+// transposing. It keeps its place and size from before the chords arrive, so nothing jumps.
+function ChordBar({ chords, playing, song, setSong, bind }: {
+  chords: Chords | null
+  playing: boolean
+  song: SongChordPrefs
+  setSong: (p: Partial<SongChordPrefs>) => void
+  bind: BindChord
+}) {
   const [t, setT] = useState(() => liveClock(playing))
   useEffect(() => {
     const id = setInterval(() => setT(liveClock(playing)), 100)
     return () => clearInterval(id)
   }, [playing])
-  const list = chords.chords
+  const list = chords?.chords ?? []
   let i = -1
   while (i + 1 < list.length && list[i + 1].time <= t) i++
-  // On a first listen the newest chord ends where the analysis has got to, a second or so behind
-  // the song: it's still the one sounding.
+  // While listening live the newest chord ends where the analysis has got to, a second or so
+  // behind the song: it's still the one sounding.
   const now = i >= 0 && (list[i].end > t || (i === list.length - 1 && t - list[i].end < 3)) ? list[i] : null
   const coming = list.slice(i + 1, i + 5)
   const soon = coming[0] ? Math.max(0, coming[0].time - t) : 0
+  const whole = !!chords && chords.heard >= 0.97
+  const tempo = chords?.tempo ? Math.round(chords.tempo * song.tempo) : 0
+  const by = song.transpose
+  const status = !chords || chords.working ? 'Working out the chords…' : !list.length ? 'Listening for chords…' : !coming.length && !whole ? 'Listening for chords…' : ''
   return (
     <div className="chord-bar">
-      <div className="chord-now">{now?.name ?? '–'}</div>
+      <div className={`chord-now ${now ? '' : 'none'}`} {...(now ? bind(now.name) : {})}>
+        {now?.name ?? '–'}
+      </div>
       <div className="chord-next">
         {coming.map((c, k) => (
-          <span key={k} className="chord-chip" style={k === 0 ? ({ '--soon': Math.min(1, soon / 4) } as React.CSSProperties) : undefined}>
+          <span key={k} className="chord-chip" style={k === 0 ? ({ '--soon': Math.min(1, soon / 4) } as React.CSSProperties) : undefined} {...bind(c.name)}>
             {c.name}
           </span>
         ))}
-        {/* Nothing ahead yet: on a first listen, chords appear as they're heard. */}
-        {!coming.length && <span className="chord-wait">Listening for chords…</span>}
+        {status && <span className="chord-wait">{status}</span>}
       </div>
-      <div className="chord-meta">
-        {chords.key && <span>Key: {chords.key}</span>}
-        <span>{chords.heard >= 0.97 ? 'Whole song heard' : `${Math.round(chords.heard * 100)}% of the song heard`}</span>
+      <div className="chord-tools">
+        <div className="chord-transpose" role="group" aria-label="Transpose">
+          <button className="chord-step" onClick={() => setSong({ transpose: Math.max(-11, by - 1) })} aria-label="Transpose down a semitone">
+            −
+          </button>
+          <button className="chord-shift" onClick={() => setSong({ transpose: 0 })} aria-label="Reset transpose" disabled={!by}>
+            {by > 0 ? `+${by}` : by < 0 ? `${by}` : 'Transpose'}
+          </button>
+          <button className="chord-step" onClick={() => setSong({ transpose: Math.min(11, by + 1) })} aria-label="Transpose up a semitone">
+            +
+          </button>
+        </div>
+        <div className="chord-meta">
+          {chords?.key && <span>Key: {chords.key}</span>}
+          {tempo > 0 && (
+            <button
+              className="chord-tempo"
+              // The beat found can be twice or half what it feels like: a click cycles ×½ and ×2.
+              onClick={() => setSong({ tempo: song.tempo === 1 ? 0.5 : song.tempo === 0.5 ? 2 : 1 })}
+              aria-label={`Tempo ${tempo} beats per minute. Click to halve or double it.`}
+            >
+              {tempo} BPM
+            </button>
+          )}
+          {!whole && chords && !chords.working && chords.heard > 0 && <span>{Math.round(chords.heard * 100)}% of the song heard</span>}
+        </div>
       </div>
     </div>
   )
