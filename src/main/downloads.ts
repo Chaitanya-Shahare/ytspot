@@ -112,7 +112,8 @@ const clock = (sec: number) => `${Math.floor(sec / 60)}:${String(Math.floor(sec 
 // Low and Normal take the Opus stream nearest their bitrate; High takes YouTube's best.
 const TARGET_KBPS = { low: 50, normal: 70 }
 
-async function fetchAudio(videoId: string, quality: DownloadQuality, onProgress: (p: number) => void) {
+// The song's audio stream at `quality`: where to fetch it (with its PO token) and how big it is.
+async function audioStream(videoId: string, quality: DownloadQuality) {
   const session = await client()
   const pot = await poToken(videoId)
   const info = await session.getBasicInfo(videoId, { client: 'YTMUSIC', po_token: pot })
@@ -126,23 +127,44 @@ async function fetchAudio(videoId: string, quality: DownloadQuality, onProgress:
   if (!url.searchParams.has('pot')) url.searchParams.set('pot', pot)
   const size = format.content_length
   if (!size) throw new Error('No audio for this song')
+  return { url, size, format, info }
+}
+
+// Fetches `size` bytes from `url` in ranges, handing each piece to `write` as it arrives.
+async function pull(url: URL, size: number, write: (chunk: Uint8Array) => Promise<unknown> | void, onProgress: (p: number) => void): Promise<void> {
+  for (let at = 0; at < size; ) {
+    const res = await fetch(url, { headers: { Range: `bytes=${at}-${Math.min(size, at + CHUNK) - 1}` }, signal: AbortSignal.timeout(60000) })
+    if (!res.ok || !res.body) throw Object.assign(new Error(`YouTube refused the download (${res.status})`), { status: res.status })
+    const from = at
+    for await (const chunk of res.body) {
+      await write(chunk)
+      at += chunk.length
+      onProgress(at / size)
+    }
+    // An empty answer would otherwise ask for the same bytes forever.
+    if (at === from) throw new Error('YouTube sent no audio')
+  }
+}
+
+// A minter YouTube stopped accepting gets a 403; try once more with a fresh one.
+async function retrying<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn()
+  } catch (e) {
+    if ((e as { status?: number }).status !== 403) throw e
+    resetBotguard()
+    return fn()
+  }
+}
+
+async function fetchAudio(videoId: string, quality: DownloadQuality, onProgress: (p: number) => void) {
+  const { url, size, format, info } = await audioStream(videoId, quality)
   const file = `${videoId}.${format.mime_type.startsWith('audio/webm') ? 'webm' : 'm4a'}`
   const part = join(dir(), `${file}.part`)
   await mkdir(dir(), { recursive: true })
   const out = await open(part, 'w')
   try {
-    for (let at = 0; at < size; ) {
-      const res = await fetch(url, { headers: { Range: `bytes=${at}-${Math.min(size, at + CHUNK) - 1}` }, signal: AbortSignal.timeout(60000) })
-      if (!res.ok || !res.body) throw Object.assign(new Error(`YouTube refused the download (${res.status})`), { status: res.status })
-      const from = at
-      for await (const chunk of res.body) {
-        await out.write(chunk)
-        at += chunk.length
-        onProgress(at / size)
-      }
-      // An empty answer would otherwise ask for the same bytes forever.
-      if (at === from) throw new Error('YouTube sent no audio')
-    }
+    await pull(url, size, (chunk) => out.write(chunk), onProgress)
   } catch (e) {
     await out.close()
     await rm(part, { force: true })
@@ -168,15 +190,7 @@ async function fetchArt(videoId: string, thumb: string): Promise<{ art: string; 
 }
 
 async function downloadOne(track: Track, quality: DownloadQuality, added: number, onProgress: (p: number) => void): Promise<void> {
-  let audio: Awaited<ReturnType<typeof fetchAudio>>
-  try {
-    audio = await fetchAudio(track.videoId, quality, onProgress)
-  } catch (e) {
-    // A minter YouTube stopped accepting gets a 403; try once more with a fresh one.
-    if ((e as { status?: number }).status !== 403) throw e
-    resetBotguard()
-    audio = await fetchAudio(track.videoId, quality, onProgress)
-  }
+  const audio = await retrying(() => fetchAudio(track.videoId, quality, onProgress))
   const { info } = audio
   const thumb = track.thumb || info.thumbnail?.[0]?.url || ''
   const art = await fetchArt(track.videoId, thumb)
@@ -248,11 +262,35 @@ export async function removeDownloads(videoIds: string[]): Promise<void> {
   changed(true)
 }
 
+// A song's audio for working out its chords (chords.ts), as a ytspot-media:// URL the analysis page
+// can fetch: the downloaded file when there is one, else the low-quality stream fetched into memory
+// at full speed (a few seconds). `done` lets the memory go.
+const staged = new Map<string, { data: Buffer; type: string }>()
+export async function audioForAnalysis(videoId: string): Promise<{ url: string; done: () => void }> {
+  // From the analysis page's own origin (ytspot-media://player/), so its fetch isn't cross-origin.
+  if ((await load()).has(videoId)) return { url: `${MEDIA_SCHEME}://player/song/${videoId}`, done: () => undefined }
+  const data = await retrying(async () => {
+    const { url, size, format } = await audioStream(videoId, 'low')
+    const parts: Uint8Array[] = []
+    await pull(url, size, (chunk) => void parts.push(chunk), () => undefined)
+    return { data: Buffer.concat(parts), type: format.mime_type.split(';')[0] }
+  })
+  staged.set(videoId, data)
+  return { url: `${MEDIA_SCHEME}://player/analyze/${videoId}`, done: () => staged.delete(videoId) }
+}
+
 // ytspot-media://song/<id> (the audio, with byte ranges so it can seek) and ytspot-media://art/<id>;
-// ytspot-media://player/ is the blank page the local player runs in (see local.ts).
+// ytspot-media://player/ is the blank page the local player and the chords analysis run in (see
+// local.ts, chords.ts), which fetches songs from its own origin: player/song/<id>, and
+// player/analyze/<id> for a song staged for the analysis.
 export async function serve(req: Request): Promise<Response> {
-  const { host, pathname } = new URL(req.url)
+  let { host, pathname } = new URL(req.url)
+  if (host === 'player' && pathname !== '/') [, host = '', pathname = ''] = pathname.match(/^\/([^/]+)(\/.*)$/) ?? []
   if (host === 'player') return new Response('<!doctype html><title>ytspot</title>', { headers: { 'Content-Type': 'text/html' } })
+  if (host === 'analyze') {
+    const a = staged.get(decodeURIComponent(pathname.slice(1)))
+    return a ? new Response(new Uint8Array(a.data), { headers: { 'Content-Type': a.type } }) : new Response(null, { status: 404 })
+  }
   const s = (await load()).get(decodeURIComponent(pathname.slice(1)))
   const name = host === 'song' ? s?.file : host === 'art' ? s?.art : undefined
   if (!s || !name) return new Response(null, { status: 404 })

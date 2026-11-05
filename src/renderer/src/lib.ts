@@ -282,8 +282,11 @@ export function useCached<T>(
 }
 
 // Average colour of an image, darkened, for Spotify-style header gradients.
-export function useColor(src?: string): string {
-  const [color, setColor] = useState('rgb(83,83,83)')
+// Worked out once per image, so a page shown again starts in its colour.
+const colors = new Map<string, string>()
+// `initial`: what to show until the image's colour is known (grey otherwise).
+export function useColor(src?: string, initial?: string): string {
+  const [color, setColor] = useState(() => (src && colors.get(src)) || initial || 'rgb(83,83,83)')
   useEffect(() => {
     if (!src) return
     let live = true
@@ -300,7 +303,9 @@ export function useColor(src?: string): string {
         for (let i = 0; i < d.length; i += 4) (r += d[i]), (gr += d[i + 1]), (b += d[i + 2])
         const n = d.length / 4
         const k = 0.75
-        if (live) setColor(`rgb(${(r / n) * k | 0},${(gr / n) * k | 0},${(b / n) * k | 0})`)
+        const rgb = `rgb(${(r / n) * k | 0},${(gr / n) * k | 0},${(b / n) * k | 0})`
+        colors.set(src, rgb)
+        if (live) setColor(rgb)
       } catch {
         if (live) setColor('rgb(83,83,83)')
       }
