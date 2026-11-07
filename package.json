@@ -28,6 +28,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test:chords": "node scripts/chord-shapes-test.mjs",
     "eval:chords": "electron scripts/chords-eval.mjs",
+    "test:transfer": "node --test 'src/main/transfer/*.test.ts'",
     "dist": "electron-vite build && electron-builder --mac dir"
   },
   "dependencies": {

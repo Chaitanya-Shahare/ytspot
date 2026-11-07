@@ -1,16 +1,20 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ArtistPage, Card, LibraryFilter, PlayerState, QueueItem, ShuffleMode, Track } from '../../shared/types'
 import * as I from './components/icons'
 import { Ctx, downloadsSource, fmt, getClock, getDownloads, isRecordingKeys, libraryChanged, loadPrefs, onLibraryChange, playlistChanged, resetCache, routeFor, savePrefs, setClock, sized, useApp, useCached, useColor, useDownloads, useTime, type AppCtx, type Prefs, type Route, type SaveSong, type Source, type ToastAction, sameRoute } from './lib'
 import { bindings, comboLabel, comboOf, SHORTCUTS, type Action } from '../../shared/shortcuts'
 import { cardMenu, songMenu } from './components/menus'
-import { Boundary, Img } from './components/ui'
+import { Boundary, Img, Loading } from './components/ui'
 import { SavePopover } from './components/save'
 import { SettingsView } from './views/settings'
 import { FullScreenLyrics, LyricsCard, LyricsView, lyricsBackground } from './views/lyrics'
 import { MoodView, SearchView } from './views/search'
 import { ArtistView, CollectionView, ExploreView, HomeView, MoreView, resetHome } from './views/views'
 import { DownloadsView } from './views/downloads'
+import { CTA_KEY, progress, useTransfer } from './transfer'
+
+// Import from Spotify: its page (and styles) load only when it's opened.
+const TransferView = lazy(() => import('./views/transfer'))
 
 const LIKED: Card = { kind: 'playlist', id: 'LM', title: 'Liked Songs', subtitle: 'Playlist', thumb: '' }
 // Songs saved for offline listening, listed under Liked Songs once there are any.
@@ -476,6 +480,11 @@ export default function App() {
             {route.name === 'lyrics' && <LyricsView />}
             {route.name === 'more' && <MoreView title={route.title} browseId={route.browseId} params={route.params} />}
             {route.name === 'downloads' && <DownloadsView />}
+            {route.name === 'transfer' && (
+              <Suspense fallback={<Loading kind="rows" />}>
+                <TransferView />
+              </Suspense>
+            )}
             </Boundary>
           </div>
         </main>
@@ -673,7 +682,12 @@ function LibraryPanel({ authed, collapsed, onToggle }: { authed: boolean; collap
   const [made, setMade] = useState<Card[]>([])
   const create = async () => {
     if (!authed) return window.ytm.login()
-    const pick = await window.ytm.popup([{ id: 'playlist', label: 'Playlist' }])
+    const pick = await window.ytm.popup([
+      { id: 'playlist', label: 'Playlist' },
+      { id: '-', label: '-' },
+      { id: 'import', label: 'Import from Spotify…' }
+    ])
+    if (pick === 'import') return go({ name: 'transfer' })
     if (pick !== 'playlist') return
     // "My Playlist #N", numbered after the highest one so far, as in Spotify.
     const n = Math.max(0, ...[...made, ...lists.Playlists].map((c) => Number(c.title.match(/^My Playlist #(\d+)$/)?.[1] ?? 0))) + 1
@@ -790,6 +804,7 @@ function LibraryPanel({ authed, collapsed, onToggle }: { authed: boolean; collap
           </button>
         </div>
       )}
+      <TransferRow collapsed={collapsed} />
       <div className={`lib-list ${shownView.toLowerCase()}`}>
         {authed && find && !list.length && (
           <div className="lib-empty">
@@ -851,8 +866,51 @@ function LibraryPanel({ authed, collapsed, onToggle }: { authed: boolean; collap
             </div>
           )
         })}
+        {authed && !collapsed && !find && <ImportCard />}
       </div>
     </nav>
+  )
+}
+
+// While an import from Spotify runs: how far it's got, and a way back to it.
+function TransferRow({ collapsed }: { collapsed: boolean }) {
+  const { go, route } = useApp()
+  const state = useTransfer()
+  if (state?.phase !== 'moving' || route.name === 'transfer') return null
+  const pct = Math.floor(progress(state) * 100)
+  return (
+    <button className={`lib-transfer ${collapsed ? 'collapsed' : ''}`} onClick={() => go({ name: 'transfer' })} title={`Importing from Spotify: ${pct}%`}>
+      <I.Import size={16} />
+      {!collapsed && (
+        <>
+          <span className="lib-transfer-text">Importing from Spotify</span>
+          <span className="lib-transfer-pct">{pct}%</span>
+        </>
+      )}
+      <span className="lib-transfer-bar" style={{ width: `${pct}%` }} />
+    </button>
+  )
+}
+
+// For someone new to YouTube Music: bring their Spotify library over. Hidden once dismissed or
+// once an import has finished.
+function ImportCard() {
+  const { go } = useApp()
+  const [hidden, setHidden] = useState(() => !!localStorage.getItem(CTA_KEY))
+  const state = useTransfer()
+  if (hidden || (state && state.phase !== 'idle')) return null
+  const dismiss = () => (localStorage.setItem(CTA_KEY, 'dismissed'), setHidden(true))
+  return (
+    <div className="lib-cta import-cta">
+      <button className="icon-btn import-cta-close" onClick={dismiss} aria-label="Dismiss" title="Dismiss">
+        <I.Close size={12} />
+      </button>
+      <b>Coming from Spotify?</b>
+      <span className="sub">Bring your Liked Songs, playlists, albums and artists over in a few minutes. Free.</span>
+      <button className="pill-btn" onClick={() => go({ name: 'transfer' })}>
+        Import from Spotify
+      </button>
+    </div>
   )
 }
 

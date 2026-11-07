@@ -258,6 +258,17 @@ export async function addToPlaylist(playlistId: string, videoId: string, force =
   throw new Error('YouTube Music didn’t add the song')
 }
 
+// Several songs at once, in order, the way music.youtube.com saves a selection: one edit with an
+// action per song. Songs already in the playlist are added again (the caller decides what goes in).
+export async function addSongs(playlistId: string, videoIds: string[]): Promise<void> {
+  if (!videoIds.length) return
+  const res = await editPlaylist(
+    playlistId,
+    videoIds.map((id) => ({ action: 'ACTION_ADD_VIDEO', addedVideoId: id, dedupeOption: 'DEDUPE_OPTION_SKIP' }))
+  )
+  if (res?.status !== 'STATUS_SUCCEEDED') throw new Error('YouTube Music didn’t add the songs')
+}
+
 export async function removeFromPlaylist(playlistId: string, videoId: string): Promise<void> {
   const res = await editPlaylist(playlistId, [{ action: 'ACTION_REMOVE_VIDEO_BY_VIDEO_ID', removedVideoId: videoId }])
   if (res?.status !== 'STATUS_SUCCEEDED') throw new Error('You can only remove songs from your own playlists')
@@ -444,8 +455,8 @@ export async function account(): Promise<{ name: string; photo: string } | null>
   return me ? { name: text(me.account_name), photo: thumb(me.account_photo) } : null
 }
 
-export async function createPlaylist(title: string, videoIds: string[] = [], privacy: Privacy = 'PRIVATE'): Promise<string> {
-  const res: any = await api().actions.execute('/playlist/create', { title, privacyStatus: privacy, videoIds, client: 'YTMUSIC' })
+export async function createPlaylist(title: string, videoIds: string[] = [], privacy: Privacy = 'PRIVATE', description = ''): Promise<string> {
+  const res: any = await api().actions.execute('/playlist/create', { title, description, privacyStatus: privacy, videoIds, client: 'YTMUSIC' })
   if (!res.data?.playlistId) throw new Error('YouTube Music didn’t create the playlist')
   return `VL${res.data.playlistId}`
 }
