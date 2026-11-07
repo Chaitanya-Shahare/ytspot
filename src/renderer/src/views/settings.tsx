@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { bindings, comboLabel, comboOf, conflicts, SHORTCUTS, type Action } from '../../../shared/shortcuts'
 import type { DownloadQuality, MenuBarIcon, MenuBarMode, YtmSetting } from '../../../shared/types'
+import { INSTRUMENTS, type Instrument } from '../chord-shapes'
 import { Close, Plus } from '../components/icons'
 import { removeDownloads } from '../components/menus'
 import { ErrorBox } from '../components/ui'
@@ -62,11 +63,22 @@ export function SettingsView({ authed }: { authed: boolean }) {
       <section className="set-section">
         <h2>Experimental</h2>
         <Row
-          title="Guitar chords"
-          desc="Adds a chords button to the player bar. Turned on, it works out the chords by listening to the song as it plays and shows them over the lyrics; songs you’ve heard with it on show their chords ahead of time. Detection is rough: major and minor chords only. Uses a little extra CPU only while the button is on."
+          title="Chords"
+          desc="Adds a chords button to the player bar. Turned on, it works out the song’s chords, key and tempo from its audio in a few seconds and shows them over the lyrics, with how to play each one on guitar, ukulele or piano. Detection is rough: major and minor chords only. Uses a little extra CPU only while the button is on."
         >
           <Toggle on={prefs.chords} onChange={(v) => setPrefs({ chords: v })} />
         </Row>
+        {prefs.chords && (
+          <Row title="Chord shapes for" desc="Hover a chord to see how to play it. You can also switch instrument in the chord bar.">
+            <select className="select" value={prefs.chordInstrument} onChange={(e) => setPrefs({ chordInstrument: e.target.value as Instrument })}>
+              {INSTRUMENTS.map((i) => (
+                <option key={i.id} value={i.id}>
+                  {i.label}
+                </option>
+              ))}
+            </select>
+          </Row>
+        )}
       </section>
 
       {authed && <YtmSettings />}

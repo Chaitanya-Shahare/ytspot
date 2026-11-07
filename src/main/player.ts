@@ -495,7 +495,7 @@ export function setVideoMode(on: boolean): void {
   run(`window.__ytspot && (window.__ytspot.video = ${on}, window.__ytspot.apply())`)
 }
 
-// Guitar chords (chords.ts) listen to the song through Web Audio: YTM's <video> is routed through
+// Chords (chords.ts) listen to the song through Web Audio: YTM's <video> is routed through
 // an AnalyserNode, whose FFT runs natively on the audio thread. Ten times a second, while playing,
 // the spectrum's peaks are folded into a chroma frame (how much of each of the 12 notes sounds,
 // plus the same for the bass alone and the loudness), stamped with the song time and kept until

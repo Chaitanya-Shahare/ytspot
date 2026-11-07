@@ -477,6 +477,11 @@ kbd { font-family: inherit; font-size: 12px; color: var(--text-base); padding: 2
 .chord-chip:first-child { background: rgb(255 255 255 / calc(0.9 - var(--soon, 1) * 0.6)); color: #000; }
 .chord-wait { color: #000000b3; font-size: 14px; font-weight: 700; white-space: nowrap; }
 .chord-tools { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+/* Guitar | Ukulele | Piano: the instrument the shapes on hover are for. */
+.chord-instrument { display: flex; align-items: center; padding: 2px; border-radius: 500px; background: #00000026; }
+.chord-instrument button { height: 24px; padding: 0 10px; border-radius: 500px; color: #ffffffcc; font-size: 13px; font-weight: 700; transition: background-color .15s, color .15s; }
+.chord-instrument button:hover { color: #fff; }
+.chord-instrument button.on { background: #ffffffe6; color: #000; }
 .chord-transpose { display: flex; align-items: center; border-radius: 500px; background: #00000026; }
 .chord-transpose button { height: 28px; color: #fff; font-size: 13px; font-weight: 700; }
 .chord-step { width: 30px; font-size: 18px !important; line-height: 1; border-radius: 500px; }
@@ -490,7 +495,9 @@ kbd { font-family: inherit; font-size: 12px; color: var(--text-base); padding: 2
    soft edge rather than the panel's shadow. */
 .lyrics-page.full .chord-bar { top: 0; padding-top: 120px; box-shadow: none; }
 /* The song's loops in Roman numerals (with the chords under them), the one sounding lit up. */
-.chord-loops { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 28px; min-height: 38px; }
+.chord-foot { flex-basis: 100%; display: flex; align-items: center; gap: 16px; }
+.chord-foot .chord-instrument { flex: none; margin-left: auto; }
+.chord-loops { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 28px; min-height: 38px; }
 .chord-loop { display: flex; align-items: center; gap: 4px; }
 .loop-step { display: flex; flex-direction: column; align-items: center; min-width: 38px; padding: 3px 8px; border-radius: 6px; color: #000000b3; cursor: default; transition: background-color .15s, color .15s; }
 .loop-step b { font-size: 16px; font-weight: 800; line-height: 1.1; letter-spacing: .02em; }
@@ -504,6 +511,7 @@ kbd { font-family: inherit; font-size: 12px; color: var(--text-base); padding: 2
 /* A chord's shapes, shown on hover (Ultimate Guitar style): its name, the chord box, ‹ 1 / 4 ›. */
 .chord-card { position: fixed; z-index: 1000; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 12px 8px; border-radius: 8px; background: #282828; color: #fff; box-shadow: 0 16px 24px #00000080, 0 6px 8px #00000033; }
 .chord-card-name { font-size: 16px; font-weight: 800; }
+.chord-card-notes { color: var(--text-subdued); font-size: 12px; font-weight: 700; letter-spacing: .02em; }
 .chord-card-nav { display: flex; align-items: center; gap: 4px; color: var(--text-subdued); font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .chord-card-nav .icon-btn { width: 24px; height: 24px; }
 .chord-diagram { display: block; }
@@ -514,6 +522,13 @@ kbd { font-family: inherit; font-size: 12px; color: var(--text-base); padding: 2
 .chord-diagram .cd-mark { fill: #ffffffb3; font-size: 13px; font-weight: 700; }
 .chord-diagram .cd-finger { fill: #121212; font-size: 11px; font-weight: 800; }
 .chord-diagram .cd-base { fill: #ffffffb3; font-size: 11px; font-weight: 700; }
+/* A stretch of keyboard: the keys to press dotted with the finger to use. */
+.keys-diagram { display: block; margin: 4px 2px 0; }
+.keys-diagram .kd-white { fill: #f2f2f2; stroke: #282828; stroke-width: 1; }
+.keys-diagram .kd-black { fill: #121212; }
+.keys-diagram .kd-dot { fill: var(--green); }
+.keys-diagram .kd-finger { fill: #000; font-size: 9px; font-weight: 800; }
+.keys-diagram .kd-c4 { fill: #00000073; font-size: 8px; font-weight: 700; }
 
 /* ---------- full-screen player ---------- */
 .fs { animation: fs-in .25s ease-out; position: fixed; inset: 0; z-index: 30; background: var(--tint); display: flex; flex-direction: column; justify-content: space-between; padding: 40px 48px 32px; overflow: hidden; }
