@@ -16,6 +16,7 @@ export type Route =
   | { name: 'lyrics' }
   | { name: 'more'; title: string; browseId: string; params?: string }
   | { name: 'downloads' }
+  | { name: 'transfer' } // Import from Spotify
 
 // Where playback was started from (a playlist, album or artist page), for "Playing from".
 export interface Source {

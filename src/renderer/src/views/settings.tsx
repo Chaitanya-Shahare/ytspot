@@ -60,6 +60,8 @@ export function SettingsView({ authed }: { authed: boolean }) {
 
       <DownloadSettings />
 
+      <ImportSettings />
+
       <section className="set-section">
         <h2>Experimental</h2>
         <Row
@@ -95,6 +97,23 @@ export function SettingsView({ authed }: { authed: boolean }) {
         </section>
       )}
     </div>
+  )
+}
+
+function ImportSettings() {
+  const { go } = useApp()
+  return (
+    <section className="set-section">
+      <h2>Import</h2>
+      <Row
+        title="Import from Spotify"
+        desc="Bring your Liked Songs, playlists, saved albums and followed artists over to YouTube Music. Free, with no limits; importing again later adds only what’s new."
+      >
+        <button className="outline-btn" onClick={() => go({ name: 'transfer' })}>
+          Import
+        </button>
+      </Row>
+    </section>
   )
 }
 

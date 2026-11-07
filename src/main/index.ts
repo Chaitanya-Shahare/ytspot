@@ -13,6 +13,7 @@ import { checkForUpdates, initUpdater, promptUpdate, setAutoUpdate, updateState 
 import { command, createPlayerWindow, fitVideo, parkVideo, pauseYtm, placeVideo, rateVideo, saveToLibrary, subscribe, getState, onLoggedIn, setVideoMode, setChordCapture, applyYtmSetting, showLogin, signOut, uploadImage, ytmSession, ytmSettings } from './player'
 import { bindings, DEFAULT_PREFS, type Action } from '../shared/shortcuts'
 import type { Download, DownloadQuality, MainPrefs, MenuBarIcon, MenuBarMode, PlayerCommand, PlayerState, Track, VideoRect } from '../shared/types'
+import type { TransferApi } from '../shared/transfer'
 
 const dir = fileURLToPath(new URL('.', import.meta.url))
 // Test runs (YTSPOT_PROFILE=<dir>) get their own profile so they never share data, the keychain
@@ -70,6 +71,7 @@ async function syncAuth(): Promise<void> {
   if (now && loggedIn === false) onLoggedIn()
   loggedIn = now
   ui?.send('auth', loggedIn)
+  transferLoaded?.authChanged()
 }
 
 function createMain(): BaseWindow {
@@ -125,6 +127,8 @@ function createMain(): BaseWindow {
   win.on('leave-full-screen', () => wc.send('fullscreen', false))
   // A reloading UI can't report that the video slot went away; put the video back out of sight.
   wc.on('did-start-loading', () => parkVideo())
+  // A reopened window picks up a Spotify import that's still running (only if one was started).
+  wc.on('did-finish-load', () => transferLoaded?.resend())
   sent = null
   if (process.env.ELECTRON_RENDERER_URL) wc.loadURL(process.env.ELECTRON_RENDERER_URL)
   else wc.loadFile(join(dir, '../renderer/index.html'))
@@ -244,9 +248,27 @@ function popup(e: Electron.IpcMainInvokeEvent, items: PopupItem[]) {
   })
 }
 
+// Importing from Spotify (transfer/): loaded the first time the import page asks, so nobody who
+// doesn't use it pays for it.
+let transfer: Promise<typeof import('./transfer')> | null = null
+let transferLoaded: typeof import('./transfer') | null = null
+const transferModule = () =>
+  (transfer ??= import('./transfer').then(async (m) => {
+    // Test runs can stand public playlists in for a Spotify library (see transfer/fixture.ts).
+    const fixture = testProfile ? process.env.YTSPOT_TRANSFER_FIXTURE?.split(',').filter(Boolean) : undefined
+    await m.init({
+      send: (s) => ui?.send('transfer', s),
+      file: join(app.getPath('userData'), 'transfer.json'),
+      signedIn: () => !!loggedIn || !!fixture?.length,
+      fixture
+    })
+    return (transferLoaded = m)
+  }))
+
 app.on('before-quit', () => {
   quitting = true
   saveChords()
+  transferLoaded?.flush()
 })
 app.on('activate', () => showMain())
 
@@ -304,6 +326,14 @@ app.whenReady().then(() => {
     const saved = await savedLyrics(q.videoId)
     return saved !== undefined ? saved : onlineLyrics(e, q)
   })
+  ipcMain.handle(
+    'transfer',
+    data(async <K extends keyof TransferApi>(method: K, ...args: Parameters<TransferApi[K]>) => {
+      const { api } = await transferModule()
+      if (typeof api[method] !== 'function') throw new Error(`Unknown import call: ${method}`)
+      return (api[method] as (...a: unknown[]) => unknown)(...args)
+    })
+  )
   ipcMain.handle('dl:state', () => downloadsState())
   ipcMain.handle('dl:add', (_, tracks: Track[], quality: DownloadQuality) => download(tracks, quality))
   ipcMain.handle('dl:remove', (_, videoIds: string[]) => removeDownloads(videoIds))

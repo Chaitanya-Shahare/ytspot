@@ -845,10 +845,11 @@ const SETTINGS_APPLY = (endpoint: unknown) => `(async (ep) => {
 
 // Like / unlike any song via YTM's own client (youtubei.js's WEB-client like call returns 400).
 export async function rateVideo(videoId: string, like: boolean): Promise<void> {
-  await page?.executeJavaScript(
+  const ok = await page?.executeJavaScript(
     `document.querySelector('ytmusic-app').networkManager.fetch('/like/${like ? 'like' : 'removelike'}', { target: { videoId: ${JSON.stringify(videoId)} } }).then(() => true)`,
     true
   )
+  if (!ok) throw new Error('YouTube Music isn’t loaded yet')
 }
 
 // Save an album or someone's playlist to your library (or remove it) through YTM's own client.
@@ -862,10 +863,11 @@ export async function saveToLibrary(playlistId: string, on: boolean): Promise<vo
 
 // Follow / unfollow an artist (a YouTube subscription) through YTM's own client.
 export async function subscribe(channelId: string, on: boolean): Promise<void> {
-  await page?.executeJavaScript(
+  const ok = await page?.executeJavaScript(
     `document.querySelector('ytmusic-app').networkManager.fetch('/subscription/${on ? 'subscribe' : 'unsubscribe'}', { channelIds: [${JSON.stringify(channelId)}] }).then(() => true)`,
     true
   )
+  if (!ok) throw new Error('YouTube Music isn’t loaded yet')
 }
 
 // Reading settings clicks through YTM's dialog with short waits, which a throttled page would

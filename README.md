@@ -82,6 +82,7 @@ The UI is a separate React app, not a restyle of the YouTube Music website. Its 
 
 ### Library and playlists
 
+- **Import from Spotify, free.** Bring your Liked Songs, playlists, saved albums and followed artists over to YouTube Music in a few minutes, with no limits. Log in to Spotify in a window inside ytspot, pick what to bring, and keep listening while it runs. Liked Songs keep their order and playlists come over as private ones. Afterwards, ytspot lists anything YouTube Music doesn't have, so you can pick a version yourself or leave it out. Importing again later adds only what's new. Open it from **Create → Import from Spotify…** or **Settings → Import**.
 - **Your Library** in Grid, List or Compact view, with search, sort and pinning. Save albums and other people's playlists to it.
 - **Playlist editing:** create, delete, and edit the name, description, privacy and cover image, all saved to YouTube Music.
 - The **+** button saves to Liked Songs, then opens an **Add to playlist** popover. Duplicate adds ask first.
@@ -188,6 +189,7 @@ Press **⌘/** or **?** in the app for the full list. Change any of them in **Se
 - **Data:** [youtubei.js](https://github.com/LuanRT/YouTube.js) calls YouTube Music's InnerTube API from the main process, using your session cookies.
 - **Playback:** a hidden `music.youtube.com` window plays the audio. ytspot sends it commands and reads its state. YouTube's player handles stream deciphering, so playback doesn't break when YouTube changes its streaming internals.
 - **Lyrics:** synced lyrics from [LRCLIB](https://lrclib.net), falling back to YouTube Music's lyrics.
+- **Import from Spotify:** you log in to Spotify in a window of its own, and the library is read through the same API Spotify's web player uses, then matched song by song (title, artists, length and album) with YouTube Music searches. All of it runs on your Mac; there's no ytspot server. The code (`src/main/transfer/`) only loads when you open the import page.
 - **macOS:** the player's MediaSession feeds Control Center and the media keys; the menu bar shows your current key bindings.
 
 ## Compared with other YouTube Music desktop apps
@@ -211,7 +213,7 @@ Google doesn't make one; music.youtube.com is a website. ytspot is a free, open-
 No. ytspot plays without ads either way. Premium features such as higher audio quality work if your account has them.
 
 **Can I use Spotify playlists?**
-No. ytspot only looks like Spotify; your music, library and playlists come from YouTube Music.
+Yes, by importing them: **Create → Import from Spotify…** copies your Liked Songs, playlists, albums and artists to YouTube Music, for free. ytspot itself plays from YouTube Music; it only looks like Spotify.
 
 **Does it work without signing in?**
 Yes. You can browse, search and play as a guest. Sign in to see your library, likes and playlists.

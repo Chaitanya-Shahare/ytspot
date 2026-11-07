@@ -907,3 +907,15 @@ html:has(.fs-video.shown) .app { visibility: hidden; }
 .downloading-note { margin: -8px 0 16px; }
 .error-actions { display: flex; gap: 12px; align-items: center; }
 .error-actions .outline-btn { margin-top: 8px; height: 40px; padding: 0 24px; }
+
+/* Import from Spotify: the sidebar's progress row and its "Coming from Spotify?" card (the page has
+   its own styles, views/transfer.css). */
+.lib-transfer { position: relative; display: flex; align-items: center; gap: 12px; margin: 4px 8px 8px; padding: 10px 12px; border-radius: var(--radius-larger); background: var(--background-tinted-base); color: var(--text-base); font-size: 14px; text-align: left; overflow: hidden; flex: none; }
+.lib-transfer:hover { background: var(--background-tinted-highlight); }
+.lib-transfer svg { color: var(--green); flex: none; }
+.lib-transfer.collapsed { justify-content: center; padding: 12px 0; }
+.lib-transfer-text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lib-transfer-pct { color: var(--text-subdued); font-variant-numeric: tabular-nums; }
+.lib-transfer-bar { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--green); transition: width .4s ease; }
+.import-cta { position: relative; margin: 16px 0 8px; padding-right: 40px; }
+.import-cta-close { position: absolute; top: 12px; right: 12px; width: 24px; height: 24px; }

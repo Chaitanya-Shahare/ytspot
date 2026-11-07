@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, webFrame } from 'electron'
 import type { Action } from '../shared/shortcuts'
 import type { Card, Chords, DownloadQuality, DownloadsState, HomeData, LibraryFilter, Lyrics, MainPrefs, More, PlayerCommand, PlayerState, Privacy, SearchFilter, Track, UpdateState, VideoRect, YtmSetting } from '../shared/types'
 import type { LyricsQuery } from '../main/lyrics'
+import type { TransferApi, TransferState } from '../shared/transfer'
 
 export interface PopupItem {
   id: string
@@ -9,6 +10,24 @@ export interface PopupItem {
   enabled?: boolean
   checked?: boolean
   submenu?: PopupItem[]
+}
+
+// Importing from Spotify: each call goes over one channel as (method, ...arguments).
+const call =
+  <K extends keyof TransferApi>(method: K) =>
+  (...args: Parameters<TransferApi[K]>) =>
+    ipcRenderer.invoke('transfer', method, ...args) as ReturnType<TransferApi[K]>
+const transfer: TransferApi = {
+  state: call('state'),
+  connect: call('connect'),
+  cancel: call('cancel'),
+  start: call('start'),
+  stop: call('stop'),
+  resume: call('resume'),
+  reset: call('reset'),
+  disconnect: call('disconnect'),
+  find: call('find'),
+  fix: call('fix')
 }
 
 const bridge = {
@@ -77,6 +96,12 @@ const bridge = {
     const fn = (_: unknown, t: number) => cb(t)
     ipcRenderer.on('player:time', fn)
     return () => void ipcRenderer.removeListener('player:time', fn)
+  },
+  transfer,
+  onTransfer: (cb: (s: TransferState) => void) => {
+    const fn = (_: unknown, s: TransferState) => cb(s)
+    ipcRenderer.on('transfer', fn)
+    return () => void ipcRenderer.removeListener('transfer', fn)
   },
   onDownloads: (cb: (s: DownloadsState) => void) => {
     const fn = (_: unknown, s: DownloadsState) => cb(s)

@@ -1,0 +1,105 @@
+/* Import from Spotify (views/transfer.tsx). Loaded with that page only. */
+.transfer { padding-bottom: 96px; }
+.transfer > :not(.hero) { max-width: 980px; }
+.transfer-art { display: grid; place-items: center; background: linear-gradient(135deg, #0d5d36 0%, var(--green) 55%, #ff4e45 130%); color: #fff; }
+.transfer-hero .hero-title { font-size: clamp(2rem, 6cqw, 4.5rem); }
+
+.tr-panel { margin-top: 16px; padding: 24px; background: var(--background-elevated-base); border-radius: var(--radius-larger-2); display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.tr-panel h2 { font-size: 20px; font-weight: 700; }
+.tr-primary { margin: 0; height: 48px; padding: 0 32px; font-size: 16px; }
+.green-btn { background: var(--green); }
+.green-btn:hover { background: var(--green-hover); }
+.pill-btn:disabled, .outline-btn:disabled { opacity: .5; cursor: default; transform: none; }
+.tr-actions { display: flex; align-items: center; gap: 12px; margin-top: 16px; flex-wrap: wrap; }
+.tr-fine { font-size: 13px; line-height: 1.5; max-width: 640px; margin-top: 16px; }
+.tr-error { background: #e9142926; border-radius: var(--radius-larger-2); padding: 12px 16px; margin: 8px 0; font-size: 14px; color: var(--text-base); }
+.tr-link { color: var(--text-subdued); font-size: 14px; }
+.tr-link:hover { color: var(--text-base); text-decoration: underline; }
+
+/* What moves where */
+.tr-moves { list-style: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; margin-top: 8px; }
+.tr-moves li { display: flex; gap: 12px; align-items: flex-start; padding: 16px; border-radius: var(--radius-larger-2); background: var(--background-tinted-base); }
+.tr-moves li div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.tr-moves li .sub { font-size: 13px; line-height: 1.4; }
+.tr-move-icon { flex: none; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: #ffffff1a; color: var(--green); }
+
+/* Waiting on Spotify */
+.tr-busy { flex-direction: row; align-items: center; gap: 20px; }
+.tr-busy > div { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.tr-spinner { width: 32px; height: 32px; border-radius: 50%; border: 3px solid #ffffff26; border-top-color: var(--green); animation: tr-spin .8s linear infinite; flex: none; }
+.tr-spinner.small { width: 16px; height: 16px; border-width: 2px; }
+@keyframes tr-spin { to { transform: rotate(360deg); } }
+
+/* Choosing */
+.tr-account { display: flex; align-items: center; gap: 12px; margin: 8px 0 0; color: var(--text-subdued); }
+.tr-account b { color: var(--text-base); }
+.tr-group { margin-top: 24px; display: flex; flex-direction: column; }
+.tr-group-head { display: flex; align-items: center; gap: 16px; padding: 0 8px 8px; flex-wrap: wrap; }
+.tr-group-head h2 { font-size: 20px; font-weight: 700; }
+.tr-group-head .sub { flex: 1; font-size: 14px; }
+.tr-find { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; border-radius: var(--radius-base); background: var(--background-tinted-base); color: var(--text-subdued); }
+.tr-find input { background: none; border: 0; outline: none; color: var(--text-base); font: inherit; font-size: 14px; width: 160px; }
+.tr-empty { padding: 16px 8px; }
+
+.tr-pick, .tr-item { display: flex; align-items: center; gap: 12px; width: 100%; padding: 8px; border-radius: var(--radius-larger); text-align: left; content-visibility: auto; contain-intrinsic-size: auto 64px; }
+.tr-pick:hover, .tr-item.openable:hover { background: var(--background-tinted-base); }
+.tr-item.openable { cursor: pointer; }
+.tr-check { flex: none; width: 20px; height: 20px; border-radius: 4px; border: 2px solid #ffffff80; display: grid; place-items: center; color: #000; transition: background .1s, border-color .1s; }
+.tr-pick:hover .tr-check { border-color: #fff; }
+.tr-pick.on .tr-check { background: var(--green); border-color: var(--green); }
+.tr-pick:not(.on) .tr-pick-text { opacity: .7; }
+.tr-art { width: 48px; height: 48px; border-radius: var(--radius-base); flex: none; }
+.tr-art.small { width: 40px; height: 40px; }
+.tr-art.img-fallback { display: grid; place-items: center; }
+.tr-icon-art { display: grid; place-items: center; background: #ffffff1a; color: var(--text-subdued); }
+.tr-stack { position: relative; }
+.tr-stack img, .tr-stack .img-fallback { position: absolute; width: 36px; height: 36px; border-radius: var(--radius-base); box-shadow: 0 2px 8px #0008; }
+.tr-stack > :nth-child(1) { left: 0; top: 0; z-index: 3; }
+.tr-stack > :nth-child(2) { left: 6px; top: 6px; z-index: 2; }
+.tr-stack > :nth-child(3) { left: 12px; top: 12px; z-index: 1; }
+.tr-pick-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.tr-pick-title { font-size: 16px; color: var(--text-base); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tr-pick-text .sub { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tr-tag { margin-left: 8px; padding: 1px 6px; border-radius: 4px; background: #ffffff1a; color: var(--text-base); font-size: 12px; }
+
+.tr-footer { position: sticky; bottom: 16px; z-index: 2; margin-top: 24px; display: flex; align-items: center; gap: 12px; padding: 16px 16px 16px 24px; border-radius: var(--radius-larger-2); background: var(--background-elevated-highlight); box-shadow: 0 8px 24px #00000080; }
+.tr-footer-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.tr-footer-text b { font-size: 16px; }
+.tr-footer-text .sub { font-size: 13px; }
+.tr-footer .tr-primary { height: 40px; padding: 0 28px; }
+
+/* Importing */
+.tr-progress { gap: 12px; align-items: stretch; }
+.tr-progress-head { display: flex; align-items: center; gap: 16px; }
+.tr-pct { font-size: 48px; font-weight: 900; letter-spacing: -.03em; font-variant-numeric: tabular-nums; min-width: 3ch; }
+.tr-progress-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.tr-progress-text b { font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tr-bar { height: 6px; border-radius: 3px; background: #ffffff26; overflow: hidden; }
+.tr-bar span { display: block; height: 100%; border-radius: inherit; background: var(--green); transition: width .4s ease; }
+.tr-counts { font-size: 14px; }
+.tr-progress .tr-fine { margin-top: 0; }
+.tr-items .tr-item.waiting .tr-pick-text { opacity: .6; }
+.tr-item-state { flex: none; display: flex; align-items: center; gap: 12px; color: var(--text-subdued); }
+.tr-mini { width: 64px; height: 4px; border-radius: 2px; background: linear-gradient(90deg, var(--green) calc(var(--done) * 100%), #ffffff26 0); }
+.tr-item.failed .tr-pick-text .sub { color: #f15e6c; }
+
+/* Results */
+.tr-tiles { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+.tr-tile { min-width: 140px; padding: 16px 20px; border-radius: var(--radius-larger-2); background: var(--background-tinted-base); display: flex; flex-direction: column; gap: 2px; }
+.tr-tile b { font-size: 32px; font-weight: 900; letter-spacing: -.02em; }
+.tr-missing-group h3 { font-size: 14px; font-weight: 700; color: var(--text-subdued); padding: 16px 8px 4px; }
+.tr-missing-row { border-radius: var(--radius-larger); content-visibility: auto; contain-intrinsic-size: auto 60px; }
+.tr-missing-row.open { background: var(--background-tinted-base); content-visibility: visible; }
+.tr-missing-main { display: flex; align-items: center; gap: 12px; padding: 8px; }
+.tr-missing-main .tr-pick-title { font-size: 15px; }
+.tr-offers { display: flex; flex-direction: column; padding: 0 8px 8px 20px; }
+.tr-offers-note { padding: 8px; font-size: 14px; align-self: flex-start; }
+.tr-offer { display: flex; align-items: center; gap: 12px; padding: 6px 8px; border-radius: var(--radius-base); }
+.tr-offer:hover { background: var(--background-tinted-base); }
+.tr-offer .tr-pick-title { font-size: 14px; }
+.tr-offer .tr-pick-text .sub { font-size: 13px; }
+.tr-offer-play { position: relative; flex: none; border-radius: var(--radius-base); overflow: hidden; }
+.tr-offer-play svg { position: absolute; inset: 0; margin: auto; opacity: 0; color: #fff; transition: opacity .1s; }
+.tr-offer-play::after { content: ''; position: absolute; inset: 0; background: #0009; opacity: 0; transition: opacity .1s; }
+.tr-offer-play svg { z-index: 1; }
+.tr-offer-play:hover svg, .tr-offer-play:hover::after, .tr-offer-play:focus-visible svg, .tr-offer-play:focus-visible::after { opacity: 1; }

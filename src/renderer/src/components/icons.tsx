@@ -242,3 +242,20 @@ export const ViewGrid = svg(
   </>,
   true
 )
+// Moving music in from another app: an arrow into a tray.
+export const Import = svg(<path d="M8 1.75v8.5M4.75 7 8 10.25 11.25 7M2 10.5v2.25c0 .83.67 1.5 1.5 1.5h9c.83 0 1.5-.67 1.5-1.5V10.5" />, true)
+export const Check = svg(<path d="m3 8.5 3.25 3.25L13 5" />, true)
+export const Album = svg(
+  <>
+    <circle cx="8" cy="8" r="6.25" />
+    <circle cx="8" cy="8" r="1.75" />
+  </>,
+  true
+)
+export const Artist = svg(
+  <>
+    <circle cx="8" cy="5.25" r="3" />
+    <path d="M2.5 14.25c.6-2.9 2.85-4.5 5.5-4.5s4.9 1.6 5.5 4.5" />
+  </>,
+  true
+)
