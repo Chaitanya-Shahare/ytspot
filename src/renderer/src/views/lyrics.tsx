@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Chords, Lyrics, PlayerState } from '../../../shared/types'
-import { numeral, progressions, transpose, useChordShapes } from '../components/chords'
+import { numeral, progressions, respell, type Instrument } from '../chord-shapes'
+import { InstrumentSwitch, useChordShapes } from '../components/chords'
 import * as I from '../components/icons'
 import { ErrorBox } from '../components/ui'
 import { liveClock, setClock, useApp, useCached, useColor } from '../lib'
@@ -54,18 +55,15 @@ function seekTo(t: number | undefined, playing: boolean): void {
 
 function SongLyrics({ player, full }: { player: PlayerState; full?: boolean }) {
   const { data, error, retry } = useLyrics(player)
-  const { prefs } = useApp()
+  const { prefs, setPrefs } = useApp()
   const chordsOn = prefs.chords && prefs.showChords
   const heard = useChords(player.videoId, chordsOn)
   const [song, setSong] = useSongChordPrefs(player.videoId)
-  // Everything below shows the chords as transposed.
-  const chords = useMemo(
-    () => (heard && song.transpose ? { ...heard, key: transpose(heard.key, song.transpose), chords: heard.chords.map((c) => ({ ...c, name: transpose(c.name, song.transpose) })) } : heard),
-    [heard, song.transpose]
-  )
+  // Everything below shows the chords as transposed, each spelled as the key spells it.
+  const chords = useMemo(() => heard && respell(heard, song.transpose), [heard, song.transpose])
   // Placed once per chords update, not on every line change.
   const placed = useMemo(() => (chords && data?.synced ? data.lines.map((_, i) => lineChords(data, chords, i)) : null), [chords, data])
-  const shapes = useChordShapes()
+  const shapes = useChordShapes(prefs.chordInstrument)
   const tint = useColor(player.thumb, lastLyricsColor)
   useEffect(() => void (lastLyricsColor = tint), [tint])
   const bg = lyricsBackground(tint)
@@ -92,7 +90,17 @@ function SongLyrics({ player, full }: { player: PlayerState; full?: boolean }) {
 
   return (
     <div ref={pageRef} className={`page lyrics-page ${full ? 'full' : ''}`} style={{ '--lyrics-bg': bg } as React.CSSProperties} onWheel={() => data?.synced && setAway(true)}>
-      {chordsOn && <ChordBar chords={chords} playing={player.playing} song={song} setSong={setSong} bind={shapes.bind} />}
+      {chordsOn && (
+        <ChordBar
+          chords={chords}
+          playing={player.playing}
+          song={song}
+          setSong={setSong}
+          instrument={prefs.chordInstrument}
+          setInstrument={(chordInstrument) => setPrefs({ chordInstrument })}
+          bind={shapes.bind}
+        />
+      )}
       {shapes.popover}
       {error && data === undefined ? (
         <ErrorBox error={error} onRetry={retry} />
@@ -226,13 +234,16 @@ function ChordLine({ text, at, bind }: { text: string; at: { at: number; name: s
   return <>{parts}</>
 }
 
-// The chord sounding now and the ones coming next, for playing along, with the key, the tempo and
-// transposing. It keeps its place and size from before the chords arrive, so nothing jumps.
-function ChordBar({ chords, playing, song, setSong, bind }: {
+// The chord sounding now and the ones coming next, for playing along, with the key, the tempo, the
+// recording's tuning when it's off, transposing and the instrument to show shapes for. It keeps its
+// place and size from before the chords arrive, so nothing jumps.
+function ChordBar({ chords, playing, song, setSong, instrument, setInstrument, bind }: {
   chords: Chords | null
   playing: boolean
   song: SongChordPrefs
   setSong: (p: Partial<SongChordPrefs>) => void
+  instrument: Instrument
+  setInstrument: (i: Instrument) => void
   bind: BindChord
 }) {
   const [t, setT] = useState(() => liveClock(playing))
@@ -253,6 +264,8 @@ function ChordBar({ chords, playing, song, setSong, bind }: {
   const soon = coming[0] ? Math.max(0, coming[0].time - t) : 0
   const whole = !!chords && chords.heard >= 0.97
   const tempo = chords?.tempo ? Math.round(chords.tempo * song.tempo) : 0
+  // Only worth a mention when it's enough to hear against a tuned instrument.
+  const tuning = chords?.tuning && Math.abs(chords.tuning) >= 15 ? { cents: Math.abs(chords.tuning), dir: chords.tuning < 0 ? 'flat' : 'sharp' } : null
   const by = song.transpose
   const status = !chords || chords.working ? 'Working out the chords…' : !list.length ? 'Listening for chords…' : !coming.length && !whole ? 'Listening for chords…' : ''
   return (
@@ -283,6 +296,11 @@ function ChordBar({ chords, playing, song, setSong, bind }: {
         </div>
         <div className="chord-meta">
           {chords?.key && <span>Key: {chords.key}</span>}
+          {tuning && (
+            <span title={`This recording is ${tuning.cents} cents ${tuning.dir} of standard pitch (A = 440 Hz). The chords are named for the nearest note; tune ${tuning.dir === 'flat' ? 'down' : 'up'} ${tuning.cents} cents to play along.`}>
+              Tuned {tuning.cents}¢ {tuning.dir}
+            </span>
+          )}
           {tempo > 0 && (
             <button
               className="chord-tempo"
@@ -297,18 +315,21 @@ function ChordBar({ chords, playing, song, setSong, bind }: {
         </div>
       </div>
       {/* Always there (empty while working), so the bar doesn't change height when they arrive. */}
-      <div className="chord-loops" aria-label="Chord progressions">
-        {loops.map((p, k) => (
-          <div key={k} className="chord-loop">
-            {p.loop.map((c, j) => (
-              <span key={j} className={`loop-step ${c === now?.name ? 'on' : ''}`} {...bind(c)}>
-                <b>{numeral(c, key) || c}</b>
-                {numeral(c, key) && <small>{c}</small>}
-              </span>
-            ))}
-            <span className="loop-times">×{p.times}</span>
-          </div>
-        ))}
+      <div className="chord-foot">
+        <div className="chord-loops" aria-label="Chord progressions">
+          {loops.map((p, k) => (
+            <div key={k} className="chord-loop">
+              {p.loop.map((c, j) => (
+                <span key={j} className={`loop-step ${c === now?.name ? 'on' : ''}`} {...bind(c)}>
+                  <b>{numeral(c, key) || c}</b>
+                  {numeral(c, key) && <small>{c}</small>}
+                </span>
+              ))}
+              <span className="loop-times">×{p.times}</span>
+            </div>
+          ))}
+        </div>
+        <InstrumentSwitch value={instrument} onChange={setInstrument} />
       </div>
     </div>
   )

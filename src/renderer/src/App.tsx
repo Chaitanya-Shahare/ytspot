@@ -1627,7 +1627,7 @@ function PlayerBar(props: {
           <I.NowPlaying />
         </button>
         {prefs.chords && (
-          <button className={`icon-btn ${prefs.showChords ? 'green dot' : ''}`} onClick={toggleChords} aria-label="Guitar chords" title="Guitar chords">
+          <button className={`icon-btn ${prefs.showChords ? 'green dot' : ''}`} onClick={toggleChords} aria-label="Chords" title="Chords">
             <I.Chords />
           </button>
         )}

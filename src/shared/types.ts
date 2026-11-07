@@ -84,6 +84,7 @@ export interface Chords {
   chords: { time: number; end: number; name: string }[]
   heard: number // how much of the song has been heard (or worked out), 0..1
   tempo?: number // beats per minute, once the whole song has been worked out
+  tuning?: number // cents the recording is off A440 (its chords are named for the nearest semitone)
   working?: boolean // the whole song is being worked out right now
 }
 

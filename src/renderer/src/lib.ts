@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState, useSyncExternal
 import type { ShortcutPrefs } from '../../shared/shortcuts'
 import { DEFAULT_PREFS } from '../../shared/shortcuts'
 import type { Card, DownloadQuality, DownloadsState, MenuBarIcon, MenuBarMode, More, PlayerState, Track, UpdateState } from '../../shared/types'
+import type { Instrument } from './chord-shapes'
 
 export type Route =
   | { name: 'home' }
@@ -66,11 +67,12 @@ export interface Prefs {
   menuBarIcon: MenuBarIcon
   autoUpdate: boolean // download new versions in the background and install them on quit
   downloadQuality: DownloadQuality // for songs downloaded from now on
-  chords: boolean // experimental: offer the guitar chords button in the player bar
+  chords: boolean // experimental: offer the chords button in the player bar
   showChords: boolean // that button: work out the song's chords from its audio and show them with the lyrics
+  chordInstrument: Instrument // the instrument chord shapes are shown for
 }
 
-const PREF_DEFAULTS: Prefs = { shortcuts: DEFAULT_PREFS, keepPlaying: true, openAtLogin: false, videoMode: false, keyboardNav: false, menuBar: 'both', menuBarIcon: 'note', autoUpdate: false, downloadQuality: 'high', chords: false, showChords: false }
+const PREF_DEFAULTS: Prefs = { shortcuts: DEFAULT_PREFS, keepPlaying: true, openAtLogin: false, videoMode: false, keyboardNav: false, menuBar: 'both', menuBarIcon: 'note', autoUpdate: false, downloadQuality: 'high', chords: false, showChords: false, chordInstrument: 'guitar' }
 export const loadPrefs = (): Prefs => ({ ...PREF_DEFAULTS, ...JSON.parse(localStorage.getItem('prefs') ?? '{}') })
 export const savePrefs = (p: Prefs) => localStorage.setItem('prefs', JSON.stringify(p))
 
