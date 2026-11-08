@@ -14,8 +14,9 @@ const PAGE_JS = `(() => {
   const a = new Audio()
   a.preload = 'auto'
   // \`tracks\` in the order they were given; \`order\` the play order (indexes into it); \`pos\` the
-  // playing one's place in \`order\`.
-  const s = { tracks: [], order: [], pos: -1, repeat: 'NONE', shuffle: 'off', liked: new Set(), rev: 0 }
+  // playing one's place in \`order\`. \`queued\`: songs the user added with "Play next" ('next') or
+  // "Add to queue" ('end'), which shuffle leaves where they were put, as in player.ts.
+  const s = { tracks: [], order: [], pos: -1, repeat: 'NONE', shuffle: 'off', liked: new Set(), queued: new Map(), rev: 0 }
   const cur = () => s.tracks[s.order[s.pos]]
   const bump = () => s.rev++
   const mix = (x) => { for (let i = x.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [x[i], x[j]] = [x[j], x[i]] } return x }
@@ -39,15 +40,34 @@ const PAGE_JS = `(() => {
     s.pos--
     start()
   }
-  // Shuffle keeps the playing song and mixes up everything else after it, as on Spotify; off puts
-  // the queue back in the order it was given. Songs taken out of the queue stay out.
+  // Shuffle, as on Spotify (and as player.ts does for YouTube Music): the playing song first, then
+  // songs the user put next, then everything else mixed up, then songs added to the end.
+  const shuffleAll = (playing) => {
+    const queued = s.order.slice(s.pos + 1).filter((i) => s.queued.has(i))
+    const next = queued.filter((i) => s.queued.get(i) === 'next'), last = queued.filter((i) => s.queued.get(i) === 'end')
+    return [playing, ...next, ...mix(s.order.filter((i) => i !== playing && !queued.includes(i))), ...last]
+  }
+  // Off: back to the order the songs were given in, carrying on from the playing song. Queued songs
+  // stay right after the song they followed, except ones added to the end that are still to come:
+  // those go back to the end. Songs taken out of the queue stay out.
+  const unshuffle = () => {
+    let at = -1
+    const ranked = s.order.map((i, k) => {
+      const own = !s.queued.has(i)
+      if (own) at = i
+      return { i, at: !own && k > s.pos && s.queued.get(i) === 'end' ? Infinity : at, own, k }
+    })
+    ranked.sort((x, y) => x.at - y.at || y.own - x.own || x.k - y.k)
+    return ranked.map((r) => r.i)
+  }
   const setShuffle = (mode) => {
     const on = mode !== 'off', playing = s.order[s.pos]
+    if (playing !== undefined && on !== (s.shuffle !== 'off')) {
+      s.order = on ? shuffleAll(playing) : unshuffle()
+      s.pos = s.order.indexOf(playing)
+      bump()
+    }
     s.shuffle = on ? 'on' : 'off'
-    if (playing === undefined) return
-    s.order = on ? [playing, ...mix(s.order.filter((i) => i !== playing))] : [...s.order].sort((x, y) => x - y)
-    s.pos = s.order.indexOf(playing)
-    bump()
   }
   a.addEventListener('ended', () => next(true))
   const ms = navigator.mediaSession
@@ -61,7 +81,8 @@ const PAGE_JS = `(() => {
       s.tracks = tracks
       s.order = tracks.map((_, i) => i)
       s.pos = index
-      if (s.shuffle !== 'off') setShuffle('on')
+      s.queued = new Map()
+      if (s.shuffle !== 'off') ((s.order = shuffleAll(s.order[s.pos])), (s.pos = 0))
       if (volume !== undefined) a.volume = volume / 100
       start()
     },
@@ -90,7 +111,9 @@ const PAGE_JS = `(() => {
     },
     add(tracks, soon) {
       const at = soon ? s.pos + 1 : s.order.length
-      s.order.splice(at, 0, ...tracks.map((_, i) => s.tracks.length + i))
+      const ids = tracks.map((_, i) => s.tracks.length + i)
+      s.order.splice(at, 0, ...ids)
+      for (const i of ids) s.queued.set(i, soon ? 'next' : 'end')
       s.tracks.push(...tracks)
       bump()
     },
