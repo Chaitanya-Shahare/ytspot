@@ -5,7 +5,7 @@ import { cardMenu, queue } from '../components/menus'
 import { CardTile, ErrorBox, GreenPlay, Img, Loading, ShelfRow, StickyHead, TrackTable } from '../components/ui'
 import { DeletePlaylist, EditDetails, PlaylistExtras } from './playlist'
 import { DownloadButton } from './downloads'
-import { libraryChanged, moreRoute, routeFor, sameRoute, sized, useApp, useCached, useColor } from '../lib'
+import { getDownloads, libraryChanged, markRecent, moreRoute, routeFor, sameRoute, sized, useApp, useCached, useColor } from '../lib'
 
 // "55 songs • 3 hours, 9 minutes" -> "55 songs, 3 hr 9 min", as Spotify writes it.
 const spotifyMeta = (m: string) =>
@@ -110,7 +110,18 @@ export function ExploreView() {
 const SORT_ORDERS = ['Custom order', 'Title', 'Artist', 'Album', 'Duration'] as const
 type SortOrder = (typeof SORT_ORDERS)[number]
 
-const shuffled = (tracks: Track[]) => tracks[Math.floor(Math.random() * tracks.length)]
+// Offline only downloaded songs can play, so Play and Shuffle play start from one of those (if
+// none are, the song tried says so).
+const playable = (tracks: Track[]) => {
+  if (navigator.onLine) return tracks
+  const { ids } = getDownloads()
+  const saved = tracks.filter((t) => ids.has(t.videoId))
+  return saved.length ? saved : tracks
+}
+const shuffled = (tracks: Track[]) => {
+  const list = playable(tracks)
+  return list[Math.floor(Math.random() * list.length)]
+}
 
 export function CollectionView({ kind, id }: { kind: 'playlist' | 'album'; id: string }) {
   const { player, playTrack, toast, go, source } = useApp()
@@ -183,14 +194,16 @@ export function CollectionView({ kind, id }: { kind: 'playlist' | 'album'; id: s
     ])
     if (pick && pick !== 'head') setOrder(pick as SortOrder)
   }
-  const play = () =>
-    isCurrent ? window.ytm.cmd({ type: 'toggle' }) : data.tracks[0] && playTrack(data.tracks[0], data.playlistId, from)
+  const play = () => {
+    const first = playable(data.tracks)[0]
+    return isCurrent ? window.ytm.cmd({ type: 'toggle' }) : first && playTrack(first, data.playlistId, from)
+  }
   const shufflePlay = () => {
     const t = shuffled(data.tracks)
     if (!t) return
     // Shuffle goes on with it (Smart Shuffle stays on if it is), so the list shuffles as it loads.
-    playTrack(t, data.playlistId, from, true)
-    toast('Shuffling ' + data.title)
+    // (Nothing to say if it couldn't play: it said why.)
+    if (playTrack(t, data.playlistId, from, true)) toast('Shuffling ' + data.title)
   }
   // YTM's subtitle is "Album • 2016" / "Playlist • Public • 2024": the first part names the kind.
   const parts = data.subtitle.split(' • ').filter(Boolean)
@@ -207,6 +220,7 @@ export function CollectionView({ kind, id }: { kind: 'playlist' | 'album'; id: s
     set({ ...data, saved: on })
     try {
       await window.ytm.saveToLibrary(data.saveId, on)
+      if (on) markRecent({ name: kind, id })
       libraryChanged()
       toast(on ? 'Added to Your Library' : 'Removed from Your Library')
     } catch {
@@ -401,19 +415,21 @@ export function ArtistView({ id }: { id: string }) {
   const from = { route: { name: 'artist', id } as const, title: data.title, ids: data.songs.map((t) => t.videoId) }
   const isCurrent =
     !!player?.videoId && (source ? sameRoute(source.route, from.route) : data.songs.some((t) => t.videoId === player.videoId))
-  const play = () => (isCurrent ? window.ytm.cmd({ type: 'toggle' }) : data.songs[0] && playTrack(data.songs[0], list, from))
+  const play = () => {
+    const first = playable(data.songs)[0]
+    return isCurrent ? window.ytm.cmd({ type: 'toggle' }) : first && playTrack(first, list, from)
+  }
   const shufflePlay = () => {
     const t = shuffled(data.songs)
     if (!t) return
-    playTrack(t, list, from, true)
-    toast('Shuffling ' + data.title)
+    if (playTrack(t, list, from, true)) toast('Shuffling ' + data.title)
   }
   const follow = async () => {
     if (!(await window.ytm.authStatus())) return window.ytm.login()
     const on = !data.subscribed
     set({ ...data, subscribed: on })
     window.ytm.subscribe(id, on).then(
-      () => (libraryChanged(), toast(on ? `Following ${data.title}` : `Unfollowed ${data.title}`)),
+      () => (on && markRecent({ name: 'artist', id }), libraryChanged(), toast(on ? `Following ${data.title}` : `Unfollowed ${data.title}`)),
       () => (set({ ...data }), toast('That didn’t work — try again'))
     )
   }

@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ArtistPage, Card, LibraryFilter, PlayerState, QueueItem, ShuffleMode, Track } from '../../shared/types'
 import * as I from './components/icons'
-import { Ctx, downloadsSource, fmt, getClock, getDownloads, isRecordingKeys, libraryChanged, loadPrefs, onLibraryChange, playlistChanged, resetCache, routeFor, savePrefs, setClock, sized, useApp, useCached, useColor, useDownloads, useTime, type AppCtx, type Prefs, type Route, type SaveSong, type Source, type ToastAction, sameRoute } from './lib'
+import { Ctx, downloadsSource, fmt, getClock, getDownloads, isRecordingKeys, libraryChanged, loadPrefs, markRecent, onLibraryChange, playlistChanged, recentAt, resetCache, routeFor, savePrefs, setClock, sized, useApp, useCached, useColor, useDownloads, useRecents, useTime, type AppCtx, type Prefs, type Route, type SaveSong, type Source, type ToastAction, sameRoute } from './lib'
 import { bindings, comboLabel, comboOf, SHORTCUTS, type Action } from '../../shared/shortcuts'
 import { cardMenu, songMenu } from './components/menus'
 import { Boundary, Img, Loading } from './components/ui'
@@ -237,12 +237,16 @@ export default function App() {
     (t: Track, playlistId?: string, from?: Source, shuffle?: boolean) => {
       if (from?.route.name !== 'downloads' && navigator.onLine) {
         setSource(from ?? null)
+        // Playing a playlist, album or artist moves it to the top of Your Library (Recents).
+        markRecent(from?.route)
         return window.ytm.cmd({ type: 'play', videoId: t.videoId, playlistId, shuffle })
       }
       const { ids, songs } = getDownloads()
       if (!ids.has(t.videoId)) return void toast('You’re offline. Only downloaded songs can play.')
       const list = (from?.ids ?? songs.map((d) => d.videoId)).filter((id) => ids.has(id))
-      setSource(from ?? downloadsSource(list))
+      const playing = from ?? downloadsSource(list)
+      setSource(playing)
+      markRecent(playing.route)
       // Shuffle goes on once they're loaded, so it's the downloaded songs that get shuffled.
       return window.ytm
         .cmd({ type: 'playLocal', videoIds: list, index: list.indexOf(t.videoId) })
@@ -665,6 +669,7 @@ function LibraryPanel({ authed, collapsed, onToggle }: { authed: boolean; collap
   const [view, setViewState] = useState<LibraryView>(() => (localStorage.getItem('library-view') as LibraryView) || 'List')
   const setView = (v: LibraryView) => (localStorage.setItem('library-view', v), setViewState(v))
   const [find, setFind] = useState<string | null>(null)
+  const recents = useRecents()
   const [version, setVersion] = useState(0)
   useEffect(() => onLibraryChange(() => setVersion((v) => v + 1)), [])
   // While a reload (after creating a playlist) is on its way, keep showing the previous list.
@@ -695,6 +700,7 @@ function LibraryPanel({ authed, collapsed, onToggle }: { authed: boolean; collap
     try {
       const id = await window.ytm.createPlaylist(title)
       setMade((m) => [{ kind: 'playlist', id, title, subtitle: 'Playlist • You', thumb: '' }, ...m])
+      markRecent({ name: 'playlist', id })
       libraryChanged()
       go({ name: 'playlist', id })
     } catch {
@@ -710,8 +716,12 @@ function LibraryPanel({ authed, collapsed, onToggle }: { authed: boolean; collap
   const playlists = authed ? [LIKED, ...downloaded, ...made.filter((c) => !listed.has(c.id)), ...lists.Playlists.filter((c) => c.id !== 'VLLM')] : downloaded
   let list = filter === 'Artists' ? lists.Artists : filter === 'Albums' ? lists.Albums : filter ? playlists : [...playlists, ...lists.Albums, ...lists.Artists]
   if (find) list = list.filter((c) => `${c.title} ${c.subtitle}`.toLowerCase().includes(find.toLowerCase()))
-  // "Recents" keeps YouTube Music's own order (most recent first); Liked Songs stays pinned on top.
-  if (sort !== 'Recents') {
+  // "Recents": what was last played or added here comes first, newest first; the rest keep YouTube
+  // Music's own order (its recent activity). Liked Songs stays pinned on top.
+  if (sort === 'Recents') {
+    const at = (c: Card) => recentAt(recents, libraryRoute(c))
+    list = [...list].sort((a, b) => at(b) - at(a))
+  } else {
     // The creator is the subtitle part that isn't the kind, a year or a count ("Playlist • Owner • 12 songs").
     const creator = (c: Card) =>
       c.subtitle

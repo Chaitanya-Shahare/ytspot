@@ -123,6 +123,37 @@ export const getDownloads = () => downloads
 export const useDownloads = () => useSyncExternalStore(subscribeDownloads, getDownloads)
 export const downloadsSource = (ids?: string[]): Source => ({ route: { name: 'downloads' }, title: 'Downloaded', ids })
 
+// When each playlist, album and artist was last played or added to Your Library here, for the
+// library's "Recents" sort (Spotify's "recently played or added"). YouTube Music's own library order
+// only changes when the library is fetched again, so playing something wouldn't move it.
+type Recents = Record<string, number>
+const RECENTS = 'library-recents'
+const RECENTS_MAX = 500
+// A playlist's id comes with or without YTM's "VL" prefix depending on where it was found.
+const recentKey = (r: Route) => ('id' in r ? `${r.name}:${r.name === 'playlist' ? r.id.replace(/^VL/, '') : r.id}` : r.name)
+const isRecentable = (r: Route) => r.name === 'playlist' || r.name === 'album' || r.name === 'artist' || r.name === 'downloads'
+let recents: Recents = (() => {
+  try {
+    return JSON.parse(localStorage.getItem(RECENTS) ?? '{}') ?? {}
+  } catch {
+    return {}
+  }
+})()
+const recentSubs = new Set<() => void>()
+export function markRecent(r?: Route | null): void {
+  if (!r || !isRecentable(r)) return
+  const next = Object.entries({ ...recents, [recentKey(r)]: Date.now() })
+  // Only the newest few hundred matter; older ones fall back to YouTube Music's order.
+  if (next.length > RECENTS_MAX) next.sort((a, b) => b[1] - a[1]).length = RECENTS_MAX
+  recents = Object.fromEntries(next)
+  localStorage.setItem(RECENTS, JSON.stringify(recents))
+  recentSubs.forEach((f) => f())
+}
+const subscribeRecents = (f: () => void) => (recentSubs.add(f), () => void recentSubs.delete(f))
+export const useRecents = () => useSyncExternalStore(subscribeRecents, () => recents)
+// 0 for anything not played or added here yet.
+export const recentAt = (all: Recents, r: Route | null) => (r ? (all[recentKey(r)] ?? 0) : 0)
+
 // The playback clock lives outside React state, so a tick re-renders only what shows the time.
 let clock = 0
 let clockAt = 0
