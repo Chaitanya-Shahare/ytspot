@@ -1,6 +1,6 @@
 import type { PopupItem } from '../../../preload'
 import type { Card, Track } from '../../../shared/types'
-import { getDownloads, libraryChanged, playlistChanged, routeFor, savablePlaylists, type AppCtx } from '../lib'
+import { getDownloads, libraryChanged, markRecent, playlistChanged, routeFor, savablePlaylists, type AppCtx } from '../lib'
 
 // A song as rows, the queue and Now Playing know it; whatever details they have go with a download.
 export interface MenuSong {
@@ -76,6 +76,7 @@ export async function addSong(ctx: AppCtx, pl: { id: string; title: string }, vi
 export async function newPlaylistWith(ctx: AppCtx, song: { videoId: string; title: string }): Promise<void> {
   try {
     const id = await window.ytm.createPlaylist(song.title, [song.videoId])
+    markRecent({ name: 'playlist', id })
     libraryChanged()
     ctx.toast(`Added to ${song.title}`, { label: 'View', run: () => ctx.go({ name: 'playlist', id }) })
   } catch {

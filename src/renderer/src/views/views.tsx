@@ -5,7 +5,7 @@ import { cardMenu, queue } from '../components/menus'
 import { CardTile, ErrorBox, GreenPlay, Img, Loading, ShelfRow, StickyHead, TrackTable } from '../components/ui'
 import { DeletePlaylist, EditDetails, PlaylistExtras } from './playlist'
 import { DownloadButton } from './downloads'
-import { libraryChanged, moreRoute, routeFor, sameRoute, sized, useApp, useCached, useColor } from '../lib'
+import { libraryChanged, markRecent, moreRoute, routeFor, sameRoute, sized, useApp, useCached, useColor } from '../lib'
 
 // "55 songs • 3 hours, 9 minutes" -> "55 songs, 3 hr 9 min", as Spotify writes it.
 const spotifyMeta = (m: string) =>
@@ -207,6 +207,7 @@ export function CollectionView({ kind, id }: { kind: 'playlist' | 'album'; id: s
     set({ ...data, saved: on })
     try {
       await window.ytm.saveToLibrary(data.saveId, on)
+      if (on) markRecent({ name: kind, id })
       libraryChanged()
       toast(on ? 'Added to Your Library' : 'Removed from Your Library')
     } catch {
@@ -413,7 +414,7 @@ export function ArtistView({ id }: { id: string }) {
     const on = !data.subscribed
     set({ ...data, subscribed: on })
     window.ytm.subscribe(id, on).then(
-      () => (libraryChanged(), toast(on ? `Following ${data.title}` : `Unfollowed ${data.title}`)),
+      () => (on && markRecent({ name: 'artist', id }), libraryChanged(), toast(on ? `Following ${data.title}` : `Unfollowed ${data.title}`)),
       () => (set({ ...data }), toast('That didn’t work — try again'))
     )
   }
