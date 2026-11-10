@@ -8,5 +8,5 @@ export type Source = Pick<typeof spotify, 'signedIn' | 'logIn' | 'cancelLogIn' |
 
 export type Target = Pick<
   typeof youtube,
-  'findSong' | 'offers' | 'like' | 'newPlaylist' | 'addSongs' | 'contents' | 'findAlbum' | 'saveAlbum' | 'findArtist' | 'follow'
+  'findSong' | 'offers' | 'like' | 'unlike' | 'newPlaylist' | 'addSongs' | 'removeSong' | 'contents' | 'findAlbum' | 'saveAlbum' | 'findArtist' | 'follow'
 >

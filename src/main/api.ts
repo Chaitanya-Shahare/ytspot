@@ -266,7 +266,7 @@ export async function addSongs(playlistId: string, videoIds: string[]): Promise<
     playlistId,
     videoIds.map((id) => ({ action: 'ACTION_ADD_VIDEO', addedVideoId: id, dedupeOption: 'DEDUPE_OPTION_SKIP' }))
   )
-  if (res?.status !== 'STATUS_SUCCEEDED') throw new Error('YouTube Music didn’t add the songs')
+  if (res?.status !== 'STATUS_SUCCEEDED') throw new Error(videoIds.length === 1 ? 'YouTube Music didn’t add the song' : 'YouTube Music didn’t add the songs')
 }
 
 export async function removeFromPlaylist(playlistId: string, videoId: string): Promise<void> {

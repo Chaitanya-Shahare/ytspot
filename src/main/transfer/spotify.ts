@@ -36,6 +36,9 @@ export class SignedOut extends Error {
   }
 }
 
+// Spotify wouldn't give this one thing (a playlist that's been taken down, say), but is otherwise fine.
+class Unreadable extends Error {}
+
 // Never connected means no partition on disk yet; asking the session would create one.
 export async function signedIn(): Promise<boolean> {
   if (!existsSync(join(app.getPath('userData'), 'Partitions', PARTITION))) return false
@@ -170,9 +173,23 @@ async function currentOps(script: string): Promise<Record<Op, string>> {
   return ops
 }
 
+// Queries in flight at once, across everything being read in parallel.
+const IN_FLIGHT = 6
+
 class Client {
   private auth: Promise<Auth> | null = null
+  private running = 0
+  private queue: (() => void)[] = []
   constructor(private signal: AbortSignal) {}
+
+  private async slot(): Promise<() => void> {
+    if (this.running >= IN_FLIGHT) await new Promise<void>((r) => this.queue.push(r))
+    this.running++
+    return () => {
+      this.running--
+      this.queue.shift()?.()
+    }
+  }
 
   private authorized(): Promise<Auth> {
     this.auth ??= authorize(this.signal).catch((e) => {
@@ -190,6 +207,7 @@ class Client {
       const pending = this.authorized()
       const auth = await pending
       let res: Response
+      const release = await this.slot()
       try {
         res = await fetch(PATHFINDER, {
           method: 'POST',
@@ -198,10 +216,13 @@ class Client {
           signal: AbortSignal.any([this.signal, AbortSignal.timeout(20000)])
         })
       } catch (e) {
+        release()
         if (this.signal.aborted || n >= 4) throw this.signal.aborted ? e : new Error('Lost the connection to Spotify. Check your internet connection and try again.')
         await wait(1000 * n, this.signal)
         continue
       }
+      // The body is read inside the slot too: a slow answer still counts as in flight.
+      const json: any = res.ok ? await res.json().finally(release) : (release(), await res.body?.cancel(), null)
       if (res.status === 401 && !renewed) {
         renewed = true
         // Several queries can see the token expire at once; only one fetches a new one.
@@ -213,13 +234,17 @@ class Client {
         await wait(Math.min(30, after > 0 ? after : 2 ** n) * 1000, this.signal)
         continue
       }
-      if (!res.ok) throw new Error(`Spotify answered ${res.status}. Try again in a while.`)
-      const json: any = await res.json()
+      if (!res.ok) {
+        const message = `Spotify answered ${res.status}. Try again in a while.`
+        // Refused or gone is about this one query; a login that's still refused after renewing isn't.
+        throw [400, 403, 404, 410].includes(res.status) ? new Unreadable(message) : new Error(message)
+      }
       const error = json.errors?.[0]?.message as string | undefined
+      if (error) console.error('[transfer] spotify', op, error)
       if (error && /not authorized/i.test(error) && json.data?.me === null) throw new SignedOut()
       if (error && /PersistedQueryNotFound/i.test(error)) throw new Error('Spotify changed its web player. Update ytspot to import.')
       // An answer with only errors (a partial one still has data) shouldn't read as an empty library.
-      if (error && !json.data) throw new Error('Spotify couldn’t read your library. Try again in a while.')
+      if (error && !json.data) throw new Unreadable('Spotify couldn’t read your library. Try again in a while.')
       return json.data
     }
   }
@@ -289,6 +314,7 @@ export interface SourceLibrary {
   playlists: SourcePlaylistFull[]
   albums: SourceAlbum[]
   artists: SourceArtist[]
+  unread: string[] // playlists Spotify wouldn't hand over (their titles)
 }
 
 const PAGE = 50
@@ -297,24 +323,48 @@ const PLAYLIST_PAGE = 100
 // Everything in the library: Liked Songs, playlists (with their songs), saved albums and followed
 // artists. `found` reports the running song count.
 export async function readLibrary(signal: AbortSignal, found: (songs: number) => void): Promise<SourceLibrary> {
-  const api = new Client(signal)
+  // Everything below is read at once; if one part fails, the rest stop too.
+  const stop = new AbortController()
+  const quit = () => stop.abort(signal.reason)
+  signal.addEventListener('abort', quit, { once: true })
+  const api = new Client(stop.signal)
   let songs = 0
   const count = (n: number) => found((songs += n))
+  try {
+    // Signed in? (This also starts the hidden web player, which every call below shares.)
+    const profile = await api.query('profileAttributes', {})
+    if (!profile?.me) throw new SignedOut()
+    const account: string = profile.me.profile?.name ?? profile.me.profile?.username ?? ''
+    const unread: string[] = []
+    const [liked, playlists, albums, artists] = await Promise.all([
+      readLiked(api, count),
+      readShelf(api, 'Playlists').then((items) => readPlaylists(api, items.flatMap(playlistOf), count, unread)),
+      readShelf(api, 'Albums').then((items) => items.flatMap(albumOf)),
+      readShelf(api, 'Artists').then((items) => items.flatMap(artistOf))
+    ])
+    return { account, liked, playlists, albums, artists, unread }
+  } catch (e) {
+    stop.abort(e)
+    throw signal.aborted ? signal.reason : e
+  } finally {
+    signal.removeEventListener('abort', quit)
+  }
+}
 
-  // Signed in? (This also starts the hidden web player, which every call below shares.)
-  const profile = await api.query('profileAttributes', {})
-  if (!profile?.me) throw new SignedOut()
-  const account: string = profile.me.profile?.name ?? profile.me.profile?.username ?? ''
-
-  const liked = await readLiked(api, count)
-  const items = await readShelf(api, 'Playlists')
-  const albums = (await readShelf(api, 'Albums')).flatMap(albumOf)
-  const artists = (await readShelf(api, 'Artists')).flatMap(artistOf)
-  const playlists = await pool(items.flatMap(playlistOf), 4, async (p) => {
-    const tracks = await readPlaylist(api, p.id, count)
-    return { ...p, tracks, count: tracks.length }
+// Playlists with their songs, a few at a time. One Spotify won't hand over is left out (and named
+// in `unread`) rather than failing the whole library; empty ones are left out too.
+async function readPlaylists(api: Client, list: Omit<SourcePlaylistFull, 'tracks'>[], count: (n: number) => void, unread: string[]): Promise<SourcePlaylistFull[]> {
+  const read = await pool(list, 4, async (p): Promise<SourcePlaylistFull | null> => {
+    try {
+      const tracks = await readPlaylist(api, p.id, count)
+      return { ...p, tracks, count: tracks.length }
+    } catch (e) {
+      if (!(e instanceof Unreadable)) throw e
+      unread.push(p.title)
+      return null
+    }
   })
-  return { account, liked, playlists: playlists.filter((p) => p.tracks.length), albums, artists }
+  return read.filter((p): p is SourcePlaylistFull => !!p?.tracks.length)
 }
 
 async function readLiked(api: Client, count: (n: number) => void): Promise<SourceTrack[]> {
@@ -388,6 +438,8 @@ function artistOf(item: any): SourceArtist[] {
 async function readPlaylist(api: Client, uri: string, count: (n: number) => void, about?: (first: any) => void): Promise<SourceTrack[]> {
   const page = async (offset: number) => (await api.query('fetchPlaylist', { uri, offset, limit: PLAYLIST_PAGE, enableWatchFeedEntrypoint: false }))?.playlistV2
   const first = await page(0)
+  // Taken down, made private, or never there: Spotify answers with a stand-in ("NotFound") instead.
+  if (first?.__typename && first.__typename !== 'Playlist') throw new Unreadable(`Spotify couldn’t open this playlist (${first.__typename}).`)
   about?.(first)
   const total: number = first?.content?.totalCount ?? 0
   const offsets = Array.from({ length: Math.max(0, Math.ceil(total / PLAYLIST_PAGE) - 1) }, (_, i) => (i + 1) * PLAYLIST_PAGE)
@@ -402,10 +454,23 @@ const dedupe = (tracks: SourceTrack[]) => {
   return tracks.filter((t) => !seen.has(t.id) && !!seen.add(t.id))
 }
 
-// A public playlist, without logging in (Spotify's web player works signed out too). Test runs use
+// Public playlists, without logging in (Spotify's web player works signed out too). Test runs use
 // these as a stand-in library (fixture.ts).
-export async function readPublicPlaylist(uri: string, signal: AbortSignal): Promise<SourcePlaylistFull> {
-  let meta: any = null
-  const tracks = await readPlaylist(new Client(signal), uri, () => undefined, (first) => (meta = first))
-  return { id: uri, title: meta?.name || 'Untitled playlist', owner: meta?.ownerV2?.data?.name ?? '', thumb: art(meta?.images?.items?.[0]), description: plain(meta?.description), count: tracks.length, tracks }
+export async function readPublicPlaylists(uris: string[], signal: AbortSignal, count: (n: number) => void): Promise<{ playlists: SourcePlaylistFull[]; unread: string[] }> {
+  const api = new Client(signal)
+  const unread: string[] = []
+  const list = uris.map((uri) => ({ id: uri, title: uri, owner: '', thumb: '', description: '', count: 0 }))
+  const read = await pool(list, 4, async (p): Promise<SourcePlaylistFull | null> => {
+    let meta: any = null
+    try {
+      const tracks = await readPlaylist(api, p.id, count, (first) => (meta = first))
+      if (!meta) throw new Unreadable('No such playlist')
+      return { ...p, title: meta.name || 'Untitled playlist', owner: meta.ownerV2?.data?.name ?? '', thumb: art(meta.images?.items?.[0]), description: plain(meta.description), count: tracks.length, tracks }
+    } catch (e) {
+      if (!(e instanceof Unreadable)) throw e
+      unread.push(p.id)
+      return null
+    }
+  })
+  return { playlists: read.filter((p): p is SourcePlaylistFull => !!p), unread }
 }

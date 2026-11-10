@@ -42,6 +42,7 @@ export interface LibrarySummary {
   playlists: SourcePlaylist[]
   albums: SourceAlbum[]
   artists: SourceArtist[]
+  unread?: string[] // playlists Spotify wouldn't hand over (their titles), left out
 }
 
 export interface Selection {
@@ -57,6 +58,16 @@ export interface Missing {
   title: string
   artists: string
   album?: string
+  note?: string // why, when it was found but couldn't be added
+}
+
+// A song that was added, but whose YouTube Music match was close rather than exact: worth a look.
+export interface Unsure {
+  id: string // the Spotify id
+  title: string
+  artists: string
+  album?: string
+  match: Candidate // what was added
 }
 
 // One part of the import: Liked Songs, a playlist, or all the albums or artists.
@@ -69,6 +80,7 @@ export interface TransferItem {
   done: number // looked up so far (found or not)
   moved: number // added to YouTube Music, this run
   missing: Missing[]
+  unsure: Unsure[] // added, but worth checking
   target?: string // the YouTube Music playlist (VL…) it went into
   status: 'waiting' | 'working' | 'done' | 'failed'
   error?: string
@@ -117,5 +129,8 @@ export interface TransferApi {
   reset(): Promise<void> // back to the start (keeps what was imported, so importing again adds only new songs)
   disconnect(): Promise<void> // forget the Spotify login
   find(itemId: string, trackId: string): Promise<Candidate[]>
-  fix(itemId: string, trackId: string, videoId: string): Promise<void>
+  fix(itemId: string, trackId: string, videoId: string): Promise<void> // add a song that wasn't found
+  swap(itemId: string, trackId: string, videoId: string): Promise<void> // replace a close match with another song
+  keep(trackId: string): Promise<void> // a close match is right
+  keepAll(): Promise<void>
 }

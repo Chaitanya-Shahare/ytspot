@@ -103,3 +103,9 @@
 .tr-offer-play::after { content: ''; position: absolute; inset: 0; background: #0009; opacity: 0; transition: opacity .1s; }
 .tr-offer-play svg { z-index: 1; }
 .tr-offer-play:hover svg, .tr-offer-play:hover::after, .tr-offer-play:focus-visible svg, .tr-offer-play:focus-visible::after { opacity: 1; }
+
+/* Close matches: the Spotify song, then what was added for it. */
+.tr-check-row .tr-missing-main { gap: 16px; }
+.tr-check-from, .tr-check-to { flex: 1 1 0; min-width: 0; }
+.tr-check-to { display: flex; align-items: center; gap: 12px; }
+.tr-check-arrow { flex: none; color: var(--text-subdued); }

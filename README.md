@@ -82,7 +82,7 @@ The UI is a separate React app, not a restyle of the YouTube Music website. Its 
 
 ### Library and playlists
 
-- **Import from Spotify, free.** Bring your Liked Songs, playlists, saved albums and followed artists over to YouTube Music in a few minutes, with no limits. Log in to Spotify in a window inside ytspot, pick what to bring, and keep listening while it runs. Liked Songs keep their order and playlists come over as private ones. Afterwards, ytspot lists anything YouTube Music doesn't have, so you can pick a version yourself or leave it out. Importing again later adds only what's new. Open it from **Create → Import from Spotify…** or **Settings → Import**.
+- **Import from Spotify, free.** Bring your Liked Songs, playlists, saved albums and followed artists over to YouTube Music in a few minutes, with no limits. Log in to Spotify in a window inside ytspot, pick what to bring, and keep listening while it runs. Liked Songs keep their order and playlists come over as private ones. Afterwards, ytspot lists anything YouTube Music doesn't have, so you can pick a version yourself or leave it out, and any song it matched only closely, so you can play it and keep it or swap it for the right one. Importing again later adds only what's new. Open it from **Create → Import from Spotify…** or **Settings → Import**.
 - **Your Library** in Grid, List or Compact view, with search, sort and pinning. Sorted by Recents, whatever you last played or added moves to the top. Save albums and other people's playlists to it.
 - **Playlist editing:** create, delete, and edit the name, description, privacy and cover image, all saved to YouTube Music.
 - The **+** button saves to Liked Songs, then opens an **Add to playlist** popover. Duplicate adds ask first.
