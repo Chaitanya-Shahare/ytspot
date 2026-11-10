@@ -137,3 +137,11 @@ test('albums and artists', () => {
   assert.ok(artistNameScore('Arijit Singh', 'Arijit Singh Official') < 1)
   assert.ok(artistNameScore('Drake', 'Drake Bell') < 0.85)
 })
+
+test('fan remakes ("xyz style", "type beat") are kept apart from the song', () => {
+  const lotp = song('Life Of the Party (L.O.T.P)', ['Lil Baby'], 148000)
+  assert.equal(best(lotp, [cand('Lil Baby - Life Of the Party (L.O.T.P) (truee_key style)', 'Truee_key', '2:28', { video: true })]), null)
+  assert.ok(flags('Lil Baby Type Beat - Night').has('cover'))
+  assert.ok(!flags('Gangnam Style').has('cover'))
+  assert.ok(!flags('Style').has('cover'))
+})

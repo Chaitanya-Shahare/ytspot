@@ -17,7 +17,8 @@ function refresh(prev: TransferState | null, next: TransferState): void {
     const was = before.get(item.id)
     if (item.target && !was?.target) newPlaylist = true
     const finished = item.status !== 'working' && was?.status === 'working'
-    const fixed = was && item.moved > was.moved && item.status === 'done'
+    // A song added from "Not found", or a close match changed (keeping one reloads too, harmlessly).
+    const fixed = was && item.status === 'done' && (item.moved > was.moved || item.unsure.length < was.unsure.length)
     const page = item.kind === 'liked' ? 'LM' : item.target
     if ((finished || fixed) && page) playlistChanged(page)
   }

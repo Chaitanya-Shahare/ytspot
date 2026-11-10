@@ -7,6 +7,7 @@
 import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import * as spotify from './spotify'
 import * as youtube from './youtube'
+import { SURE } from './match'
 import type { Source, Target } from './ports'
 import type { Candidate, LibrarySummary, Missing, Selection, SourceAlbum, SourceArtist, SourceTrack, TransferApi, TransferItem, TransferPhase, TransferState } from '../../shared/transfer'
 
@@ -28,13 +29,16 @@ interface Saved {
   // looked up once; each playlist's YouTube Music copy and the songs added to it; what's been liked,
   // saved and followed.
   matches: Record<string, string | null>
+  // Songs whose match was close rather than exact, and what they were matched with, until the user
+  // keeps or changes them.
+  doubts: Record<string, Candidate>
   links: Record<string, { target: string; added: string[] }>
   liked: string[]
   albumsSaved: string[]
   artistsFollowed: string[]
 }
 
-const empty = (): Saved => ({ version: 1, phase: 'idle', matches: {}, links: {}, liked: [], albumsSaved: [], artistsFollowed: [] })
+const empty = (): Saved => ({ version: 1, phase: 'idle', matches: {}, doubts: {}, links: {}, liked: [], albumsSaved: [], artistsFollowed: [] })
 
 // The songs, albums and artists being imported, so an import resumes after a restart. Saved once
 // when it starts, in a file of its own: it can be large, and doesn't change.
@@ -47,11 +51,14 @@ interface Picked {
 const nothing = (): Picked => ({ songs: {}, descriptions: {}, albums: [], artists: [] })
 
 // Songs looked up at once (each is a YouTube Music search), ahead of adding them in order.
-const LOOKAHEAD = 4
+const LOOKAHEAD = 6
 // Songs per "add to playlist" call.
 const BATCH = 25
 // Failed calls in a row before the import stops (offline, signed out) instead of skipping songs.
 const GIVE_UP_AFTER = 3
+// Likes, saves and follows are one call each. They're spaced out a little, like someone clicking
+// through, so a big library doesn't look like a bot to YouTube.
+const WRITE_GAP_MS = 300
 
 let deps: Deps
 // Where music comes from and goes to (see ports.ts).
@@ -71,7 +78,7 @@ let doneAtStart = 0
 
 export async function init(d: Deps): Promise<void> {
   deps = d
-  if (d.fixture?.length) ({ source, target } = (await import('./fixture')).fixture(d.fixture))
+  if (d.fixture?.length) ({ source, target } = (await import('./fixture')).fixture(d.fixture, d.file.replace(/\.json$/, '-fixture.json')))
   try {
     saved = { ...empty(), ...(JSON.parse(readFileSync(d.file, 'utf8')) as Saved) }
     if (saved.items) picked = { ...nothing(), ...(JSON.parse(readFileSync(pickedFile(), 'utf8')) as Picked) }
@@ -82,7 +89,10 @@ export async function init(d: Deps): Promise<void> {
   // importing (a library read into memory) is gone.
   if (saved.phase === 'moving') saved.phase = 'stopped'
   else if (saved.phase !== 'stopped' && saved.phase !== 'done') saved.phase = 'idle'
-  saved.items?.forEach((i) => i.status === 'working' && (i.status = 'waiting'))
+  saved.items?.forEach((i) => {
+    if (i.status === 'working') i.status = 'waiting'
+    i.unsure ??= [] // saved before close matches were listed
+  })
   connected = await source.signedIn().catch(() => false)
 }
 
@@ -101,7 +111,8 @@ function view(): TransferState {
     ytm: deps.signedIn(),
     connected,
     found: saved.phase === 'reading' ? found : undefined,
-    library: saved.library,
+    // Only the choosing step shows the library; it can be large, and updates go out often while importing.
+    library: saved.phase === 'ready' ? saved.library : undefined,
     items: saved.items,
     startedAt: saved.phase === 'moving' ? startedAt : undefined,
     doneAtStart: saved.phase === 'moving' ? doneAtStart : undefined,
@@ -162,7 +173,8 @@ function summary(lib: spotify.SourceLibrary): LibrarySummary {
     liked: lib.liked.length,
     playlists: lib.playlists.map(({ tracks: _t, description: _d, ...p }) => ({ ...p, linked: !!saved.links[p.id] })),
     albums: lib.albums,
-    artists: lib.artists
+    artists: lib.artists,
+    unread: lib.unread.length ? lib.unread : undefined
   }
 }
 
@@ -189,7 +201,7 @@ async function read(): Promise<void> {
     library = await source.readLibrary(run.signal, (n) => ((found = n), emit()))
     saved.library = summary(library)
     if (!library.liked.length && !library.playlists.length && !library.albums.length && !library.artists.length)
-      return setPhase('idle', 'Your Spotify library is empty: there’s nothing to import.')
+      return setPhase('idle', library.unread.length ? 'Spotify wouldn’t hand over your playlists. Try again in a while.' : 'Your Spotify library is empty: there’s nothing to import.')
     setPhase('ready')
   } catch (e) {
     if (run.signal.aborted) return setPhase('idle')
@@ -228,7 +240,7 @@ function start(sel: Selection): void {
   const items: TransferItem[] = []
   const songs: Record<string, SourceTrack[]> = {}
   const descriptions: Record<string, string> = {}
-  const item = (i: Omit<TransferItem, 'done' | 'moved' | 'missing' | 'status'>): TransferItem => ({ ...i, done: 0, moved: 0, missing: [], status: 'waiting' })
+  const item = (i: Omit<TransferItem, 'done' | 'moved' | 'missing' | 'unsure' | 'status'>): TransferItem => ({ ...i, done: 0, moved: 0, missing: [], unsure: [], status: 'waiting' })
   if (sel.liked && lib.liked.length) {
     items.push(item({ id: 'liked', kind: 'liked', title: 'Liked Songs', total: lib.liked.length }))
     // Oldest first: YouTube Music lists liked songs newest first, as Spotify does.
@@ -267,8 +279,8 @@ function reset(): void {
   job?.abort()
   library = null
   // What was imported stays recorded, so importing again only adds what's new.
-  const { matches, links, liked, albumsSaved, artistsFollowed } = saved
-  saved = { ...empty(), matches, links, liked, albumsSaved, artistsFollowed }
+  const { matches, doubts, links, liked, albumsSaved, artistsFollowed } = saved
+  saved = { ...empty(), matches, doubts, links, liked, albumsSaved, artistsFollowed }
   picked = nothing()
   rmSync(pickedFile(), { force: true })
   setPhase('idle')
@@ -283,6 +295,7 @@ async function run(): Promise<void> {
   startedAt = Date.now()
   doneAtStart = total(items)
   setPhase('moving')
+  const lookup = matcher(items, signal)
   try {
     for (const item of items) {
       if (item.status === 'done') continue
@@ -291,7 +304,7 @@ async function run(): Promise<void> {
       item.error = undefined
       emit()
       try {
-        if (item.kind === 'liked' || item.kind === 'playlist') await moveSongs(item, signal)
+        if (item.kind === 'liked' || item.kind === 'playlist') await moveSongs(item, signal, lookup)
         else await moveOthers(item, signal)
         item.status = 'done'
       } catch (e) {
@@ -313,17 +326,31 @@ async function run(): Promise<void> {
   } catch (e) {
     setPhase('stopped', (e as Error).message)
   } finally {
+    // Nothing of this run keeps going (the matcher may be searching ahead).
+    current.abort()
     if (job === current) job = null
   }
 }
 
-const offline = (e: unknown) => new Fatal(`${String((e as Error)?.message ?? e).replace(/\.$/, '')}. Resume when you’re back online.`)
+// What to tell the user about a YouTube Music call that failed: its own words, unless it's a raw
+// HTTP error (which reads as a URL).
+function friendly(e: unknown): string {
+  const message = String((e as Error)?.message ?? e)
+  if (/status code (403|429)\b/.test(message)) return 'YouTube Music is turning requests away for now'
+  if (/^Request to https?:|status code \d+/.test(message)) return 'YouTube Music isn’t answering'
+  return message.replace(/\.$/, '')
+}
+
+const offline = (e: unknown) => {
+  const why = friendly(e)
+  return new Fatal(/turning|answering/.test(why) ? `${why}. Resume in a few minutes.` : `${why}. Resume when you’re back online.`)
+}
 
 // YouTube Music calls during an import. api.ts already retries a dropped connection; a call that
 // still fails is tried again. Adding (a write) that keeps failing stops the import, to resume
 // later, rather than skip songs. A search that keeps failing (`soft`) leaves that one song out, unless
 // several in a row do, which means the connection is gone: then the import stops too.
-function guard(signal: AbortSignal) {
+function guard(signal: AbortSignal, strained?: () => void) {
   let strikes = 0
   return async <T>(fn: () => Promise<T>, soft = false): Promise<T | undefined> => {
     for (let n = 1; ; n++) {
@@ -335,9 +362,10 @@ function guard(signal: AbortSignal) {
         return out
       } catch (e) {
         if (signal.aborted) throw e
+        strained?.()
         // Searches get a third try: a momentary hiccup shouldn't list a song as not found.
         if (n < (soft ? 3 : 2)) {
-          await abortable(new Promise((r) => setTimeout(r, 1500 * n)), signal)
+          await abortable(sleep(1500 * n), signal)
           continue
         }
         if (!soft || ++strikes >= GIVE_UP_AFTER) throw offline(e)
@@ -357,8 +385,63 @@ function abortable<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
   })
 }
 
-// Each song is looked up (a few ahead at once) and added in its original order.
-async function inOrder<T, R>(list: T[], signal: AbortSignal, find: (x: T) => Promise<R>, add: (x: T, r: R) => Promise<void>): Promise<void> {
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+// Runs a like, save or follow no sooner than WRITE_GAP_MS after the last one.
+let lastWrite = 0
+async function paced<T>(fn: () => Promise<T>, signal: AbortSignal): Promise<T> {
+  const wait = lastWrite + WRITE_GAP_MS - Date.now()
+  if (wait > 0) await abortable(sleep(wait), signal)
+  lastWrite = Date.now()
+  return fn()
+}
+
+// Looks every song up on YouTube Music, LOOKAHEAD at a time, running ahead of the adding and
+// across playlists: likes are paced, so searching shouldn't wait for them, and the next playlist's
+// songs are ready when its turn comes. Each song is looked up once, even if it's in several
+// playlists. A result is undefined when the search failed (the song is tried again next time).
+type Lookup = (t: SourceTrack) => Promise<string | null | undefined>
+
+function matcher(items: TransferItem[], signal: AbortSignal): Lookup {
+  // When YouTube pushes back (a failed or refused search), fewer searches run at once; after a
+  // run of good ones, more again.
+  let limit = LOOKAHEAD
+  let calm = 0
+  const call = guard(signal, () => ((limit = Math.max(2, limit >> 1)), (calm = 0)))
+  const queue = items.filter((i) => i.status !== 'done' && (i.kind === 'liked' || i.kind === 'playlist')).flatMap((i) => picked.songs[i.id] ?? [])
+  const results = new Map<string, Promise<string | null | undefined>>()
+  let next = 0
+  let running = 0
+  const find = async (t: SourceTrack): Promise<string | null | undefined> => {
+    if (t.id in saved.matches) return saved.matches[t.id]
+    // A search that fails isn't recorded, so the song is looked up again next time.
+    const m = await call(() => target.findSong(t), true)
+    if (m === undefined) return undefined
+    if (++calm >= 20 && limit < LOOKAHEAD) (limit++, (calm = 0))
+    saved.matches[t.id] = m?.videoId ?? null
+    if (m && m.score < SURE) saved.doubts[t.id] = m.song
+    else delete saved.doubts[t.id]
+    return m?.videoId ?? null
+  }
+  const start = (t: SourceTrack) => {
+    running++
+    const p = find(t).finally(() => (running--, pump()))
+    p.catch(() => undefined) // awaited by whoever asks for it
+    results.set(t.id, p)
+    return p
+  }
+  const pump = () => {
+    while (running < limit && next < queue.length && !signal.aborted) {
+      const t = queue[next++]
+      if (!results.has(t.id)) start(t)
+    }
+  }
+  pump()
+  return (t) => abortable(results.get(t.id) ?? start(t), signal)
+}
+
+// Runs `find` over `list` a few ahead, and `use` on each result in the list's order.
+async function ahead<T, R>(list: T[], signal: AbortSignal, find: (x: T) => Promise<R>, use: (x: T, r: R) => Promise<void>): Promise<void> {
   const pending: Promise<R>[] = []
   const launch = (i: number) => {
     if (i >= list.length) return
@@ -370,7 +453,7 @@ async function inOrder<T, R>(list: T[], signal: AbortSignal, find: (x: T) => Pro
     const r = await abortable(pending[i], signal)
     delete pending[i]
     launch(i + LOOKAHEAD)
-    await add(list[i], r)
+    await use(list[i], r)
   }
 }
 
@@ -382,11 +465,19 @@ function counter(item: TransferItem) {
   return {
     tick: () => void (item.done = Math.max(floor, ++n)),
     missing: (m: Missing) => void (item.missing.some((x) => x.id === m.id) || item.missing.push(m)),
-    found: (id: string) => void (item.missing = item.missing.filter((x) => x.id !== id))
+    found: (id: string) => void (item.missing = item.missing.filter((x) => x.id !== id)),
+    // A song that's in YouTube Music now: listed to check if its match was only close.
+    added: (t: SourceTrack) => {
+      const match = saved.doubts[t.id]
+      if (match && match.videoId === saved.matches[t.id] && !item.unsure.some((u) => u.id === t.id))
+        item.unsure.push({ id: t.id, title: t.title, artists: t.artists.join(', '), album: t.album || undefined, match })
+    }
   }
 }
 
-async function moveSongs(item: TransferItem, signal: AbortSignal): Promise<void> {
+const missingOf = (t: SourceTrack, note?: string): Missing => ({ id: t.id, title: t.title, artists: t.artists.join(', '), album: t.album || undefined, note })
+
+async function moveSongs(item: TransferItem, signal: AbortSignal, lookup: Lookup): Promise<void> {
   const songs = picked.songs[item.id] ?? []
   const call = guard(signal)
   const count = counter(item)
@@ -416,50 +507,76 @@ async function moveSongs(item: TransferItem, signal: AbortSignal): Promise<void>
 
   const flush = async () => {
     if (!batch.length) return
-    const ids = batch.map((t) => saved.matches[t.id]!)
-    await call(() => target.addSongs(link!.target, ids))
-    for (const t of batch) (link!.added.push(t.id), done.add(t.id))
-    item.moved += batch.length
+    const songs = batch
     batch = []
+    let added = songs
+    try {
+      await call(() => target.addSongs(link!.target, songs.map((t) => saved.matches[t.id]!)))
+    } catch (e) {
+      if (signal.aborted || !deps.signedIn()) throw e
+      added = await oneByOne(songs)
+    }
+    for (const t of added) {
+      link!.added.push(t.id)
+      done.add(t.id)
+      count.added(t)
+    }
+    item.moved += added.length
     // Saved straight away: songs recorded as added are never added twice, even after a crash.
     persist(true)
     emit()
   }
 
-  await inOrder(
-    songs,
-    signal,
-    async (t) => {
-      if (t.id in saved.matches) return saved.matches[t.id]
-      // A search that fails isn't recorded, so the song is looked up again next time.
-      const m = await call(() => target.findSong(t), true)
-      if (m !== undefined) saved.matches[t.id] = m?.videoId ?? null
-      return m === undefined ? undefined : (m?.videoId ?? null)
-    },
-    async (t, videoId) => {
-      if (!videoId) {
-        count.missing({ id: t.id, title: t.title, artists: t.artists.join(', '), album: t.album || undefined })
-      } else if (done.has(t.id) || (!liked && videos.has(videoId))) {
-        count.found(t.id)
-      } else if (liked) {
-        await call(() => target.like(videoId))
-        saved.liked.push(t.id)
-        done.add(t.id)
-        item.moved++
-        count.found(t.id)
-        persist()
+  // One song YouTube Music won't take (taken down, or blocked in this country) fails the whole
+  // batch. The songs that made it in are kept, the rest are added one at a time, and any it still
+  // refuses are listed as not added. (A connection that's gone fails them all, which stops the import.)
+  const oneByOne = async (songs: SourceTrack[]): Promise<SourceTrack[]> => {
+    const present = await call(() => target.contents(link!.target))
+    if (!present) throw new Error('This playlist was deleted on YouTube Music. Try again to make it again.')
+    const there = new Set(present)
+    const added: SourceTrack[] = []
+    for (const t of songs) {
+      const videoId = saved.matches[t.id]!
+      if (there.has(videoId) || (await call(() => target.addSongs(link!.target, [videoId]).then(() => true), true))) {
+        there.add(videoId)
+        added.push(t)
       } else {
-        // Counted as done once it's queued for the next batch; if that batch fails, the import
-        // stops and counts again on resuming. Songs that turn out to be the same video go in once.
-        videos.add(videoId)
-        batch.push(t)
-        count.found(t.id)
-        if (batch.length >= BATCH) await flush()
+        // Looked up again next time: YouTube Music may have another copy by then.
+        saved.matches[t.id] = null
+        videos.delete(videoId)
+        count.missing(missingOf(t, 'YouTube Music wouldn’t add this song'))
       }
-      count.tick()
-      emit()
     }
-  )
+    return added
+  }
+
+  for (const t of songs) {
+    const videoId = await lookup(t)
+    if (!videoId) {
+      // undefined: the search itself failed (looked up again next time), not "YouTube Music doesn't have it".
+      count.missing(missingOf(t, videoId === undefined ? 'Couldn’t look this one up just now. It’s tried again next time.' : undefined))
+    } else if (done.has(t.id) || (!liked && videos.has(videoId))) {
+      count.found(t.id)
+      count.added(t)
+    } else if (liked) {
+      await call(() => paced(() => target.like(videoId), signal))
+      saved.liked.push(t.id)
+      done.add(t.id)
+      item.moved++
+      count.found(t.id)
+      count.added(t)
+      persist()
+    } else {
+      // Counted as done once it's queued for the next batch; if that batch fails, the import
+      // stops and counts again on resuming. Songs that turn out to be the same video go in once.
+      videos.add(videoId)
+      batch.push(t)
+      count.found(t.id)
+      if (batch.length >= BATCH) await flush()
+    }
+    count.tick()
+    emit()
+  }
   await flush()
 }
 
@@ -470,12 +587,15 @@ async function moveOthers(item: TransferItem, signal: AbortSignal): Promise<void
   const list: (SourceAlbum | SourceArtist)[] = albums ? picked.albums : picked.artists
   const done = new Set(albums ? saved.albumsSaved : saved.artistsFollowed)
   item.total = list.length
-  for (const x of list) {
-    signal.throwIfAborted()
-    if (!done.has(x.id)) {
-      const id = albums ? await call(() => target.findAlbum(x as SourceAlbum), true) : await call(() => target.findArtist(x as SourceArtist), true)
-      if (id) {
-        await call(() => (albums ? target.saveAlbum(id) : target.follow(id)))
+  await ahead(
+    list,
+    signal,
+    async (x) => (done.has(x.id) ? null : albums ? call(() => target.findAlbum(x as SourceAlbum), true) : call(() => target.findArtist(x as SourceArtist), true)),
+    async (x, id) => {
+      if (done.has(x.id)) {
+        // Saved or followed by an earlier import.
+      } else if (id) {
+        await call(() => paced(() => (albums ? target.saveAlbum(id) : target.follow(id)), signal))
         ;(albums ? saved.albumsSaved : saved.artistsFollowed).push(x.id)
         item.moved++
         count.found(x.id)
@@ -483,14 +603,20 @@ async function moveOthers(item: TransferItem, signal: AbortSignal): Promise<void
         count.missing(
           albums ? { id: x.id, title: (x as SourceAlbum).title, artists: (x as SourceAlbum).artists.join(', ') } : { id: x.id, title: (x as SourceArtist).name, artists: '' }
         )
+      count.tick()
+      persist()
+      emit()
     }
-    count.tick()
-    persist()
-    emit()
-  }
+  )
 }
 
 // ---------- fixing songs that weren't found ----------
+
+// A version the user picked that YouTube Music won't take (unless the problem is the connection).
+const refused = (e: unknown): never => {
+  if (/didn.t add/i.test((e as Error)?.message ?? '')) throw new Error('YouTube Music won’t add that version. Try another one.')
+  throw new Error(friendly(e))
+}
 
 const song = (itemId: string, trackId: string) => picked.songs[itemId]?.find((t) => t.id === trackId)
 // A fix in progress: resuming waits for it, so the two never add at once.
@@ -499,7 +625,11 @@ const settled = () => saved.phase === 'done' || saved.phase === 'stopped'
 
 async function find(itemId: string, trackId: string): Promise<Candidate[]> {
   const t = song(itemId, trackId)
-  return t ? target.offers(t) : []
+  try {
+    return t ? await target.offers(t) : []
+  } catch (e) {
+    throw new Error(`${friendly(e)}. Try again in a moment.`)
+  }
 }
 
 async function fix(itemId: string, trackId: string, videoId: string): Promise<void> {
@@ -513,7 +643,7 @@ async function fix(itemId: string, trackId: string, videoId: string): Promise<vo
     } else if (item.kind === 'playlist') {
       const link = saved.links[itemId]
       if (!link) throw new Error('That playlist isn’t on YouTube Music yet. Resume the import first.')
-      await target.addSongs(link.target, [videoId])
+      await target.addSongs(link.target, [videoId]).catch(refused)
       link.added.push(trackId)
     } else return
   } finally {
@@ -522,6 +652,62 @@ async function fix(itemId: string, trackId: string, videoId: string): Promise<vo
   saved.matches[trackId] = videoId
   item.missing = item.missing.filter((m) => m.id !== trackId)
   item.moved++
+  persist(true)
+  emit(true)
+}
+
+// ---------- checking close matches ----------
+
+// Replaces a close match with the song the user picked. The new song goes in first, so a failure
+// leaves the old one in place; the old one is then taken out (or unliked), unless another imported
+// song is that same video.
+async function swap(itemId: string, trackId: string, videoId: string): Promise<void> {
+  const item = saved.items?.find((i) => i.id === itemId)
+  const entry = item?.unsure.find((u) => u.id === trackId)
+  if (fixing || !item || !entry || !settled()) return
+  const old = entry.match.videoId
+  if (old === videoId) return keep(trackId)
+  const link = item.kind === 'playlist' ? saved.links[itemId] : undefined
+  if (item.kind === 'playlist' && !link) throw new Error('That playlist isn’t on YouTube Music anymore. Import again to make it again.')
+  fixing = true
+  try {
+    if (link) await target.addSongs(link.target, [videoId]).catch(refused)
+    else await target.like(videoId)
+  } catch (e) {
+    fixing = false
+    throw e
+  }
+  saved.matches[trackId] = videoId
+  delete saved.doubts[trackId]
+  item.unsure = item.unsure.filter((u) => u.id !== trackId)
+  persist(true)
+  emit(true)
+  try {
+    const usedElsewhere = (ids: Iterable<string>) => [...ids].some((id) => id !== trackId && saved.matches[id] === old)
+    if (link) {
+      if (!usedElsewhere((picked.songs[itemId] ?? []).map((t) => t.id))) await target.removeSong(link.target, old)
+    } else if (!usedElsewhere(saved.liked)) await target.unlike(old)
+  } catch {
+    const was = `${entry.match.title} (${entry.match.artists})`
+    throw new Error(link ? `Added the new song, but couldn’t take out ${was}. Remove it from the playlist yourself.` : `Liked the new song, but couldn’t unlike ${was}.`)
+  } finally {
+    fixing = false
+  }
+}
+
+// The user says a close match is right: it's no longer listed, here or in any other playlist.
+async function keep(trackId: string): Promise<void> {
+  delete saved.doubts[trackId]
+  saved.items?.forEach((i) => (i.unsure = i.unsure.filter((u) => u.id !== trackId)))
+  persist(true)
+  emit(true)
+}
+
+async function keepAll(): Promise<void> {
+  saved.items?.forEach((i) => {
+    i.unsure.forEach((u) => delete saved.doubts[u.id])
+    i.unsure = []
+  })
   persist(true)
   emit(true)
 }
@@ -538,5 +724,8 @@ export const api: TransferApi = {
   reset: async () => reset(),
   disconnect,
   find,
-  fix
+  fix,
+  swap,
+  keep,
+  keepAll
 }

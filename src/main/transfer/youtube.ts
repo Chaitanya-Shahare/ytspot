@@ -11,19 +11,27 @@ const LOOK_AT = 8
 
 const asCandidate = (t: Track, video: boolean): Candidate => ({ videoId: t.videoId, title: t.title, artists: t.artists, album: t.album, duration: t.duration, video })
 
-// The YouTube Music song for a Spotify song, or null. Most songs are found by the first search;
-// the rest also try music videos and a search with every artist.
-export async function findSong(song: SourceTrack): Promise<Match | null> {
+// A song found for a Spotify song: how sure the match is, and what it is (shown when it's worth a check).
+export interface Found extends Match {
+  song: Offer
+}
+
+const offer = (t: Track): Offer => ({ videoId: t.videoId, title: t.title, artists: t.artists, album: t.album, duration: t.duration, thumb: t.thumb })
+
+// The YouTube Music song for a Spotify song, or null. Most songs are found by the first search; for
+// the rest, music videos and a search with every artist are tried together.
+export async function findSong(song: SourceTrack): Promise<Found | null> {
   const [plain, full] = queries(song)
-  const better = (top: Match | null, list: Track[], video: boolean) => {
-    const m = best(song, list.slice(0, LOOK_AT).map((t) => asCandidate(t, video)))
-    return m && (!top || m.score > top.score) ? m : top
+  // The better of `top` and the best of `list`.
+  const better = (top: Found | null, list: Track[], video: boolean): Found | null => {
+    const shown = list.slice(0, LOOK_AT)
+    const m = best(song, shown.map((t) => asCandidate(t, video)))
+    return m && (!top || m.score > top.score) ? { ...m, song: offer(shown.find((t) => t.videoId === m.videoId)!) } : top
   }
-  let top = better(null, (await yt.search(plain, 'song')).songs, false)
+  const top = better(null, (await yt.search(plain, 'song')).songs, false)
   if (top && top.score >= SURE) return top
-  top = better(top, (await yt.search(plain, 'video')).songs, true)
-  if ((top && top.score >= SURE) || !full) return top
-  return better(top, (await yt.search(full, 'song')).songs, false)
+  const [videos, all] = await Promise.all([yt.search(plain, 'video'), full ? yt.search(full, 'song') : null])
+  return better(better(top, videos.songs, true), all?.songs ?? [], false)
 }
 
 // Songs to choose from when one wasn't found: songs first, then videos.
@@ -33,16 +41,18 @@ export async function offers(song: SourceTrack): Promise<Offer[]> {
   const seen = new Set<string>()
   return [...songs.songs.slice(0, 5), ...videos.songs.slice(0, 3)]
     .filter((t) => !seen.has(t.videoId) && !!seen.add(t.videoId))
-    .map((t) => ({ videoId: t.videoId, title: t.title, artists: t.artists, album: t.album, duration: t.duration, thumb: t.thumb }))
+    .map(offer)
 }
 
 export const like = (videoId: string) => rateVideo(videoId, true)
+export const unlike = (videoId: string) => rateVideo(videoId, false)
 
 // YouTube Music caps playlist titles at 150 characters and descriptions at 5000.
 export const newPlaylist = (title: string, description: string) =>
   yt.createPlaylist(title.slice(0, 150) || 'Untitled playlist', [], 'PRIVATE', description.slice(0, 5000))
 
 export const addSongs = (playlistId: string, videoIds: string[]) => yt.addSongs(playlistId, videoIds)
+export const removeSong = (playlistId: string, videoId: string) => yt.removeFromPlaylist(playlistId, videoId)
 
 // The songs (video ids) in a playlist made by an earlier import, or null when it's been deleted since.
 export async function contents(playlistId: string): Promise<string[] | null> {

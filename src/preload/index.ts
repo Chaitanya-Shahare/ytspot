@@ -27,7 +27,10 @@ const transfer: TransferApi = {
   reset: call('reset'),
   disconnect: call('disconnect'),
   find: call('find'),
-  fix: call('fix')
+  fix: call('fix'),
+  swap: call('swap'),
+  keep: call('keep'),
+  keepAll: call('keepAll')
 }
 
 const bridge = {

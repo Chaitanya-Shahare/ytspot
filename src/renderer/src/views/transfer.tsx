@@ -1,7 +1,7 @@
 // Import from Spotify: connect, pick what to bring over, watch it move, then fix what wasn't found.
 // Loaded only when the page is opened (see App.tsx), with its own styles.
 import { useEffect, useMemo, useState } from 'react'
-import type { Candidate, LibrarySummary, Missing, Selection, TransferItem, TransferState } from '../../../shared/transfer'
+import type { Candidate, LibrarySummary, Missing, Selection, TransferItem, TransferState, Unsure } from '../../../shared/transfer'
 import * as I from '../components/icons'
 import { ErrorBox, Img, Loading } from '../components/ui'
 import { useApp } from '../lib'
@@ -184,6 +184,13 @@ function Choose({ library }: { library: LibrarySummary }) {
         </button>
       </div>
 
+      {!!library.unread?.length && (
+        <p className="tr-error">
+          Spotify wouldn’t hand over {library.unread.length === 1 ? <>the playlist <b>{library.unread[0]}</b></> : <>{plural(library.unread.length, 'playlist')} ({list(library.unread)})</>}, so{' '}
+          {library.unread.length === 1 ? 'it’s' : 'they’re'} left out. Go back and connect again to retry.
+        </p>
+      )}
+
       {library.liked > 0 && (
         <section className="tr-group">
           <Pick on={liked} onChange={setLiked} art={<span className="liked-art tr-art"><I.HeartFill size={16} /></span>} title="Liked Songs" sub={`${plural(library.liked, 'song')} · liked on YouTube Music`} />
@@ -261,6 +268,7 @@ function Choose({ library }: { library: LibrarySummary }) {
   )
 }
 
+const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 const list = (parts: string[]) => (parts.length < 2 ? parts.join('') : `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}`)
 
 function Pick(p: { on: boolean; onChange: (on: boolean) => void; art: React.ReactNode; title: string; sub: string; tag?: string }) {
@@ -325,6 +333,7 @@ function Moving({ state }: { state: TransferState }) {
   const pct = Math.floor(progress(state) * 100)
   const moved = items.reduce((x, i) => x + i.moved, 0)
   const missing = items.reduce((x, i) => x + i.missing.length, 0)
+  const unsure = items.reduce((x, i) => x + i.unsure.length, 0)
   return (
     <>
       <section className="tr-panel tr-progress">
@@ -343,6 +352,7 @@ function Moving({ state }: { state: TransferState }) {
         </div>
         <p className="sub tr-counts">
           {n(moved)} added{missing > 0 && <> · {n(missing)} not found</>}
+          {unsure > 0 && <> · {n(unsure)} to check</>}
         </p>
         <p className="sub tr-fine">Keep listening and browsing: the import carries on in the background, even if you leave this page.</p>
       </section>
@@ -414,6 +424,8 @@ function Results({ state }: { state: TransferState }) {
   const albums = items.find((i) => i.kind === 'albums')?.moved ?? 0
   const artists = items.find((i) => i.kind === 'artists')?.moved ?? 0
   const missing = items.reduce((x, i) => x + i.missing.length, 0)
+  const unsure = items.reduce((x, i) => x + i.unsure.length, 0)
+  const left = [missing > 0 && `${n(missing)} not found`, unsure > 0 && `${n(unsure)} worth a check`].filter(Boolean) as string[]
   // Imported again with nothing new since last time.
   const upToDate = done && !failed && items.every((i) => i.moved === 0)
   const tiles: [number, string][] = (
@@ -437,8 +449,10 @@ function Results({ state }: { state: TransferState }) {
           <p className="tr-error">{state.error}</p>
         ) : !done ? (
           <p className="sub">Pick up where it left off whenever you like.</p>
+        ) : upToDate ? (
+          <p className="sub">Everything you chose was already on YouTube Music.{left.length > 0 && ` ${capital(list(left))}: see below.`}</p>
         ) : (
-          upToDate && <p className="sub">Everything you chose was already on YouTube Music.</p>
+          left.length > 0 && <p className="sub">{capital(list(left))}: see below.</p>
         )}
         {!upToDate && (
           <div className="tr-tiles">
@@ -468,6 +482,7 @@ function Results({ state }: { state: TransferState }) {
       </section>
       <Items items={items} />
       {missing > 0 && <NotFound items={items} />}
+      {unsure > 0 && <CloseMatches items={items} />}
     </>
   )
 }
@@ -495,74 +510,175 @@ function NotFound({ items }: { items: TransferItem[] }) {
 }
 
 function MissingRow({ item, m }: { item: TransferItem; m: Missing }) {
-  const { go, playTrack, toast } = useApp()
-  const [offers, setOffers] = useState<Candidate[] | null>(null)
+  const { go, toast } = useApp()
   const [open, setOpen] = useState(false)
-  const [adding, setAdding] = useState<string | null>(null)
   const song = item.kind === 'liked' || item.kind === 'playlist'
   const query = `${m.title} ${m.artists.split(', ')[0] ?? ''}`.trim()
-  const toggle = async () => {
-    if (!song) return go({ name: 'search', q: query })
-    setOpen((o) => !o)
-    if (offers) return
-    try {
-      setOffers(await t.find(item.id, m.id))
-    } catch (e) {
-      setOpen(false)
-      toast(message(e))
-    }
-  }
+  const toggle = () => (song ? setOpen((o) => !o) : go({ name: 'search', q: query }))
   const add = async (c: Candidate) => {
-    setAdding(c.videoId)
-    try {
-      await t.fix(item.id, m.id, c.videoId)
-      toast(item.kind === 'liked' ? 'Added to Liked Songs' : `Added to ${item.title}`)
-    } catch (e) {
-      toast(message(e))
-      setAdding(null)
-    }
+    await t.fix(item.id, m.id, c.videoId)
+    toast(item.kind === 'liked' ? 'Added to Liked Songs' : `Added to ${item.title}`)
   }
   return (
     <div className={`tr-missing-row ${open ? 'open' : ''}`}>
       <div className="tr-missing-main">
         <span className="tr-pick-text">
           <span className="tr-pick-title">{m.title}</span>
-          <span className="sub">{[m.artists, m.album].filter(Boolean).join(' · ') || (item.kind === 'artists' ? 'Artist' : '')}</span>
+          <span className="sub">{m.note ?? ([m.artists, m.album].filter(Boolean).join(' · ') || (item.kind === 'artists' ? 'Artist' : ''))}</span>
         </span>
         <button className="outline-btn small" onClick={toggle} aria-expanded={song ? open : undefined}>
           {song ? (open ? 'Close' : 'Find') : 'Search'}
         </button>
       </div>
+      {open && <Offers item={item} trackId={m.id} query={query} action="Add" busyLabel="Adding…" onPick={add} onFail={() => setOpen(false)} />}
+    </div>
+  )
+}
+
+// ---------- close matches ----------
+
+function CloseMatches({ items }: { items: TransferItem[] }) {
+  const [act, busy] = useAct()
+  const total = items.reduce((x, i) => x + i.unsure.length, 0)
+  return (
+    <section className="tr-group tr-missing tr-checks">
+      <div className="tr-group-head">
+        <h2>Worth a check</h2>
+        <span className="sub">
+          {total === 1 ? 'This song was added with a close match, not an exact one.' : `These ${n(total)} songs were added with close matches, not exact ones.`} Play to
+          compare, then keep or change {total === 1 ? 'it' : 'them'}.
+        </span>
+        {total > 1 && (
+          <button className="outline-btn small" disabled={busy} onClick={() => act(t.keepAll)}>
+            Keep all
+          </button>
+        )}
+      </div>
+      {items
+        .filter((i) => i.unsure.length)
+        .map((i) => (
+          <div key={i.id} className="tr-missing-group">
+            <h3>{i.title}</h3>
+            {i.unsure.map((u) => (
+              <CheckRow key={u.id} item={i} u={u} />
+            ))}
+          </div>
+        ))}
+    </section>
+  )
+}
+
+function CheckRow({ item, u }: { item: TransferItem; u: Unsure }) {
+  const { toast } = useApp()
+  const [act, busy] = useAct()
+  const [open, setOpen] = useState(false)
+  const query = `${u.title} ${u.artists.split(', ')[0] ?? ''}`.trim()
+  const swap = async (c: Candidate) => {
+    await t.swap(item.id, u.id, c.videoId)
+    toast(item.kind === 'liked' ? 'Changed in Liked Songs' : `Changed in ${item.title}`)
+  }
+  return (
+    <div className={`tr-missing-row tr-check-row ${open ? 'open' : ''}`}>
+      <div className="tr-missing-main">
+        <span className="tr-pick-text tr-check-from" title="On Spotify">
+          <span className="tr-pick-title">{u.title}</span>
+          <span className="sub">{[u.artists, u.album].filter(Boolean).join(' · ')}</span>
+        </span>
+        <I.ChevronRight size={16} className="tr-check-arrow" />
+        <span className="tr-check-to" title="Added on YouTube Music">
+          <PlayThumb c={u.match} />
+          <span className="tr-pick-text">
+            <span className="tr-pick-title">{u.match.title}</span>
+            <span className="sub">{[u.match.artists, u.match.album, u.match.duration].filter(Boolean).join(' · ')}</span>
+          </span>
+        </span>
+        <button className="outline-btn small" disabled={busy} onClick={() => act(() => t.keep(u.id))} title="This is the right song">
+          Keep
+        </button>
+        <button className="outline-btn small" disabled={busy} onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+          {open ? 'Close' : 'Change'}
+        </button>
+      </div>
       {open && (
-        <div className="tr-offers">
-          {!offers && <span className="sub tr-offers-note">Searching YouTube Music…</span>}
-          {offers && !offers.length && <span className="sub tr-offers-note">Nothing close on YouTube Music.</span>}
-          {offers?.map((c) => (
-            <div key={c.videoId} className="tr-offer">
-              <button
-                className="tr-offer-play"
-                title="Play"
-                aria-label={`Play ${c.title}`}
-                onClick={() => playTrack({ videoId: c.videoId, title: c.title, artists: c.artists, album: c.album, duration: c.duration, thumb: c.thumb })}
-              >
-                <Img src={c.thumb} className="tr-art small" />
-                <I.Play size={14} />
-              </button>
-              <span className="tr-pick-text">
-                <span className="tr-pick-title">{c.title}</span>
-                <span className="sub">{[c.artists, c.album, c.duration].filter(Boolean).join(' · ')}</span>
-              </span>
-              <button className="outline-btn small" disabled={!!adding} onClick={() => add(c)}>
-                {adding === c.videoId ? 'Adding…' : 'Add'}
-              </button>
-            </div>
-          ))}
-          {offers && (
-            <button className="link tr-link tr-offers-note" onClick={() => go({ name: 'search', q: query })}>
-              Search for it yourself
-            </button>
-          )}
+        <Offers item={item} trackId={u.id} query={query} action="Use this" busyLabel="Changing…" exclude={u.match.videoId} onPick={swap} onFail={() => setOpen(false)} />
+      )}
+    </div>
+  )
+}
+
+// ---------- picking a song on YouTube Music ----------
+
+function PlayThumb({ c }: { c: Candidate }) {
+  const { playTrack } = useApp()
+  return (
+    <button
+      className="tr-offer-play"
+      title="Play"
+      aria-label={`Play ${c.title}`}
+      onClick={() => playTrack({ videoId: c.videoId, title: c.title, artists: c.artists, album: c.album, duration: c.duration, thumb: c.thumb })}
+    >
+      <Img src={c.thumb} className="tr-art small" />
+      <I.Play size={14} />
+    </button>
+  )
+}
+
+// YouTube Music songs to pick from for one Spotify song, searched when opened.
+function Offers(p: {
+  item: TransferItem
+  trackId: string
+  query: string
+  action: string
+  busyLabel: string
+  exclude?: string
+  onPick: (c: Candidate) => Promise<void>
+  onFail: () => void
+}) {
+  const { go, toast } = useApp()
+  const [offers, setOffers] = useState<Candidate[] | null>(null)
+  const [picking, setPicking] = useState<string | null>(null)
+  useEffect(() => {
+    let live = true
+    t.find(p.item.id, p.trackId).then(
+      (list) => live && setOffers(list.filter((c) => c.videoId !== p.exclude)),
+      (e) => {
+        if (!live) return
+        toast(message(e))
+        p.onFail()
+      }
+    )
+    return () => void (live = false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.item.id, p.trackId])
+  const pick = async (c: Candidate) => {
+    setPicking(c.videoId)
+    try {
+      await p.onPick(c)
+    } catch (e) {
+      toast(message(e))
+      setPicking(null)
+    }
+  }
+  return (
+    <div className="tr-offers">
+      {!offers && <span className="sub tr-offers-note">Searching YouTube Music…</span>}
+      {offers && !offers.length && <span className="sub tr-offers-note">Nothing {p.exclude ? 'else ' : ''}close on YouTube Music.</span>}
+      {offers?.map((c) => (
+        <div key={c.videoId} className="tr-offer">
+          <PlayThumb c={c} />
+          <span className="tr-pick-text">
+            <span className="tr-pick-title">{c.title}</span>
+            <span className="sub">{[c.artists, c.album, c.duration].filter(Boolean).join(' · ')}</span>
+          </span>
+          <button className="outline-btn small" disabled={!!picking} onClick={() => pick(c)}>
+            {picking === c.videoId ? p.busyLabel : p.action}
+          </button>
         </div>
+      ))}
+      {offers && (
+        <button className="link tr-link tr-offers-note" onClick={() => go({ name: 'search', q: p.query })}>
+          Search for it yourself
+        </button>
       )}
     </div>
   )

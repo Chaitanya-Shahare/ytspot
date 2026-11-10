@@ -50,7 +50,7 @@ const FLAGS: [string, RegExp][] = [
   ['remix', /\bremix(ed)?\b|\brmx\b|\brework\b|\bbootleg\b|\bvip\b/],
   ['acoustic', /\bacoustic\b/],
   ['instrumental', /\binstrumental\b|\bkaraoke\b|\bbacking track\b/],
-  ['cover', /\bcover\b/],
+  ['cover', /\bcover\b|\btype beat\b|\bin the style of\b/],
   ['sped', /\bsped up\b|\bspeed up\b|\bnightcore\b/],
   ['slowed', /\bslowed\b|\breverb\b/],
   ['demo', /\bdemo\b/],
@@ -61,7 +61,10 @@ const FLAGS: [string, RegExp][] = [
 
 export function flags(title: string): Set<string> {
   const t = fold(title)
-  return new Set(FLAGS.filter(([, re]) => re.test(t)).map(([f]) => f))
+  const out = new Set(FLAGS.filter(([, re]) => re.test(t)).map(([f]) => f))
+  // "(xyz style)": someone's remake, credited to the original artist in the title.
+  if (/[([][^)\]]*\bstyle[)\]]/i.test(title)) out.add('cover')
+  return out
 }
 
 // Bracketed parts or " - …" tails that only describe the release, not the recording.
