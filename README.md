@@ -98,7 +98,7 @@ The UI is a separate React app, not a restyle of the YouTube Music website. Its 
 ### macOS integration
 
 - **Control Center** Now Playing widget and **media keys**.
-- **Menu bar player:** the current song in the macOS menu bar, with play/pause, next, previous and like. Show the song, the artist, both, or just an icon.
+- **Menu bar player:** the current song in the macOS menu bar, with play/pause, next, previous and like. Show the song, the artist, both, or just an icon, with a note or play/pause icon; switch it from the item's own Menu Bar submenu or in Settings.
 - A full **app menu bar** (Playback, View, Window) that shows your current key bindings.
 - **Closing the window keeps the music playing**, like Spotify. The interface is unloaded to free memory and reopens from the Dock.
 - Optionally open ytspot when you log in to your Mac.

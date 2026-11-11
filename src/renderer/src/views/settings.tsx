@@ -31,7 +31,7 @@ export function SettingsView({ authed }: { authed: boolean }) {
         </Row>
         <Row
           title="Now playing in the menu bar"
-          desc="Shows the song next to an icon at the top of your screen; click it for playback controls. On a Mac with a notch, macOS hides it when the menu bar is full, so pick a shorter option if it doesn’t show."
+          desc="Shows the song next to an icon at the top of your screen; click it for playback controls, or to change how it looks under Menu Bar. On a Mac with a notch, macOS hides it when the menu bar is full, so pick a shorter option if it doesn’t show."
         >
           <select className="select" value={prefs.menuBar} onChange={(e) => setPrefs({ menuBar: e.target.value as MenuBarMode })}>
             <option value="both">Song and artist</option>

@@ -214,6 +214,19 @@ function applyMenuBar(): void {
   pushState()
 }
 
+// The menu bar item's own "Menu Bar" submenu changed how it looks: apply it, and hand it to the
+// UI, which owns the setting (so Settings shows it, and the UI doesn't send the old one back).
+function setMenuBarLook(m: MenuBarMode, i: MenuBarIcon): void {
+  if (m === menuBar && i === menuBarIcon) return
+  menuBar = m
+  menuBarIcon = i
+  saveMainPrefs()
+  applyMenuBar()
+  ui?.send('prefs:menuBar', { menuBar, menuBarIcon })
+}
+
+const saveMainPrefs = () => writeFileSync(prefsFile, JSON.stringify({ menuBar, menuBarIcon, autoUpdate }))
+
 const rebuildMenu = () => buildMenu(() => main, () => ui, showMain, keys)
 
 // Native popup menu for "…" / avatar / Create; resolves with the chosen id or null.
@@ -370,7 +383,7 @@ app.whenReady().then(() => {
       menuBar = p.menuBar
       menuBarIcon = p.menuBarIcon
       autoUpdate = p.autoUpdate
-      writeFileSync(prefsFile, JSON.stringify({ menuBar, menuBarIcon, autoUpdate }))
+      saveMainPrefs()
       if (tray) applyMenuBar()
       setAutoUpdate(autoUpdate)
     }
@@ -381,7 +394,7 @@ app.whenReady().then(() => {
   createPlayerWindow()
   createMain()
   rebuildMenu()
-  initTray({ command: playerCommand, show: () => showMain(), quit: () => app.quit(), dump: trayDump })
+  initTray({ command: playerCommand, look: setMenuBarLook, show: () => showMain(), quit: () => app.quit(), dump: trayDump })
   applyMenuBar()
   initUpdater({ window: () => main, page: () => ui })
   setAutoUpdate(autoUpdate)
