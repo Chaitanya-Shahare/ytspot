@@ -80,6 +80,8 @@ export default function App() {
   useEffect(() => {
     window.ytm.setPrefs({ keepPlaying: prefs.keepPlaying, videoMode: prefs.videoMode, openAtLogin: prefs.openAtLogin, menuBar: prefs.menuBar, menuBarIcon: prefs.menuBarIcon, autoUpdate: prefs.autoUpdate, chords: prefs.chords && prefs.showChords })
   }, [prefs.keepPlaying, prefs.videoMode, prefs.openAtLogin, prefs.menuBar, prefs.menuBarIcon, prefs.autoUpdate, prefs.chords, prefs.showChords])
+  // The menu bar item's look can also be changed from its own menu.
+  useEffect(() => window.ytm.onMenuBarLook(setPrefs), [setPrefs])
   const searchRef = useRef<HTMLInputElement>(null)
   const route = history[pos]
 

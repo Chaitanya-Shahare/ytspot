@@ -1,4 +1,4 @@
-import { Menu, nativeImage, net, Tray, type NativeImage } from 'electron'
+import { Menu, nativeImage, net, Tray, type MenuItem, type MenuItemConstructorOptions, type NativeImage } from 'electron'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import noteIcon from '../../resources/trayTemplate.png?asset'
@@ -14,6 +14,7 @@ const ART = 40 // cover art size in the menu, in points
 
 interface TrayActions {
   command: (c: PlayerCommand) => void
+  look: (m: MenuBarMode, i: MenuBarIcon) => void // a choice from the item's own "Menu Bar" submenu
   show: () => void
   quit: () => void
   dump?: string // test runs: draw the item into files in this folder instead of the menu bar
@@ -33,6 +34,19 @@ let art: { url: string; image: NativeImage | null } | null = null
 // Menu item subtitles need macOS 14.4; before that the artist goes on a line of its own.
 const [major, minor] = process.getSystemVersion().split('.').map(Number)
 const sublabels = major > 14 || (major === 14 && minor >= 4)
+// Section headings need macOS 14; before that they're greyed-out items.
+const headers = major >= 14
+
+const TEXT: [MenuBarMode, string][] = [
+  ['both', 'Song and Artist'],
+  ['song', 'Song'],
+  ['artist', 'Artist'],
+  ['icon', 'Icon Only']
+]
+const ICONS: [MenuBarIcon, string][] = [
+  ['note', 'Note'],
+  ['status', 'Play / Pause']
+]
 
 export function initTray(on: TrayActions): void {
   actions = on
@@ -99,10 +113,31 @@ function render(s: PlayerState | null): void {
           ]
         : [{ label: 'Nothing playing', enabled: false }]),
       { type: 'separator' },
+      { label: 'Menu Bar', submenu: lookMenu() },
+      { type: 'separator' },
       { label: 'Show ytspot', click: actions.show },
       { label: 'Quit ytspot', click: actions.quit }
     ])
   )
+}
+
+// How the item itself looks, tucked in a submenu: what text goes next to the icon, which icon,
+// or taking it off the menu bar (Settings brings it back). The same choices as in Settings.
+function lookMenu(): MenuItemConstructorOptions[] {
+  const heading = (label: string): MenuItemConstructorOptions => (headers ? { label, type: 'header' } : { label, enabled: false })
+  return [
+    heading('Show'),
+    ...TEXT.map(([m, label]): MenuItemConstructorOptions => ({ label, type: 'radio', checked: mode === m, click: () => actions.look(m, iconMode) })),
+    { type: 'separator' },
+    heading('Icon'),
+    ...ICONS.map(([i, label]): MenuItemConstructorOptions => ({ label, type: 'radio', checked: iconMode === i, click: () => actions.look(mode, i) })),
+    { type: 'separator' },
+    {
+      label: 'Hide from Menu Bar',
+      ...(sublabels ? { sublabel: 'Turn it back on in Settings' } : {}),
+      click: () => actions.look('off', iconMode)
+    }
+  ]
 }
 
 // The song's cover art for the menu, or null while it loads (the menu is redrawn once it has).
@@ -154,7 +189,9 @@ function dumpTray(dir: string): TrayLike {
     setToolTip: () => {},
     setContextMenu: (menu) => {
       const items = menu?.items ?? []
-      write('menu.json', JSON.stringify(items.map((i) => ({ label: i.label, sublabel: i.sublabel, type: i.type, enabled: i.enabled, checked: i.checked, icon: !!i.icon })), null, 1))
+      const dump = (list: MenuItem[]): unknown[] =>
+        list.map((i) => ({ label: i.label, sublabel: i.sublabel, type: i.type, enabled: i.enabled, checked: i.checked, icon: !!i.icon, ...(i.submenu ? { submenu: dump(i.submenu.items) } : {}) }))
+      write('menu.json', JSON.stringify(dump(items), null, 1))
       const withArt = items.find((i) => i.icon)
       if (withArt) write('art.png', (withArt.icon as NativeImage).toPNG({ scaleFactor: 2 }))
     },

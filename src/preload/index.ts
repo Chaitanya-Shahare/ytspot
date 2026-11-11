@@ -132,6 +132,12 @@ const bridge = {
     ipcRenderer.on('auth', fn)
     return () => void ipcRenderer.removeListener('auth', fn)
   },
+  // The menu bar item's look was changed from its own menu.
+  onMenuBarLook: (cb: (p: Pick<MainPrefs, 'menuBar' | 'menuBarIcon'>) => void) => {
+    const fn = (_: unknown, p: Pick<MainPrefs, 'menuBar' | 'menuBarIcon'>) => cb(p)
+    ipcRenderer.on('prefs:menuBar', fn)
+    return () => void ipcRenderer.removeListener('prefs:menuBar', fn)
+  },
   onUpdate: (cb: (s: UpdateState) => void) => {
     const fn = (_: unknown, s: UpdateState) => cb(s)
     ipcRenderer.on('update', fn)
