@@ -445,7 +445,7 @@ kbd { font-family: inherit; font-size: 12px; color: var(--text-base); padding: 2
 .resizer.resizing::after { background: var(--text-base); }
 
 /* ---------- lyrics (sizes and colours from Spotify's lyrics view) ---------- */
-.lyrics-page { --lyrics-bg: #535353; background: var(--lyrics-bg); transition: background-color .25s ease-out; container-type: inline-size; padding: 0; }
+.lyrics-page { --lyrics-bg: #535353; background: var(--lyrics-bg); transition: background-color .25s ease-out; container-type: inline-size; padding: 0; display: flex; flex-direction: column; }
 .lyrics-wrap { display: flex; flex-direction: column; align-items: center; padding: 64px 0 96px; }
 .lyrics { width: min(100% - 128px, 1024px); font-size: 2rem; font-weight: 700; letter-spacing: -.01em; line-height: 1.3; text-wrap: balance; user-select: text; }
 @container (width > 800px) { .lyrics { font-size: 3rem; } }
@@ -559,6 +559,19 @@ kbd { font-family: inherit; font-size: 12px; color: var(--text-base); padding: 2
 .fs.mode-lyrics > .fs-bottom { background: linear-gradient(transparent, var(--lyrics-bg) 45%); }
 .fs.idle { cursor: none; }
 .fs.idle > .fs-top, .fs.idle > .fs-bottom { opacity: 0; pointer-events: none; }
+/* Their scrims are see-through to the pointer: the wheel scrolls the lyrics and a click reaches the
+   video anywhere outside the controls themselves. */
+.fs.mode-video > .fs-top, .fs.mode-lyrics > .fs-top, .fs.mode-video > .fs-bottom, .fs.mode-lyrics > .fs-bottom { pointer-events: none; }
+.fs:not(.idle) > .fs-top > *, .fs:not(.idle) > .fs-bottom > * { pointer-events: auto; }
+/* The line under the hidden pointer doesn't stay lit up as if it were being sung. */
+.fs.idle .lyrics.synced .lyric:hover { color: #000; text-decoration: none; }
+.fs.idle .lyrics.synced .lyric.passed:hover { color: #ffffffb3; }
+.fs.idle .lyrics.synced .lyric.active:hover { color: #fff; }
+/* Over the lyrics only the controls fade: the song's cover, title and artist stay up, as in
+   Spotify's full-screen lyrics (a video, as on YouTube, gets the whole screen). */
+.fs.idle.mode-lyrics > .fs-top { opacity: 1; }
+.fs-av { transition: opacity .3s; }
+.fs.idle > .fs-top .fs-av { opacity: 0; }
 .fs-track { display: flex; align-items: center; gap: 16px; min-width: 0; }
 .fs-track-art { width: 56px; height: 56px; border-radius: var(--radius-base); flex: none; }
 .fs-track-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
@@ -571,8 +584,9 @@ kbd { font-family: inherit; font-size: 12px; color: var(--text-base); padding: 2
 .fs > .fs-video.shown { opacity: 0; }
 html:has(.fs-video.shown) body { background: transparent; }
 html:has(.fs-video.shown) .app { visibility: hidden; }
-/* Spotify's full-screen lyrics: the Lyrics page's lines, starting a quarter of the way down. */
-.fs-lyrics { position: absolute; inset: 0; z-index: 1; overflow-y: auto; }
+/* Spotify's full-screen lyrics: the Lyrics page's lines, starting a quarter of the way down. Fills
+   the screen (`.fs >` so it isn't made position: relative with the player's other layers). */
+.fs > .fs-lyrics { position: absolute; inset: 0; z-index: 1; overflow-y: auto; }
 .lyrics-page.full { min-height: 100%; background: transparent; }
 .lyrics-page.full .lyrics-wrap { padding: 25vh 0 45vh; }
 .lyrics-page.full .lyrics-note { padding-top: 25vh; }
@@ -822,7 +836,8 @@ html:has(.fs-video.shown) .app { visibility: hidden; }
 .create-btn.icon { width: 32px; height: 32px; padding: 0; justify-content: center; border-radius: 50%; }
 
 /* No lyrics: a quiet note in the middle of the page, not a lyric line. */
-.lyrics-empty { min-height: calc(100vh - 240px); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 32px; text-align: center; }
+/* Fills the page below the chords (if shown), so it's centred there without making the page scroll. */
+.lyrics-empty { flex: 1; min-height: 240px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 32px; text-align: center; }
 .lyrics-empty-title { font-size: 24px; font-weight: 700; }
 .lyrics-empty-sub { font-size: 16px; color: #ffffffb3; }
 

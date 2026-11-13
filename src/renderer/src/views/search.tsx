@@ -49,11 +49,18 @@ function Results({ query, filter }: { query: string; filter: SearchFilter }) {
   if (data) last.current = data
   const shown = data ?? last.current
 
-  // Remember queries the user actually looked at.
+  // Remember queries the user actually looked at: ones left on screen a moment, or left by opening
+  // a result (Spotify saves the search when you click one), not each word on the way to the query.
+  const opened = useRef(false)
   useEffect(() => {
     if (!data || query.length < 2) return
-    const t = setTimeout(() => saveRecent([query, ...loadRecent().filter((r) => r.toLowerCase() !== query.toLowerCase())]), 1500)
-    return () => clearTimeout(t)
+    const save = () => saveRecent([query, ...loadRecent().filter((r) => r.toLowerCase() !== query.toLowerCase())])
+    opened.current = false
+    const t = setTimeout(save, 1500)
+    return () => {
+      clearTimeout(t)
+      if (opened.current) save()
+    }
   }, [data, query])
 
   if (error && !shown) return <ErrorBox error={error} onRetry={retry} />
@@ -61,7 +68,7 @@ function Results({ query, filter }: { query: string; filter: SearchFilter }) {
   const top = shown.top
   const cards = shown.shelves.flatMap((s) => s.cards)
   return (
-    <div className={data || error ? '' : 'stale'}>
+    <div className={data || error ? '' : 'stale'} onClickCapture={() => (opened.current = true)}>
       {/* The new query failed: say so above the previous results rather than leave them dimmed. */}
       {error && !data && <ErrorBox error={error} onRetry={retry} />}
       {filter === 'all' ? (

@@ -60,6 +60,14 @@ export function createPlayerWindow(): BaseWindow {
     run(SETUP_JS(videoMode, shuffleMode))
     if (chordCapture) run(CHROMA_JS(true))
   })
+  // The page crashed, or couldn't load (offline at launch, a network change): load it again, waiting
+  // longer each time, so playback recovers by itself instead of every control silently doing nothing.
+  let retries = 0
+  const recover = () => setTimeout(() => !p.isDestroyed() && p.loadURL(YTM).catch(() => undefined), Math.min(30_000, 1000 * 2 ** retries++))
+  p.on('render-process-gone', (_e, d) => d.reason !== 'clean-exit' && recover())
+  // (-3: a load cut short by another, which is fine.)
+  p.on('did-fail-load', (_e, code, _desc, _url, mainFrame) => mainFrame && code !== -3 && recover())
+  p.on('did-finish-load', () => (retries = 0))
   blockAds(p).then(() => p.loadURL(YTM))
   return host
 }

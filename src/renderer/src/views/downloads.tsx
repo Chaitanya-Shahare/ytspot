@@ -89,7 +89,8 @@ export function DownloadButton({ tracks, title, loading }: { tracks: Track[]; ti
   const { ids, progress } = useDownloads()
   const saved = tracks.filter((t) => ids.has(t.videoId)).length
   const busy = tracks.some((t) => progress.has(t.videoId))
-  const all = saved === tracks.length
+  // Not while the rest of a long playlist is still loading: the songs so far being saved isn't all.
+  const all = !loading && saved === tracks.length
   // Songs done, plus how far the ones in progress have got.
   const done = (saved + tracks.reduce((n, t) => n + (progress.get(t.videoId) ?? 0), 0)) / tracks.length
   const label = all ? 'Remove from Downloads' : busy ? 'Downloading…' : loading ? 'Loading songs…' : 'Download'

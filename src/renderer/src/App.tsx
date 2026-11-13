@@ -1192,17 +1192,19 @@ function VideoSlot({ poster, full }: { poster: string; full?: boolean }) {
 
 // Spotify's ambient mode (cinema mode) and YouTube's full screen: after a few seconds without the
 // mouse moving, the controls and the pointer fade away until it moves again. Not while the pointer
-// rests on the controls.
+// rests on the controls (also after a click or key that changes what's shown under it), nor while
+// a popover or dialog is open over them.
+const KEEP_AWAKE = '.fs-top > :hover, .fs-bottom > :hover, .save-pop, .modal-bg'
 function useIdle(enabled: boolean, ms = 3000): boolean {
   const [idle, setIdle] = useState(false)
   useEffect(() => {
     setIdle(false)
     if (!enabled) return
     let t: ReturnType<typeof setTimeout>
-    const wake = (e?: Event) => {
+    const wake = () => {
       clearTimeout(t)
       setIdle(false)
-      if (!(e?.target instanceof Element && e.target.closest('.fs-top, .fs-bottom'))) t = setTimeout(() => setIdle(true), ms)
+      t = setTimeout(() => !document.querySelector(KEEP_AWAKE) && setIdle(true), ms)
     }
     wake()
     const events = ['pointermove', 'pointerdown', 'keydown', 'wheel']
@@ -1262,7 +1264,8 @@ function Slider({
       aria-valuenow={Math.round(shown)}
       aria-valuetext={tip?.(shown)}
       onPointerDown={(e) => {
-        if (!max) return
+        // Only the main button: a right-click (or Control-click) mustn't seek or change the volume.
+        if (!max || e.button !== 0 || e.ctrlKey) return
         e.currentTarget.setPointerCapture(e.pointerId)
         move(at(e.clientX))
       }}
@@ -1354,6 +1357,8 @@ function Tooltips({ keys }: { keys: Record<Action, string[]> }) {
       }
       timer = setTimeout(() => {
         if (!el.isConnected || !el.dataset.tip) return
+        // `data-tip-cut`: text that only needs a tip when it's cut off with an ellipsis.
+        if (el.dataset.tipCut !== undefined && el.scrollWidth <= el.clientWidth) return
         const r = el.getBoundingClientRect()
         // In the collapsed library rail tips open to the side, as Spotify's do.
         const side = el.closest('.left-collapsed .library') ? 'right' : r.top < 48 ? 'below' : 'above'
@@ -1594,8 +1599,12 @@ function FullScreenView({ lyrics, onLyrics, onClose, onPlus, onShuffle }: { lyri
           <div className="fs-track">
             {lyrics && <Img className="fs-track-art" src={sized(p.thumb, 56)} />}
             <div className="fs-track-text">
-              <b>{p.title}</b>
-              <span>{p.artist}</span>
+              <b title={p.title} data-tip-cut>
+                {p.title}
+              </b>
+              <span title={p.artist} data-tip-cut>
+                {p.artist}
+              </span>
             </div>
           </div>
         )}
@@ -1666,12 +1675,16 @@ function PlayerBar(props: {
               <span
                 className={`t1 ${p.albumId ? 'link' : ''}`}
                 onClick={() => p.albumId && go({ name: 'album', id: p.albumId })}
+                title={p.title}
+                data-tip-cut
               >
                 {p.title}
               </span>
               <span
                 className={`t2 ${p.artistId ? 'link' : ''}`}
                 onClick={() => p.artistId && go({ name: 'artist', id: p.artistId })}
+                title={p.artist}
+                data-tip-cut
               >
                 {p.artist}
               </span>
