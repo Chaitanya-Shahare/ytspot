@@ -70,6 +70,16 @@ const PAGE_JS = `(() => {
     s.shuffle = on ? 'on' : 'off'
   }
   a.addEventListener('ended', () => next(true))
+  // A song that won't play (its file removed from Downloads since the queue was made) is skipped,
+  // rather than left showing as playing at 0:00; if none of them will, playback stops.
+  let failed = 0
+  a.addEventListener('playing', () => (failed = 0))
+  a.addEventListener('error', () => {
+    if (!a.getAttribute('src')) return
+    if (++failed >= s.order.length || s.pos >= s.order.length - 1) return (failed = 0), a.pause()
+    s.pos++
+    start()
+  })
   const ms = navigator.mediaSession
   ms.setActionHandler('play', () => a.play())
   ms.setActionHandler('pause', () => a.pause())

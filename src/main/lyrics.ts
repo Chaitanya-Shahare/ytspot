@@ -31,7 +31,11 @@ const NOISE = /\s*[([][^)\]]*\b(official|video|audio|lyrics?|visuali[sz]er|remas
 // Slowed / sped-up edits run on a different clock than the original, so its timings don't apply.
 const ALTERED = /\b(slowed|reverb|sped[ -]?up|nightcore|8d audio)\b/i
 const cleanTitle = (t: string) => t.replace(NOISE, '').replace(/\s+(ft\.?|feat\.?)\s.*$/i, '').trim()
-const cleanArtist = (a: string) => a.split(/,|&| x | and /i)[0].replace(/\s*-\s*Topic$|VEVO$/i, '').trim()
+const cleanArtist = (a: string) => a.replace(/\s*-\s*Topic$|VEVO$/i, '').trim()
+// The artist as given, then only the first of several ("A, B & C"): the full name first, so a duo
+// or band ("Simon & Garfunkel", "Earth, Wind & Fire") isn't matched to another artist's entry
+// under the first word ("Simon", "Earth"), often a cover or a copy timed differently.
+const artistNames = (a: string) => [...new Set([cleanArtist(a), cleanArtist(a.split(/,|&| x | and /i)[0])])].filter(Boolean)
 
 // "[01:23.45] text" lines; untimed lines (credits, blanks) are dropped.
 function parseLrc(lrc: string): Lyrics['lines'] {
@@ -45,21 +49,31 @@ function parseLrc(lrc: string): Lyrics['lines'] {
 
 async function fromLrclib(q: LyricsQuery, altered: boolean): Promise<LrclibHit | null> {
   let title = cleanTitle(q.title)
-  let artist = cleanArtist(q.artist)
+  let artists = artistNames(q.artist)
   // "Artist - Title" uploads.
   const dash = title.match(/^(.+?)\s+[-–—]\s+(.+)$/)
-  if (dash && !q.album) [artist, title] = [dash[1], dash[2]]
-  // A 404 is "no lyrics"; a network failure throws, so the caller can tell the two apart.
-  const exact = (await lrclib('get', {
-    track_name: title,
-    artist_name: artist,
-    ...(q.album ? { album_name: q.album } : {}),
-    ...(q.duration && !altered ? { duration: String(Math.round(q.duration)) } : {})
-  })) as LrclibHit | null
-  if (exact?.syncedLyrics || exact?.instrumental) return exact
-  const hits = ((await lrclib('search', { track_name: title, artist_name: artist })) ?? []) as LrclibHit[]
-  const close = hits.filter((h) => !q.duration || altered || Math.abs(h.duration - q.duration) <= 3)
-  return close.find((h) => h.syncedLyrics) ?? exact ?? close.find((h) => h.plainLyrics) ?? null
+  if (dash && !q.album) [artists, title] = [artistNames(dash[1]), dash[2]]
+  // A 404 is "no lyrics"; a network failure throws, so the caller can tell the two apart. The names
+  // are asked at once, but a synced match under the full name wins over one under the first.
+  const exacts = (await Promise.all(
+    artists.map((artist) =>
+      lrclib('get', {
+        track_name: title,
+        artist_name: artist,
+        ...(q.album ? { album_name: q.album } : {}),
+        ...(q.duration && !altered ? { duration: String(Math.round(q.duration)) } : {})
+      })
+    )
+  )) as (LrclibHit | null)[]
+  const timed = (e: LrclibHit | null) => !!(e?.syncedLyrics || e?.instrumental)
+  if (timed(exacts[0])) return exacts[0]
+  const searches = (await Promise.all(artists.map((artist) => lrclib('search', { track_name: title, artist_name: artist })))) as (LrclibHit[] | null)[]
+  const close = searches.map((hits) => (hits ?? []).filter((h) => !q.duration || altered || Math.abs(h.duration - q.duration) <= 3))
+  for (let i = 0; i < artists.length; i++) {
+    const hit = (timed(exacts[i]) && exacts[i]) || close[i].find((h) => h.syncedLyrics)
+    if (hit) return hit
+  }
+  return exacts.find(Boolean) ?? close.flat().find((h) => h.plainLyrics) ?? null
 }
 
 export async function lyrics(q: LyricsQuery): Promise<Lyrics | null> {

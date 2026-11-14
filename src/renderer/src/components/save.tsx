@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Card } from '../../../shared/types'
-import { savablePlaylists, sized, useApp, type SaveSong } from '../lib'
+import { isLiked, savablePlaylists, sized, useApp, type SaveSong } from '../lib'
 import { CheckCircle, HeartFill, Plus, Search } from './icons'
 import { addSong, newPlaylistWith, setLiked } from './menus'
 import { Img } from './ui'
@@ -16,7 +16,7 @@ export function SavePopover({ song, anchor, onClose }: { song: SaveSong; anchor:
   const [inList, setInList] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState<string | null>(null)
   const playing = song.videoId === ctx.player?.videoId
-  const [likedHere, setLikedHere] = useState(song.liked)
+  const [likedHere, setLikedHere] = useState(song.liked ?? isLiked(song.videoId))
   const liked = playing ? !!ctx.player?.liked : !!likedHere
   const box = useRef<HTMLDivElement>(null)
 

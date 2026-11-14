@@ -113,7 +113,8 @@ function SongLyrics({ player, full }: { player: PlayerState; full?: boolean }) {
         </div>
       ) : (
         <div className="lyrics-wrap">
-          {!data.synced && <p className="lyrics-unsynced">These lyrics aren’t synced to the song yet.</p>}
+          {/* (An instrumental's one line has nothing to sync.) */}
+          {!data.synced && !(data.lines.length === 1 && data.lines[0].text === INSTRUMENTAL) && <p className="lyrics-unsynced">These lyrics aren’t synced to the song yet.</p>}
           {/* Spaced for chords as soon as they're on, so the lines don't jump when they arrive. */}
           <div ref={box} className={`lyrics ${data.synced ? 'synced' : ''} ${chordsOn && data.synced ? 'jam' : ''}`}>
             {data.lines.map((l, i) => (
@@ -137,6 +138,9 @@ function SongLyrics({ player, full }: { player: PlayerState; full?: boolean }) {
     </div>
   )
 }
+
+// The line main/lyrics.ts gives an instrumental.
+const INSTRUMENTAL = '♪ Instrumental ♪'
 
 // The colour behind the lyrics, so the next song's page starts from it rather than flashing grey.
 let lastLyricsColor: string | undefined

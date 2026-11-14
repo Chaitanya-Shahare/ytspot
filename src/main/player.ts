@@ -1,6 +1,8 @@
 // Drives a hidden music.youtube.com window: YouTube's own player does the streaming
 // (Premium, its queue/radio), we only send commands and read state. Ads are blocked (adblock.ts).
-import { BaseWindow, BrowserWindow, session, WebContentsView, type WebContents } from 'electron'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { app, BaseWindow, BrowserWindow, session, WebContentsView, type WebContents } from 'electron'
 import { AD_URLS, blockAds, isAdUrl } from './adblock'
 import type { PlayerCommand, PlayerState, ShuffleMode, VideoRect, YtmSetting } from '../shared/types'
 
@@ -35,6 +37,7 @@ const VIDEO_CSS = `
 `
 
 export function createPlayerWindow(): BaseWindow {
+  shuffleMode = savedShuffle()
   host = new BaseWindow({ show: false, ...HIDDEN_BOUNDS })
   // Background throttling stays on: Chromium never throttles a page while it plays audio, and when
   // paused it lets this hidden page sleep instead of waking the CPU for YTM's timers.
@@ -60,6 +63,14 @@ export function createPlayerWindow(): BaseWindow {
     run(SETUP_JS(videoMode, shuffleMode))
     if (chordCapture) run(CHROMA_JS(true))
   })
+  // The page crashed, or couldn't load (offline at launch, a network change): load it again, waiting
+  // longer each time, so playback recovers by itself instead of every control silently doing nothing.
+  let retries = 0
+  const recover = () => setTimeout(() => !p.isDestroyed() && p.loadURL(YTM).catch(() => undefined), Math.min(30_000, 1000 * 2 ** retries++))
+  p.on('render-process-gone', (_e, d) => d.reason !== 'clean-exit' && recover())
+  // (-3: a load cut short by another, which is fine.)
+  p.on('did-fail-load', (_e, code, _desc, _url, mainFrame) => mainFrame && code !== -3 && recover())
+  p.on('did-finish-load', () => (retries = 0))
   blockAds(p).then(() => p.loadURL(YTM))
   return host
 }
@@ -489,6 +500,17 @@ let videoMode = false
 // Kept here too, so a reloaded YTM page starts in the same mode.
 let shuffleMode: ShuffleMode = 'off'
 const NEXT_SHUFFLE = { off: 'on', on: 'smart', smart: 'off' } as const
+// And remembered across launches, as Spotify does. (Read when the player is made, not on import:
+// a test run sets its own profile folder first.)
+const shuffleFile = () => join(app.getPath('userData'), 'shuffle.json')
+function savedShuffle(): ShuffleMode {
+  try {
+    const mode = JSON.parse(readFileSync(shuffleFile(), 'utf8'))
+    return mode in NEXT_SHUFFLE ? mode : 'off'
+  } catch {
+    return 'off'
+  }
+}
 
 export function setVideoMode(on: boolean): void {
   videoMode = on
@@ -572,6 +594,15 @@ const IS_PLAYING = `((v, s) => v
   ? (!v.paused && !v.ended) || (v.paused && s !== 2 && Date.now() - (window.__ytspotPlayedAt || 0) < 3000 && (window.__ytspotPausedAt || 0) < (window.__ytspotPlayedAt || 0))
   : s === 1)(p.querySelector('video'), p.getPlayerState())`
 
+// Newer YTM builds (served to some accounts, signed in too) have no player bar: their controls are
+// view-model buttons in the mini player, which say their state in aria-pressed and aria-label.
+// (The mini player's own first: a selector list would return whichever comes first in the page.)
+const NEW_LIKE = `(document.querySelector('ytmusic-miniplayer like-button-view-model button') || document.querySelector('like-button-view-model button'))`
+const NEW_DISLIKE = `(document.querySelector('ytmusic-miniplayer dislike-button-view-model button') || document.querySelector('dislike-button-view-model button'))`
+const NEW_REPEAT_BUTTON = `[...document.querySelectorAll('ytmusic-wiz-player-controls button, ytmusic-miniplayer button')].find((b) => /^repeat/i.test(b.getAttribute('aria-label') || ''))`
+// "Repeat off" / "Repeat all" / "Repeat one", as the player bar's repeat-mode says NONE / ALL / ONE.
+const NEW_REPEAT = `((l) => (/one/i.test(l) ? 'ONE' : /all/i.test(l) ? 'ALL' : 'NONE'))(${NEW_REPEAT_BUTTON}?.getAttribute('aria-label') || '')`
+
 const STATE_JS = (rev: string) => `(() => {
   const p = document.getElementById('movie_player'), y = window.__ytspot
   if (!p || !p.getVideoData || !y) return null
@@ -605,9 +636,9 @@ const STATE_JS = (rev: string) => `(() => {
     playing: ${IS_PLAYING},
     volume: p.getVolume(),
     muted: p.isMuted(),
-    repeat: bar?.getAttribute('repeat-mode') || 'NONE',
+    repeat: bar ? bar.getAttribute('repeat-mode') || 'NONE' : ${NEW_REPEAT},
     shuffle: y.sh.mode,
-    liked: bar?.querySelector('ytmusic-like-button-renderer')?.getAttribute('like-status') === 'LIKE',
+    liked: bar ? bar.querySelector('ytmusic-like-button-renderer')?.getAttribute('like-status') === 'LIKE' : ${NEW_LIKE}?.getAttribute('aria-pressed') === 'true',
     isVideo: !!bar?.hasAttribute('is-video') || shows,
     videoMode: y.video,
     rev: y.rev,
@@ -627,7 +658,7 @@ export async function getState(): Promise<PlayerState | null> {
 
 const click = (sel: string) => `document.querySelector('ytmusic-player-bar ${sel}')?.click()`
 const rate = (which: 'like' | 'dislike') =>
-  `(r => (r?.querySelector('#button-shape-${which} button') || r?.querySelector('.${which}'))?.click())(document.querySelector('ytmusic-player-bar ytmusic-like-button-renderer'))`
+  `(r => r ? (r.querySelector('#button-shape-${which} button') || r.querySelector('.${which}'))?.click() : ${which === 'like' ? NEW_LIKE : NEW_DISLIKE}?.click())(document.querySelector('ytmusic-player-bar ytmusic-like-button-renderer'))`
 
 // Bumped by every command that changes what's playing, so a `play` fallback that fires after the
 // user has already skipped or picked something else doesn't drag playback back.
@@ -701,7 +732,7 @@ export async function command(c: PlayerCommand): Promise<void> {
     case 'shuffleMode':
       return setShuffle(c.mode)
     case 'repeat':
-      return void run(click('.repeat'))
+      return void run(`(b => b ? b.click() : ${NEW_REPEAT_BUTTON}?.click())(document.querySelector('ytmusic-player-bar .repeat'))`)
     case 'like':
       return void run(rate('like'))
     case 'dislike':
@@ -780,6 +811,11 @@ export function pauseYtm(): Promise<unknown> {
 
 async function setShuffle(mode: ShuffleMode): Promise<void> {
   shuffleMode = mode
+  try {
+    writeFileSync(shuffleFile(), JSON.stringify(mode))
+  } catch {
+    // not worth failing the toggle over
+  }
   await run(`window.__ytspot?.setShuffle(${JSON.stringify(mode)})`)
 }
 

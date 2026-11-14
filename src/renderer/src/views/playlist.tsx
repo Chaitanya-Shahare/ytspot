@@ -113,10 +113,15 @@ function Recommended({ data, onAdd, rows }: { data: Collection; onAdd: (t: Track
   const { data: recs, set } = useCached<Track[]>(`suggest:${data.id}:${data.tracks.length}`, () => window.ytm.playlistSuggestions(data.id), {
     revalidate: false
   })
+  // While the list is fetched again after an add, the previous one stays (the song just added drops
+  // out of it below) rather than the whole section vanishing and coming back.
+  const last = useRef<Track[] | undefined>(undefined)
+  if (recs) last.current = recs
+  const list = recs ?? last.current
   const [busy, setBusy] = useState(false)
-  if (!recs?.length) return null
+  if (!list?.length) return null
   const have = new Set(data.tracks.map((t) => t.videoId))
-  const shown = recs.filter((t) => !have.has(t.videoId))
+  const shown = list.filter((t) => !have.has(t.videoId))
   const refresh = () => {
     setBusy(true)
     window.ytm
@@ -128,7 +133,7 @@ function Recommended({ data, onAdd, rows }: { data: Collection; onAdd: (t: Track
     <section className="recommended">
       <h2 className="section-title">Recommended</h2>
       <p className="sub">Based on what’s in this playlist</p>
-      <AddRows tracks={shown} {...rows} onAdd={(t) => onAdd(t).then((ok) => ok && set(recs.filter((r) => r.videoId !== t.videoId)))} />
+      <AddRows tracks={shown} {...rows} onAdd={(t) => onAdd(t).then((ok) => ok && set(list.filter((r) => r.videoId !== t.videoId)))} />
       <div className="recommended-foot">
         <button className="link-btn" onClick={refresh} disabled={busy}>
           {busy ? 'Refreshing…' : 'Refresh'}

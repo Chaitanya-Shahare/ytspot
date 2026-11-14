@@ -106,14 +106,22 @@ function toTrack(n: any): Track | null {
   const videoId = n.id ?? findKey(n.endpoint, 'videoId') ?? findKey(n.overlay, 'videoId')
   if (!videoId || n.type !== 'MusicResponsiveListItem') return null
   const people = n.artists ?? n.authors ?? (n.author ? [n.author] : [])
+  // Some rows come without their artist or length parsed: videos in a playlist ("non_music_track"),
+  // and songs whose artist has no page of their own. Read them off the row's second line as YouTube
+  // Music shows it ("Song • Artist • Album • 3:22", or just the channel), and its length column.
+  const byline = people.length ? undefined : n.flex_columns?.[1]?.title
+  const parts = text(byline).split(' • ').map((x) => x.trim()).filter(Boolean)
+  if (/^(song|video|episode|single|ep)$/i.test(parts[0] ?? '')) parts.shift()
+  const length = parts.find((x) => /^\d+:\d{2}(:\d{2})?$/.test(x))
   return {
     videoId,
     title: n.title ?? text(n.name),
-    artists: people.map((a: any) => a.name).join(', '),
-    artistId: people[0]?.channel_id,
+    artists: people.length ? people.map((a: any) => a.name).join(', ') : parts[0] && parts[0] !== length && !/\b(views?|plays?)$/i.test(parts[0]) ? parts[0] : '',
+    // (Only a channel link: the same line can also link the album.)
+    artistId: people[0]?.channel_id ?? (byline?.runs as any[] | undefined)?.map((r) => findKey(r, 'browseId')).find((id) => id?.startsWith('UC')),
     album: n.album?.name,
     albumId: n.album?.id,
-    duration: n.duration?.text ?? '',
+    duration: n.duration?.text || text(n.fixed_columns?.[0]?.title) || length || '',
     thumb: thumb(n.thumbnail),
     plays: n.flex_columns?.map((c: any) => text(c.title)).find((t: string) => /\bplays?$/.test(t))
   }
