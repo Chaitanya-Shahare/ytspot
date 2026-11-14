@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ArtistPage, Card, LibraryFilter, PlayerState, QueueItem, ShuffleMode, Track } from '../../shared/types'
 import * as I from './components/icons'
-import { Ctx, downloadsSource, fmt, getClock, getDownloads, isRecordingKeys, libraryChanged, loadPrefs, markRecent, onLibraryChange, playlistChanged, recentAt, resetCache, routeFor, savePrefs, setClock, sized, useApp, useCached, useColor, useDownloads, useRecents, useTime, type AppCtx, type Prefs, type Route, type SaveSong, type Source, type ToastAction, sameRoute } from './lib'
+import { Ctx, downloadsSource, fmt, getClock, getDownloads, isRecordingKeys, libraryChanged, likedChangedSoon, loadLikedIds, loadPrefs, noteLiked, useLikedIds, markRecent, onLibraryChange, playlistChanged, recentAt, resetCache, routeFor, savePrefs, setClock, sized, useApp, useCached, useColor, useDownloads, useRecents, useTime, type AppCtx, type Prefs, type Route, type SaveSong, type Source, type ToastAction, sameRoute } from './lib'
 import { bindings, comboLabel, comboOf, SHORTCUTS, type Action } from '../../shared/shortcuts'
 import { cardMenu, songMenu } from './components/menus'
 import { Boundary, Img, Loading } from './components/ui'
@@ -16,6 +16,7 @@ import { CTA_KEY, progress, useTransfer } from './transfer'
 // Import from Spotify: its page (and styles) load only when it's opened.
 const TransferView = lazy(() => import('./views/transfer'))
 
+const SOURCE_KEY = 'play-source'
 const LIKED: Card = { kind: 'playlist', id: 'LM', title: 'Liked Songs', subtitle: 'Playlist', thumb: '' }
 // Songs saved for offline listening, listed under Liked Songs once there are any.
 const DOWNLOADED_ID = 'ytspot:downloaded'
@@ -49,7 +50,14 @@ export default function App() {
   const { history, pos } = nav
   const back = useCallback(() => setNav((n) => ({ ...n, pos: Math.max(0, n.pos - 1) })), [])
   const forward = useCallback(() => setNav((n) => ({ ...n, pos: Math.min(n.history.length - 1, n.pos + 1) })), [])
-  const [player, setPlayer] = useState<PlayerState | null>(null)
+  const [rawPlayer, setPlayer] = useState<PlayerState | null>(null)
+  // A downloaded song playing from disk can't ask YouTube Music whether it's liked; the liked list
+  // can, so its tick is right offline too.
+  const likedSet = useLikedIds()
+  const player = useMemo(
+    () => (rawPlayer?.local && likedSet ? { ...rawPlayer, liked: likedSet.has(rawPlayer.videoId) } : rawPlayer),
+    [rawPlayer, likedSet]
+  )
   // A repeated message restarts the timer (each toast has its own id); `out` plays the fade-out.
   const [toastMsg, setToastMsg] = useState<{ id: number; msg: string; action?: ToastAction; out?: boolean } | null>(null)
   const [save, setSave] = useState<{ song: SaveSong; anchor: DOMRect } | null>(null)
@@ -175,15 +183,31 @@ export default function App() {
     return () => (offFound(), offUpdate(), offReady())
   }, [toast, prefs.autoUpdate])
 
+  // Which songs are liked, for every row's tick and menu: read once signed in, then kept current.
+  // A like made outside the app (YTM's own button, a phone) shows up when the playing song's heart
+  // flips; a new song's first reading isn't trusted, as YTM can show the previous song's for a beat.
+  useEffect(() => void (authed && loadLikedIds()), [authed])
+  const heart = useRef<{ id: string; liked: boolean } | null>(null)
+  useEffect(() => {
+    if (!player?.videoId || player.local) return
+    const was = heart.current
+    heart.current = { id: player.videoId, liked: player.liked }
+    if (was?.id === player.videoId && was.liked !== player.liked) noteLiked(player.videoId, player.liked)
+  }, [player?.videoId, player?.liked, player?.local])
   // Signed out, YTM's like button only asks the hidden page to sign in; say so instead.
   const needLogin = useCallback(() => toast('Log in to save songs to your Liked Songs', { label: 'Log in', run: () => window.ytm.login() }), [toast])
   const like = useCallback(() => {
     if (!player?.videoId) return
     if (!authed) return needLogin()
+    const on = !player.liked
+    noteLiked(player.videoId, on)
+    toast(on ? 'Added to Liked Songs' : 'Removed from Liked Songs')
+    // From disk, the song is rated directly (the offline player has no like button of its own).
+    if (player.local)
+      return void window.ytm.rate(player.videoId, on).then(likedChangedSoon, () => (noteLiked(player.videoId, !on), toast('That didn’t work — try again')))
     window.ytm.cmd({ type: 'like' })
-    playlistChanged('LM')
-    toast(player?.liked ? 'Removed from Liked Songs' : 'Added to Liked Songs')
-  }, [player?.videoId, player?.liked, toast, authed, needLogin])
+    likedChangedSoon()
+  }, [player?.videoId, player?.liked, player?.local, toast, authed, needLogin])
   // Spotify's + button: saves the song to Liked Songs and opens "Add to playlist" for anything else;
   // once saved (a green tick) it just opens the popover, where Liked Songs can be unticked.
   const plus = useCallback(
@@ -232,7 +256,20 @@ export default function App() {
     [route.name, pos, back, go]
   )
 
-  const [source, setSource] = useState<Source | null>(null)
+  // Where playback started. Kept across the window closing and opening again (the music carries on
+  // without it), so Now Playing still says "Liked Songs" and Your Library still marks it playing.
+  const [source, setSourceState] = useState<Source | null>(() => {
+    try {
+      return JSON.parse(localStorage.getItem(SOURCE_KEY) ?? 'null')
+    } catch {
+      return null
+    }
+  })
+  const setSource = useCallback((s: Source | null) => {
+    if (s) localStorage.setItem(SOURCE_KEY, JSON.stringify(s))
+    else localStorage.removeItem(SOURCE_KEY)
+    setSourceState(s)
+  }, [])
   // Downloaded songs play from disk when started from Downloaded, and wherever they're started
   // while offline; the page's other downloaded songs follow them.
   const playTrack = useCallback(
@@ -254,7 +291,7 @@ export default function App() {
         .cmd({ type: 'playLocal', videoIds: list, index: list.indexOf(t.videoId) })
         .then(() => shuffle && window.ytm.cmd({ type: 'shuffleMode', mode: 'on' }))
     },
-    [toast]
+    [toast, setSource]
   )
   const playSong = useCallback((videoId: string, title: string) => playTrack({ videoId, title, artists: '', duration: '', thumb: '' }), [playTrack])
 
@@ -363,11 +400,16 @@ export default function App() {
       // control merely clicked never does: Space stays play/pause wherever you last clicked.
       const ownsKeys = control && prefs.keyboardNav && el === keyboardFocus
       if (e.key === 'Tab' && !prefs.keyboardNav && !el?.closest('.modal, .save-pop')) return e.preventDefault()
+      // A dialog (delete, edit details) or the Save popover over the page: Esc closes it alone, and
+      // keys inside it (Return and Space on its buttons, typing) are its own.
+      const dialog = !help && !!document.querySelector('.modal-bg')
       if (e.key === 'Escape') {
         if (help) return setHelp(false)
+        if (dialog || document.querySelector('.save-pop')) return
         if (full) return setFull(false)
         if (typing) return el?.blur()
       }
+      if (el?.closest('.modal, .save-pop') && !help) return
       const combo = comboOf(e)
       if (!combo) return
       if (typing && (!e.metaKey || /Left|Right|Up|Down/.test(combo))) return
@@ -380,7 +422,9 @@ export default function App() {
       const a = byCombo.get(seq) ?? (seq !== combo ? byCombo.get(combo) : undefined)
       // Over the shortcuts sheet or the full-screen player, only playback keys (and the keys that
       // close them) act; navigating the page hidden behind would be invisible.
-      if (a && (help || full) && !OVERLAY_ACTIONS.has(a)) return e.preventDefault()
+      if (a && (help || full || dialog) && !OVERLAY_ACTIONS.has(a)) return e.preventDefault()
+      // Behind a dialog only playback keys act: nothing that opens something over it.
+      if (a && dialog && (a === 'fullscreen' || a === 'lyrics' || a === 'help')) return e.preventDefault()
       if (a) {
         e.preventDefault()
         // The shortcut wins over whatever is focused (a slider's own arrow keys, a row's Return).
@@ -399,6 +443,8 @@ export default function App() {
     const onKeyUp = (e: KeyboardEvent) => {
       const el = e.target instanceof HTMLElement ? e.target : null
       if (e.key !== ' ' || !el || el.matches(TEXT_ENTRY) || !el.closest(CONTROL)) return
+      // (Inside a dialog or popover, Space presses its buttons, as the keydown above lets it.)
+      if (el.closest('.modal, .save-pop') && !help) return
       if (!(prefs.keyboardNav && el === keyboardFocus)) e.preventDefault()
     }
     // Which element got focus from the keyboard (Tab) rather than a click. Tracked here because
@@ -531,7 +577,11 @@ export default function App() {
         >
           {toastMsg.msg}
           {toastMsg.action && (
-            <button className="toast-action" onClick={() => (toastMsg.action!.run(), setToastMsg({ ...toastMsg, out: true }))}>
+            <button
+              className="toast-action"
+              // Fade this toast out first: the action may show a toast of its own, which must stay.
+              onClick={() => (setToastMsg((m) => (m && m.id === toastMsg.id ? { ...m, out: true } : m)), toastMsg.action!.run())}
+            >
               {toastMsg.action.label}
             </button>
           )}
@@ -560,14 +610,14 @@ function TopBar(p: {
   }, [p.authed])
   const accountMenu = async () => {
     const pick = await window.ytm.popup([
-      { id: 'name', label: me?.name ?? 'Signed in', enabled: false },
+      ...(p.authed ? [{ id: 'name', label: me?.name ?? 'Signed in', enabled: false }] : [{ id: 'login', label: 'Log in' }]),
       { id: '-', label: '-' },
       { id: 'settings', label: 'Settings' },
       { id: 'help', label: 'Keyboard shortcuts' },
       { id: 'open', label: 'Open YouTube Music in browser' },
-      { id: '-', label: '-' },
-      { id: 'logout', label: 'Log out' }
+      ...(p.authed ? [{ id: '-', label: '-' }, { id: 'logout', label: 'Log out' }] : [])
     ])
+    if (pick === 'login') window.ytm.login()
     if (pick === 'help') p.onHelp()
     if (pick === 'settings') go({ name: 'settings' })
     if (pick === 'open') window.ytm.open('https://music.youtube.com')
@@ -640,12 +690,18 @@ function TopBar(p: {
       </div>
       {p.authed ? (
         <button className="avatar" onClick={accountMenu} title={me?.name} aria-label="Account">
-          {me?.photo && <img src={me.photo} />}
+          {me?.photo && <img src={me.photo} onError={(e) => (e.currentTarget.style.visibility = 'hidden')} />}
         </button>
       ) : (
-        <button className="login-btn" onClick={() => window.ytm.login()}>
-          Log in
-        </button>
+        <>
+          <button className="login-btn" onClick={() => window.ytm.login()}>
+            Log in
+          </button>
+          {/* Signed out, Settings and the shortcuts are still a click away (not only ⌘,). */}
+          <button className="avatar guest" onClick={accountMenu} title="Settings and more" aria-label="Settings and more">
+            <I.Artist size={16} />
+          </button>
+        </>
       )}
     </header>
   )
@@ -710,12 +766,21 @@ function LibraryPanel({ authed, collapsed, onToggle }: { authed: boolean; collap
     }
   }
   const listed = new Set(lists.Playlists.map((c) => c.id))
+  // Once YTM lists one, it's YTM's to show (so deleting it later doesn't leave this copy behind).
+  const listedKey = [...listed].join()
+  useEffect(() => setMade((m) => (m.some((c) => listed.has(c.id)) ? m.filter((c) => !listed.has(c.id)) : m)), [listedKey])
   const savedCount = downloads.songs.length
   const downloaded: Card[] = savedCount
     ? [{ kind: 'playlist', id: DOWNLOADED_ID, title: 'Downloaded', subtitle: `Playlist • ${savedCount} ${savedCount === 1 ? 'song' : 'songs'}`, thumb: '' }]
     : []
   // Signed out, downloads are all there is to list.
-  const playlists = authed ? [LIKED, ...downloaded, ...made.filter((c) => !listed.has(c.id)), ...lists.Playlists.filter((c) => c.id !== 'VLLM')] : downloaded
+  // Liked Songs with its song count, as Spotify lists it ("Playlist • 1,363 songs"): YTM's library
+  // doesn't say, so it's read off the playlist's first page (a peek, which doesn't disturb a Liked
+  // Songs page loading at the same time).
+  const { data: likedMeta } = useCached<string>(`liked-meta:${authed}`, () => (authed ? window.ytm.playlist('LM', true).then((c) => c.meta) : Promise.resolve('')))
+  const likedCount = likedMeta?.match(/^[\d,.]+\s+songs?/)?.[0]
+  const liked = likedCount ? { ...LIKED, subtitle: `Playlist • ${likedCount}` } : LIKED
+  const playlists = authed ? [liked, ...downloaded, ...made.filter((c) => !listed.has(c.id)), ...lists.Playlists.filter((c) => c.id !== 'VLLM')] : downloaded
   let list = filter === 'Artists' ? lists.Artists : filter === 'Albums' ? lists.Albums : filter ? playlists : [...playlists, ...lists.Albums, ...lists.Artists]
   if (find) list = list.filter((c) => `${c.title} ${c.subtitle}`.toLowerCase().includes(find.toLowerCase()))
   // "Recents": what was last played or added here comes first, newest first; the rest keep YouTube
@@ -827,7 +892,7 @@ function LibraryPanel({ authed, collapsed, onToggle }: { authed: boolean; collap
         {(authed || savedCount > 0) && list.map((c) => {
           const r = libraryRoute(c)
           const active = r && JSON.stringify(r) === JSON.stringify(route)
-          const playing = !!player?.playing && (sameRoute(r, source?.route) || (c.kind === 'album' && c.title === player.album))
+          const playing = !!player?.playing && (sameRoute(r, source?.route) || (c.kind === 'album' && (player.albumId ? c.id === player.albumId : c.title === player.album)))
           const current = !!player?.videoId && sameRoute(r, source?.route)
           // Play from the sidebar without opening the page (pause if it's what's playing).
           const play = (e: React.MouseEvent) => {
@@ -992,11 +1057,46 @@ function upcomingOf(player: PlayerState) {
   return player.queue.map((q, i) => ({ q, i })).slice(idx + 1).filter(({ q }) => q.videoId)
 }
 
+// Everything after the playing song: the queue, then YTM's autoplay ("Next from"), each in play
+// order and reordered by dragging. `head`: the queue's own heading (the Now Playing card has its own).
+function UpNext({ player, head = true }: { player: PlayerState; head?: boolean }) {
+  const ctx = useApp()
+  const dnd = useQueueDrag()
+  const upcoming = upcomingOf(player)
+  // (In the Now Playing card, with nothing queued, the card's own title already says "Next from".)
+  const autoHead = head || upcoming.length > 0
+  return (
+    <>
+      {head && upcoming.length > 0 && <h3 className="queue-h">Next in queue</h3>}
+      {upcoming.map(({ q, i }) => (
+        <QueueRow
+          key={q.videoId + i}
+          q={q}
+          dnd={dnd('queue', i)}
+          onPlay={() => window.ytm.cmd({ type: 'jump', index: i })}
+          menu={() => songMenu(q, ctx, { queueIndex: i })}
+        />
+      ))}
+      {autoHead && player.autoplay.length > 0 && <h3 className="queue-h">Next from: Autoplay</h3>}
+      {player.autoplay.map((q, i) => (
+        <QueueRow
+          key={'auto' + q.videoId + i}
+          q={q}
+          dnd={dnd('auto', i)}
+          onPlay={() => window.ytm.cmd({ type: 'jumpAuto', index: i })}
+          menu={() => songMenu(q, ctx)}
+        />
+      ))}
+    </>
+  )
+}
+
 function NowPlayingPanel({ onClose, onPlus, onQueue, onFullLyrics, covered }: { onClose: () => void; onPlus: (from: HTMLElement) => void; onQueue: () => void; onFullLyrics: () => void; covered: boolean }) {
   const ctx = useApp()
   const { player, go, prefs, setPrefs } = ctx
   if (!player) return null
-  const next = upcomingOf(player)[0] ?? (player.autoplay[0] && { q: player.autoplay[0], i: -1 })
+  const anyNext = upcomingOf(player).length > 0 || player.autoplay.length > 0
+  const watching = prefs.videoMode && player.isVideo && !covered
   const current = { videoId: player.videoId, title: player.title, artist: player.artist, artistId: player.artistId, album: player.album, albumId: player.albumId, thumb: player.thumb }
   const switchVideo = () => {
     setPrefs({ videoMode: !prefs.videoMode })
@@ -1020,8 +1120,12 @@ function NowPlayingPanel({ onClose, onPlus, onQueue, onFullLyrics, covered }: { 
         </button>
       </div>
       <div className="np-scroll">
-        {prefs.videoMode && player.isVideo && !covered ? (
-          <VideoSlot poster={player.thumb} />
+        {/* A video stays in view at the top while the rest scrolls beneath it, so the queue below
+            can be read and reordered without losing the picture. */}
+        {watching ? (
+          <div className="np-stick">
+            <VideoSlot poster={player.thumb} />
+          </div>
         ) : (
           <Img className="np-art" src={player.thumb} />
         )}
@@ -1052,22 +1156,15 @@ function NowPlayingPanel({ onClose, onPlus, onQueue, onFullLyrics, covered }: { 
         )}
         <LyricsCard player={player} onOpen={() => go({ name: 'lyrics' })} onFull={onFullLyrics} />
         {player.artistId && <AboutArtist id={player.artistId} />}
-        <div className="np-card">
+        <div className="np-card np-queue">
           <div className="np-card-head">
-            <b>Next in queue</b>
+            {/* Only autoplay to come: the card is titled by it rather than an empty "Next in queue". */}
+            <b>{upcomingOf(player).length || !player.autoplay.length ? 'Next in queue' : 'Next from: Autoplay'}</b>
             <button className="show-all" onClick={onQueue}>
               Open queue
             </button>
           </div>
-          {next ? (
-            <QueueRow
-              q={next.q}
-              onPlay={() => window.ytm.cmd(next.i < 0 ? { type: 'jumpAuto', index: 0 } : { type: 'jump', index: next.i })}
-              menu={() => songMenu(next.q, ctx, next.i < 0 ? {} : { queueIndex: next.i })}
-            />
-          ) : (
-            <p className="sub">Nothing up next.</p>
-          )}
+          {anyNext ? <UpNext player={player} head={false} /> : <p className="sub">Nothing up next.</p>}
         </div>
       </div>
     </aside>
@@ -1096,8 +1193,6 @@ function AboutArtist({ id }: { id: string }) {
 function QueuePanel({ onClose }: { onClose: () => void }) {
   const ctx = useApp()
   const { player } = ctx
-  const dnd = useQueueDrag()
-  const upcoming = player ? upcomingOf(player) : []
   return (
     <aside className="now-playing panel queue-panel">
       <div className="np-head">
@@ -1120,26 +1215,7 @@ function QueuePanel({ onClose }: { onClose: () => void }) {
               playing
               menu={() => songMenu({ videoId: player.videoId, title: player.title, artist: player.artist, artistId: player.artistId, album: player.album, albumId: player.albumId, thumb: player.thumb }, ctx, { liked: player.liked })}
             />
-            {upcoming.length > 0 && <h3 className="queue-h">Next in queue</h3>}
-            {upcoming.map(({ q, i }) => (
-              <QueueRow
-                key={q.videoId + i}
-                q={q}
-                dnd={dnd('queue', i)}
-                onPlay={() => window.ytm.cmd({ type: 'jump', index: i })}
-                menu={() => songMenu(q, ctx, { queueIndex: i })}
-              />
-            ))}
-            {player.autoplay.length > 0 && <h3 className="queue-h">Next from: Autoplay</h3>}
-            {player.autoplay.map((q, i) => (
-              <QueueRow
-                key={'auto' + q.videoId + i}
-                q={q}
-                dnd={dnd('auto', i)}
-                onPlay={() => window.ytm.cmd({ type: 'jumpAuto', index: i })}
-                menu={() => songMenu(q, ctx)}
-              />
-            ))}
+            <UpNext player={player} />
           </>
         )}
       </div>
@@ -1162,7 +1238,8 @@ function VideoSlot({ poster, full }: { poster: string; full?: boolean }) {
     const report = () => {
       const r = el.getBoundingClientRect()
       const box = scroller.getBoundingClientRect()
-      const visible = r.top >= box.top && r.bottom <= box.bottom && r.width > 0
+      // (A pixel's slack: the pinned video sits exactly at the top, give or take rounding.)
+      const visible = r.top >= box.top - 1 && r.bottom <= box.bottom + 1 && r.width > 0
       const rect = visible ? { x: Math.round(r.left), y: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height), full } : null
       const key = JSON.stringify(rect)
       if (key === last) return
@@ -1370,12 +1447,15 @@ function Tooltips({ keys }: { keys: Record<Action, string[]> }) {
     const hide = () => (clearTimeout(timer), setTip(null), (target = null))
     document.addEventListener('mouseover', over)
     document.addEventListener('mousedown', hide)
+    // A key can change what the hovered control does (Space: Play → Pause), so its tip goes too.
+    document.addEventListener('keydown', hide)
     window.addEventListener('blur', hide)
     document.addEventListener('scroll', hide, true)
     return () => {
       clearTimeout(timer)
       document.removeEventListener('mouseover', over)
       document.removeEventListener('mousedown', hide)
+      document.removeEventListener('keydown', hide)
       window.removeEventListener('blur', hide)
       document.removeEventListener('scroll', hide, true)
     }

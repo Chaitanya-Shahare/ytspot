@@ -22,9 +22,22 @@ const RECENT_KEY = 'recent-searches'
 const loadRecent = (): string[] => JSON.parse(localStorage.getItem(RECENT_KEY) ?? '[]')
 const saveRecent = (list: string[]) => localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, 10)))
 
+// The filter chosen for each query, so Back to a search finds the same chip picked (and its results
+// where they were scrolled to) instead of "All".
+const filters = new Map<string, SearchFilter>()
+
 export function SearchView({ q }: { q: string }) {
   const query = q.trim()
-  const [filter, setFilter] = useState<SearchFilter>('all')
+  // (Typing keeps the page, and the chip, so it's remembered for each query it's shown with.)
+  const [filter, setFilter] = useState<SearchFilter>(() => filters.get(query) ?? 'all')
+  useEffect(() => void filters.set(query, filter), [query, filter])
+  // A new query or filter starts at the top, as on Spotify (not at the old results' scroll). The
+  // first render is left alone, so Back still returns to where the page was scrolled.
+  const mounted = useRef(false)
+  useEffect(() => {
+    if (mounted.current) document.querySelector('.main-scroll')?.scrollTo({ top: 0 })
+    mounted.current = true
+  }, [query, filter])
   if (!query) return <BrowseAll />
   return (
     <div className="page search">
@@ -44,10 +57,11 @@ function Results({ query, filter }: { query: string; filter: SearchFilter }) {
   const ctx = useApp()
   const { playTrack, openCard, playCard } = ctx
   const { data, error, retry } = useCached<SearchResult>(`search:${filter}:${query}`, () => window.ytm.search(query, filter))
-  // Keep the previous results on screen (dimmed) while the next query loads, like Spotify.
-  const last = useRef<SearchResult | undefined>(undefined)
-  if (data) last.current = data
-  const shown = data ?? last.current
+  // Keep the previous results on screen (dimmed) while the next query loads, like Spotify; only for
+  // the same filter, as another filter's results are laid out differently (songs vs a grid).
+  const last = useRef<{ filter: SearchFilter; data: SearchResult } | undefined>(undefined)
+  if (data) last.current = { filter, data }
+  const shown = data ?? (last.current?.filter === filter ? last.current.data : undefined)
 
   // Remember queries the user actually looked at: ones left on screen a moment, or left by opening
   // a result (Spotify saves the search when you click one), not each word on the way to the query.

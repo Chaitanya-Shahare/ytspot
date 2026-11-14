@@ -2,10 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import type { ArtistPage, Card, Collection, HomeData, Shelf, Track } from '../../../shared/types'
 import { CheckCircle, Close, Edit, HeartFill, More, PlusCircle, Search, Shuffle, ViewList } from '../components/icons'
 import { cardMenu, queue } from '../components/menus'
-import { CardTile, ErrorBox, GreenPlay, Img, Loading, ShelfRow, StickyHead, TrackTable } from '../components/ui'
+import { CardTile, ErrorBox, GreenPlay, Img, Loading, LoginNeeded, ShelfRow, StickyHead, TrackTable } from '../components/ui'
 import { DeletePlaylist, EditDetails, PlaylistExtras } from './playlist'
 import { DownloadButton } from './downloads'
-import { getDownloads, libraryChanged, markRecent, moreRoute, routeFor, sameRoute, sized, useApp, useCached, useColor } from '../lib'
+import { getDownloads, libraryChanged, markRecent, moreRoute, routeFor, sameRoute, sized, unlikedNow, useApp, useCached, useColor, useLikedIds } from '../lib'
 
 // "55 songs • 3 hours, 9 minutes" -> "55 songs, 3 hr 9 min", as Spotify writes it.
 const spotifyMeta = (m: string) =>
@@ -123,12 +123,26 @@ const shuffled = (tracks: Track[]) => {
   return list[Math.floor(Math.random() * list.length)]
 }
 
+// YouTube Music's Liked Music can list a song twice (liked once on YouTube, once on YouTube Music);
+// Liked Songs, as on Spotify, has each song once. `loaded` still counts what was fetched, so the
+// next page starts in the right place.
+const likedOnce = (id: string, c: Collection): Collection => {
+  if (id !== 'LM' && id !== 'VLLM') return c
+  const seen = new Set<string>()
+  return { ...c, loaded: c.loaded ?? c.tracks.length, tracks: c.tracks.filter((t) => !seen.has(t.videoId) && !!seen.add(t.videoId)) }
+}
+
+// Each collection's sort, as Spotify remembers it: coming back to a page (Back, or from the
+// sidebar) finds it sorted as it was left.
+const sortOrders = new Map<string, SortOrder>()
+
 export function CollectionView({ kind, id }: { kind: 'playlist' | 'album'; id: string }) {
-  const { player, playTrack, toast, go, source } = useApp()
+  const { player, playTrack, toast, go, source, authed } = useApp()
   const [dialog, setDialog] = useState<'edit' | 'delete' | null>(null)
   // Spotify's "Search in playlist" and sort ("Custom order" is the playlist's own order).
   const [find, setFind] = useState<string | null>(null)
-  const [order, setOrder] = useState<SortOrder>('Custom order')
+  const [order, setOrderState] = useState<SortOrder>(() => sortOrders.get(`${kind}:${id}`) ?? 'Custom order')
+  const setOrder = (o: SortOrder) => (sortOrders.set(`${kind}:${id}`, o), setOrderState(o))
   const findRef = useRef<HTMLInputElement>(null)
   useEffect(() => {
     if (kind !== 'playlist') return
@@ -144,34 +158,63 @@ export function CollectionView({ kind, id }: { kind: 'playlist' | 'album'; id: s
   }, [kind])
   const actions = useRef<HTMLDivElement>(null)
   const key = `${kind}:${id}`
-  const { data, error, set, retry } = useCached<Collection>(
+  const likedPage = id === 'LM' || id === 'VLLM'
+  useLikedIds() // (re-renders Liked Songs when a song is unliked)
+  const { data: raw, error, set, retry } = useCached<Collection>(
     key,
-    () => (kind === 'album' ? window.ytm.album(id) : window.ytm.playlist(id)),
+    () => (kind === 'album' ? window.ytm.album(id) : window.ytm.playlist(id).then((c) => likedOnce(id, c))),
     { revalidate: false }
   )
-  const color = useColor(data?.thumb)
+  const color = useColor(raw?.thumb)
 
   // Stream the rest of a long playlist in after the first page is on screen. Results always land
   // in the cache, so leaving mid-load and coming back resumes where it stopped. Pages are added to
   // the newest data (a row may have been removed meanwhile) and counted by what was fetched.
-  const latest = useRef(data)
-  latest.current = data
+  const latest = useRef(raw)
+  latest.current = raw
   const [moreFailed, setMoreFailed] = useState(false)
-  const loaded = data ? (data.loaded ?? data.tracks.length) : 0
+  const loaded = raw ? (raw.loaded ?? raw.tracks.length) : 0
   useEffect(() => {
-    if (!data?.more || moreFailed) return
+    if (!raw?.more || moreFailed) return
     window.ytm.playlistMore(id, loaded).then(
       (r: { tracks: Track[]; more: boolean }) => {
         const cur = latest.current
-        if (cur) set({ ...cur, tracks: [...cur.tracks, ...r.tracks], more: r.more, loaded: loaded + r.tracks.length })
+        if (cur) set(likedOnce(id, { ...cur, tracks: [...cur.tracks, ...r.tracks], more: r.more, loaded: loaded + r.tracks.length }))
       },
       () => setMoreFailed(true)
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data?.more, loaded, id, moreFailed])
+  }, [raw?.more, loaded, id, moreFailed])
 
+  // A playlist kept from earlier in the session: check it against YouTube Music in the background,
+  // and if it changed meanwhile (songs added or removed from a phone or the web), show it as it is
+  // now. Unchanged, the page stays as it was (and where it was scrolled to).
+  useEffect(() => {
+    if (kind !== 'playlist' || !latest.current) return
+    let live = true
+    window.ytm.playlist(id).then(
+      (page) => {
+        const fresh = likedOnce(id, page)
+        const cur = latest.current
+        if (!live || !cur) return
+        const ids = (c: Collection) => c.tracks.slice(0, fresh.tracks.length).map((t) => t.videoId).join()
+        const fields = (c: Collection) => [c.title, c.meta, c.description, c.thumb, c.privacy, ids(c)].join('\n')
+        if (fields(fresh) !== fields(cur)) set(fresh)
+      },
+      () => undefined
+    )
+    return () => {
+      live = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind, id])
+
+  // Signed out (logged out while on it, or its shortcut pressed), Liked Songs asks for a login.
+  if (!authed && (id === 'LM' || id === 'VLLM')) return <LoginNeeded what="your Liked Songs" />
   if (error) return <ErrorBox error={error} onRetry={retry} />
-  if (!data) return <Loading kind="collection" />
+  if (!raw) return <Loading kind="collection" />
+  // Liked Songs drops a song unliked here straight away (YouTube Music's list lags a few seconds).
+  const data = likedPage ? { ...raw, tracks: raw.tracks.filter((t) => !unlikedNow(t.videoId)) } : raw
   // While the rest of a long playlist is still loading, its later songs still count as "from" it.
   const from = { route: { name: kind, id } as const, title: data.title, ids: data.more ? undefined : data.tracks.map((t) => t.videoId) }
   // Playing from this page (not just the same song started somewhere else).
@@ -436,7 +479,7 @@ export function ArtistView({ id }: { id: string }) {
   return (
     <div className="page artist" style={{ '--tint': color } as React.CSSProperties}>
       <StickyHead title={data.title} playing={isCurrent && player?.playing} onPlay={play} anchor={actions} />
-      <header className="artist-hero" style={{ backgroundImage: `url(${data.thumb})` }}>
+      <header className="artist-hero" style={data.thumb ? { backgroundImage: `url(${data.thumb})` } : undefined}>
         <h1 className="hero-title">{data.title}</h1>
       </header>
       <div className="action-bar" ref={actions}>
@@ -465,7 +508,7 @@ export function ArtistView({ id }: { id: string }) {
       {data.description && (
         <section className="about">
           <h2 className="section-title">About</h2>
-          <div className="about-card" style={{ backgroundImage: `url(${data.thumb})` }} onClick={() => setAboutOpen((v) => !v)}>
+          <div className="about-card" style={data.thumb ? { backgroundImage: `url(${data.thumb})` } : undefined} onClick={() => setAboutOpen((v) => !v)}>
             <p className={aboutOpen ? 'open' : ''}>{data.description}</p>
           </div>
         </section>

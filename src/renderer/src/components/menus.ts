@@ -1,6 +1,6 @@
 import type { PopupItem } from '../../../preload'
 import type { Card, Track } from '../../../shared/types'
-import { getDownloads, libraryChanged, markRecent, playlistChanged, routeFor, savablePlaylists, type AppCtx } from '../lib'
+import { getDownloads, isLiked, libraryChanged, likedChangedSoon, markRecent, noteLiked, playlistChanged, routeFor, savablePlaylists, type AppCtx } from '../lib'
 
 // A song as rows, the queue and Now Playing know it; whatever details they have go with a download.
 export interface MenuSong {
@@ -88,23 +88,28 @@ export async function newPlaylistWith(ctx: AppCtx, song: { videoId: string; titl
 // like button so its heart updates too.
 export function setLiked(ctx: AppCtx, videoId: string, like: boolean): Promise<void> {
   if (!ctx.authed) return Promise.resolve(ctx.toast('Log in to save songs to your Liked Songs', { label: 'Log in', run: () => window.ytm.login() }))
-  const done = () => {
-    playlistChanged('LM')
-    ctx.toast(like ? 'Added to Liked Songs' : 'Removed from Liked Songs')
-  }
-  if (videoId === ctx.player?.videoId) {
+  // The tick and the toast come at once, as on Spotify; if YouTube Music says no, the tick goes back.
+  noteLiked(videoId, like)
+  ctx.toast(like ? 'Added to Liked Songs' : 'Removed from Liked Songs')
+  // (A song playing from disk is rated directly, below: the offline player has no like button.)
+  if (videoId === ctx.player?.videoId && !ctx.player.local) {
     if (ctx.player.liked !== like) window.ytm.cmd({ type: 'like' })
-    return Promise.resolve(done())
+    likedChangedSoon()
+    return Promise.resolve()
   }
-  return window.ytm.rate(videoId, like).then(done, () => ctx.toast('That didn’t work — try again'))
+  // (YouTube Music's list takes a moment to show the change, so it's fetched again after one.)
+  return window.ytm.rate(videoId, like).then(
+    () => void likedChangedSoon(),
+    () => (noteLiked(videoId, !like), ctx.toast('That didn’t work — try again'))
+  )
 }
 
 export const queue = (videoIds: string[], next: boolean) => window.ytm.cmd({ type: 'queueAdd', videoIds, next })
 
-// The songs of an album or playlist card (a playlist's first page), for queueing it whole.
+// The songs of an album or playlist card (all of a long playlist's pages), for queueing it whole.
 export async function cardSongs(c: Card): Promise<string[]> {
-  const col = c.kind === 'album' ? await window.ytm.album(c.id) : await window.ytm.playlist(c.id, true)
-  return col.tracks.map((t: { videoId: string }) => t.videoId)
+  const tracks = c.kind === 'album' ? (await window.ytm.album(c.id)).tracks : await window.ytm.playlistTracks(c.id)
+  return tracks.map((t: { videoId: string }) => t.videoId)
 }
 
 // Extra entries when the card is in Your Library (the sidebar): pinning it, and taking it out.
@@ -221,7 +226,7 @@ export async function songMenu(song: MenuSong, ctx: AppCtx, where: Where = {}): 
       ]
     },
     ...(ownPlaylist ? [{ id: 'remove-pl', label: 'Remove from this playlist' }] : []),
-    where.liked
+    (where.liked ?? isLiked(song.videoId))
       ? { id: 'unlike', label: 'Remove from your Liked Songs' }
       : { id: 'like', label: 'Save to your Liked Songs' },
     ...(where.queueIndex !== undefined
@@ -253,7 +258,8 @@ export async function songMenu(song: MenuSong, ctx: AppCtx, where: Where = {}): 
   if (pick === 'remove-pl' && ownPlaylist)
     window.ytm.removeFromPlaylist(ownPlaylist, song.videoId).then(
       () => (where.onRemoved?.(song.videoId), playlistChanged(ownPlaylist), toast('Removed from this playlist')),
-      () => toast('You can only remove songs from your own playlists')
+      // (Only blame ownership when that's what YTM said; otherwise it's the connection.)
+      (e: Error) => toast(/own playlists/.test(e.message) ? 'You can only remove songs from your own playlists' : 'Couldn’t remove it — check your connection and try again')
     )
   if (pick === 'like' || pick === 'unlike') setLiked(ctx, song.videoId, pick === 'like')
   if (pick === 'download') downloadSongs(ctx, [trackOf(song)])

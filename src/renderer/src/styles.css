@@ -106,6 +106,8 @@ input:focus-visible { outline: none; }
 .avatar { width: 48px; height: 48px; margin: 0 8px; padding: 8px; border-radius: 50%; background: var(--background-elevated-base); overflow: hidden; -webkit-app-region: no-drag; transition: background .2s ease-in-out; }
 .avatar:hover { background: var(--background-elevated-highlight); }
 .avatar img { width: 32px; height: 32px; border-radius: 50%; }
+.avatar.guest { display: grid; place-items: center; color: var(--text-subdued); }
+.avatar.guest:hover { color: var(--text-base); }
 .clickable { cursor: pointer; }
 .link-btn { font-size: 14px; font-weight: 700; color: var(--text-subdued); }
 .link-btn:hover { color: var(--text-base); text-decoration: underline; }
@@ -223,10 +225,14 @@ input:focus-visible { outline: none; }
 .artist-hero .hero-title { text-shadow: 0 2px 20px #0006; }
 
 /* track table */
-.tracks { --cols: 16px minmax(120px, 4fr) minmax(120px, 2fr) 56px 24px; }
-.tracks.no-album { --cols: 16px minmax(120px, 4fr) 56px 24px; }
+.tracks { --cols: 16px minmax(120px, 4fr) minmax(120px, 2fr) 24px 48px 24px; }
+.tracks.no-album { --cols: 16px minmax(120px, 4fr) 24px 48px 24px; }
 /* An artist's Popular songs: play counts in their own right-aligned column before the time. */
-.tracks.with-plays { --cols: 16px minmax(120px, 4fr) minmax(96px, 1fr) 56px 24px; }
+.tracks.with-plays { --cols: 16px minmax(120px, 4fr) minmax(96px, 1fr) 24px 48px 24px; }
+/* Spotify's like column: a green tick on every liked song, a + on hover for the rest. */
+.row-like { width: 24px; height: 24px; visibility: hidden; color: var(--text-subdued); }
+.row-like.on, .track-row:hover .row-like, .track-row.selected .row-like, .row-like:focus-visible { visibility: visible; }
+.row-like.on { color: var(--green); }
 .tracks.with-plays .plays { text-align: right; }
 .track-row .album-cell { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .row-more { visibility: hidden; color: var(--text-subdued); display: grid; place-items: center; }
@@ -372,6 +378,13 @@ kbd { font-family: inherit; font-size: 12px; color: var(--text-base); padding: 2
 .np-next[draggable] { cursor: grab; }
 
 .np-video-slot { background: #000; overflow: hidden; aspect-ratio: 16 / 9 !important; }
+/* The video pinned to the top of Now Playing while the cards scroll under it (on the panel's own
+   colour, so nothing shows around its corners). */
+.np-stick { position: sticky; top: 0; z-index: 2; margin: 0 -16px; padding: 0 16px 12px; background: var(--background-base); }
+/* A soft shadow under it, like Spotify's sticky headers, so cards visibly slide beneath. */
+.np-stick { box-shadow: 0 8px 8px -8px #00000099; }
+/* The queue card's headings sit in the card, a little smaller than the Queue panel's. */
+.np-queue .queue-h { font-size: 14px; margin: 16px 0 4px; color: var(--text-subdued); }
 .np-video-slot img { width: 100%; height: 100%; }
 .np-sub-head { margin-top: 20px; }
 

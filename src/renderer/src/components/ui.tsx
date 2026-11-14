@@ -1,8 +1,8 @@
 import type { Card, Shelf, Track } from '../../../shared/types'
 import { Component, memo, useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
-import { moreRoute, routeFor, sameRoute, sized, useApp, useDownloads, type AppCtx, type Source } from '../lib'
-import { ChevronLeft, ChevronRight, Clock, Downloaded, More, Note, Pause, Play } from './icons'
-import { cardMenu, songMenu } from './menus'
+import { isLiked, moreRoute, routeFor, sameRoute, sized, unlikedNow, useApp, useDownloads, useLikedIds, type AppCtx, type Source } from '../lib'
+import { Artist, CheckCircle, ChevronLeft, ChevronRight, Clock, Downloaded, More, Note, Pause, Play, PlusCircle } from './icons'
+import { cardMenu, setLiked, songMenu } from './menus'
 
 // Artwork that fades in once loaded (Spotify) and shows a placeholder when there's none or it fails.
 export function Img({ src, className = '', artist, onClick, title }: { src?: string; className?: string; artist?: boolean; onClick?: () => void; title?: string }) {
@@ -16,7 +16,7 @@ export function Img({ src, className = '', artist, onClick, title }: { src?: str
   if (state === 'failed')
     return (
       <span className={`img-fallback ${artist ? 'round' : ''} ${className}`} onClick={onClick} title={title}>
-        <Note />
+        {artist ? <Artist /> : <Note />}
       </span>
     )
   return (
@@ -178,9 +178,20 @@ export function TrackTable({
       songMenu(t, ctxRef.current, {
         playlistId: editRef.current?.id,
         onRemoved: editRef.current?.onRemoved,
-        liked: playlistId === 'LM' || (t.videoId === ctxRef.current.player?.videoId ? ctxRef.current.player.liked : undefined)
+        liked: t.videoId === ctxRef.current.player?.videoId ? ctxRef.current.player.liked : playlistId === 'LM' ? !unlikedNow(t.videoId) : isLiked(t.videoId)
       }),
     [playlistId]
+  )
+  // Spotify's tick beside each liked song: a click opens "Add to playlist" (where Liked Songs can be
+  // unticked); on a song not yet liked, the + shown on hover saves it to Liked Songs.
+  const likedIds = useLikedIds()
+  // (Every song on Liked Songs is liked, whatever the list read earlier says, unless unliked here.)
+  const likedOf = (t: Track) =>
+    t.videoId === player?.videoId ? player.liked : playlistId === 'LM' ? !unlikedNow(t.videoId) : !!likedIds?.has(t.videoId)
+  const like = useCallback(
+    (t: Track, liked: boolean, from: HTMLElement) =>
+      liked ? ctxRef.current.openSave({ videoId: t.videoId, title: t.title, liked: true }, from) : setLiked(ctxRef.current, t.videoId, true),
+    []
   )
   // The current song's own row pauses/resumes instead of restarting it.
   const play = useCallback(
@@ -231,6 +242,7 @@ export function TrackTable({
           <span className="num">#</span>
           <span>Title</span>
           {showAlbum && <span>Album</span>}
+          <span />
           <span className="dur">
             <Clock />
           </span>
@@ -247,6 +259,8 @@ export function TrackTable({
           showPlays={showPlays}
           state={player?.videoId !== t.videoId ? '' : player.playing ? 'playing' : 'current'}
           saved={downloads.ids.has(t.videoId) ? 'yes' : downloads.progress.has(t.videoId) ? 'pending' : ''}
+          liked={likedOf(t)}
+          like={like}
           selected={i === sel}
           tabbable={i === sel || (sel < 0 && i === 0)}
           play={play}
@@ -273,7 +287,9 @@ const Row = memo(function Row({
   play,
   select,
   go,
-  menu
+  menu,
+  liked,
+  like
 }: {
   t: Track
   i: number
@@ -288,6 +304,8 @@ const Row = memo(function Row({
   select: (i: number) => void
   go: AppCtx['go']
   menu: (t: Track) => void
+  liked: boolean
+  like: (t: Track, liked: boolean, from: HTMLElement) => void
 }) {
   return (
     <div
@@ -340,6 +358,14 @@ const Row = memo(function Row({
         </span>
       )}
       {showPlays && <span className="sub plays">{t.plays?.replace(/\s*plays?$/, '')}</span>}
+      <button
+        className={`icon-btn row-like ${liked ? 'on green' : ''}`}
+        onClick={(e) => (e.stopPropagation(), like(t, liked, e.currentTarget))}
+        aria-label={liked ? 'Add to playlist' : 'Save to Liked Songs'}
+        title={liked ? 'Add to playlist' : 'Save to Liked Songs'}
+      >
+        {liked ? <CheckCircle size={16} /> : <PlusCircle size={16} />}
+      </button>
       <span className="dur sub">{t.duration}</span>
       <button className="row-more" onClick={(e) => (e.stopPropagation(), menu(t))} aria-label={`More options for ${t.title}`} title={`More options for ${t.title}`}>
         <More size={16} />
@@ -463,6 +489,22 @@ export function ErrorBox({ error, onRetry }: { error: string; onRetry?: () => vo
             Try again
           </button>
         )}
+      </div>
+    </div>
+  )
+}
+
+// A page that's only there for a signed-in account (Liked Songs), signed out: ask to log in rather
+// than show the error fetching it without one gives.
+export function LoginNeeded({ what }: { what: string }) {
+  return (
+    <div className="page error-box">
+      <h2>Log in to see {what}</h2>
+      <p className="sub">They’re kept with your YouTube Music account.</p>
+      <div className="error-actions">
+        <button className="pill-btn" onClick={() => window.ytm.login()}>
+          Log in
+        </button>
       </div>
     </div>
   )

@@ -213,16 +213,27 @@ export function invalidate(key: string): void {
   generation.set(key, (generation.get(key) ?? 0) + 1)
   keyWatchers.get(key)?.forEach((f) => f())
 }
+// A like or unlike: YouTube Music's Liked list (and its count) takes a few seconds to show it, so
+// Liked Songs is fetched again after that rather than at once (when it'd come back unchanged).
+// (Its count can lag longer than its songs, so that's read once more a little later.)
+export const likedChangedSoon = () => {
+  setTimeout(() => playlistChanged('LM'), 3000)
+  setTimeout(() => invalidate('liked-meta:true'), 8000)
+}
 // A playlist changed: its page reloads and the library's song counts follow.
 export function playlistChanged(id: string): void {
   invalidate(`playlist:${id}`)
-  if (id === 'LM' || id === 'VLLM') invalidate(`playlist:${id === 'LM' ? 'VLLM' : 'LM'}`)
+  if (id === 'LM' || id === 'VLLM') {
+    invalidate(`playlist:${id === 'LM' ? 'VLLM' : 'LM'}`)
+    invalidate('liked-meta:true') // its count in Your Library
+  }
   else libraryChanged()
 }
 // Signing in or out: nothing cached belongs to the new session.
 export function resetCache(): void {
   session++
   ownPlaylists = null
+  setLikedIds(null)
   cache.clear()
   for (const k of Object.keys(localStorage)) if (k.startsWith('cache:')) localStorage.removeItem(k)
 }
@@ -351,3 +362,43 @@ export function useColor(src?: string, initial?: string): string {
   }, [src])
   return color
 }
+
+// Which songs are in Liked Songs, as Spotify always knows (a green tick on every liked song, and
+// menus that offer to remove it): the whole list is read once in the background after signing in,
+// then kept current by likes made here. Null until it's known, so callers can fall back.
+let likedIds: Set<string> | null = null
+// Songs just unliked here: Liked Songs drops them at once, while YouTube Music's own list catches
+// up (a few seconds). After that its list is trusted again, so a song liked again elsewhere (a
+// phone, YouTube Music) comes back.
+const unlikedHere = new Map<string, number>()
+const UNLIKE_GRACE = 30_000
+export const unlikedNow = (videoId: string): boolean => Date.now() - (unlikedHere.get(videoId) ?? -Infinity) < UNLIKE_GRACE
+let likedLoading: Promise<void> | null = null
+const likedSubs = new Set<() => void>()
+function setLikedIds(ids: Set<string> | null): void {
+  likedIds = ids
+  if (!ids) likedLoading = null
+  likedSubs.forEach((f) => f())
+}
+export function loadLikedIds(): Promise<void> {
+  const at = session
+  return (likedLoading ??= window.ytm.playlistTracks('LM').then(
+    (tracks: Track[]) => void (at === session && setLikedIds(new Set(tracks.map((t) => t.videoId)))),
+    () => void (likedLoading = null) // tried again on the next sign-in or like
+  ))
+}
+export const isLiked = (videoId: string): boolean | undefined => (likedIds ? likedIds.has(videoId) : undefined)
+export function noteLiked(videoId: string, on: boolean): void {
+  if (on) unlikedHere.delete(videoId)
+  else unlikedHere.set(videoId, Date.now())
+  if (!likedIds || likedIds.has(videoId) === on) return void likedSubs.forEach((f) => f())
+  const next = new Set(likedIds)
+  if (on) next.add(videoId)
+  else next.delete(videoId)
+  setLikedIds(next)
+}
+export const useLikedIds = (): Set<string> | null =>
+  useSyncExternalStore(
+    (f) => (likedSubs.add(f), () => void likedSubs.delete(f)),
+    () => likedIds
+  )
