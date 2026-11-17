@@ -85,7 +85,15 @@ function api(): Innertube {
 
 // Raw (unparsed) InnerTube text: { runs: [{ text }] } or { simpleText }.
 const runs = (t: any): string => t?.simpleText ?? (t?.runs ?? []).map((r: any) => r.text).join('')
-const text = (t: any): string => (t ? String(t.toString?.() ?? t.text ?? '') : '')
+// youtubei.js writes 'N/A' for text that's empty (and for an artist link with no name): album
+// rows, for one, leave out the artist when it's the album's own. That's no text, not a name.
+const NA = 'N/A'
+const text = (t: any): string => {
+  const s = t ? String(t.toString?.() ?? t.text ?? '') : ''
+  return s === NA ? '' : s
+}
+// The artists' names, leaving out the unnamed ones.
+const names = (people: any[]): string => people.map((a) => a?.name).filter((n) => n && n !== NA).join(', ')
 
 function thumb(list: any): string {
   const arr: any[] = (Array.isArray(list) ? list : list?.contents) ?? []
@@ -114,7 +122,7 @@ function kindOf(t?: string): Kind {
 function toTrack(n: any): Track | null {
   const videoId = n.id ?? findKey(n.endpoint, 'videoId') ?? findKey(n.overlay, 'videoId')
   if (!videoId || n.type !== 'MusicResponsiveListItem') return null
-  const people = n.artists ?? n.authors ?? (n.author ? [n.author] : [])
+  const people = (n.artists ?? n.authors ?? (n.author ? [n.author] : [])).filter((a: any) => a?.name && a.name !== NA)
   // Some rows come without their artist or length parsed: videos in a playlist ("non_music_track"),
   // and songs whose artist has no page of their own. Read them off the row's second line as YouTube
   // Music shows it ("Song • Artist • Album • 3:22", or just the channel), and its length column.
@@ -125,7 +133,7 @@ function toTrack(n: any): Track | null {
   return {
     videoId,
     title: n.title ?? text(n.name),
-    artists: people.length ? people.map((a: any) => a.name).join(', ') : parts[0] && parts[0] !== length && !/\b(views?|plays?)$/i.test(parts[0]) ? parts[0] : '',
+    artists: people.length ? names(people) : parts[0] && parts[0] !== length && !/\b(views?|plays?)$/i.test(parts[0]) ? parts[0] : '',
     // (Only a channel link: the same line can also link the album.)
     artistId: people[0]?.channel_id ?? (byline?.runs as any[] | undefined)?.map((r) => findKey(r, 'browseId')).find((id) => id?.startsWith('UC')),
     album: n.album?.name,
@@ -161,7 +169,7 @@ function toCard(n: any): Card | null {
     const people = n.artists ?? n.authors ?? []
     const song = kind === 'song' || kind === 'video'
     // Filtered search rows carry "Album • Artist • 2024" in the second column instead of a subtitle.
-    const sub = text(n.subtitle) || text(n.flex_columns?.[1]?.title) || people.map((a: any) => a.name).join(', ')
+    const sub = text(n.subtitle) || text(n.flex_columns?.[1]?.title) || names(people)
     return {
       kind,
       id,
@@ -387,7 +395,7 @@ export async function library(filter: LibraryFilter): Promise<Card[]> {
 function header(h: any): { title: string; subtitle: string; meta: string; thumb: string; owner?: string; ownerId?: string } {
   if (h?.type === 'MusicEditablePlaylistDetailHeader') h = h.header
   // The strapline is the album's artist (or the playlist's owner), linked to their channel.
-  const owner = text(h?.strapline_text_one).replace(/^N\/A$/, '')
+  const owner = text(h?.strapline_text_one)
   return {
     title: text(h?.title),
     subtitle: text(h?.subtitle),
@@ -431,7 +439,7 @@ export async function playlist(id: string, peek = false): Promise<Collection> {
     ...(liked ? { title: 'Liked Songs', subtitle: 'Playlist' } : {}),
     // YTM's own mixes ("RDCLAK…") have no owner line in their header.
     owner: base.owner ?? (/^(VL)?RDCLAK/.test(id) ? 'YouTube Music' : undefined),
-    description: liked ? undefined : text(h?.description?.description ?? h?.description).replace(/^N\/A$/, '') || undefined,
+    description: liked ? undefined : text(h?.description?.description ?? h?.description) || undefined,
     ...librarySave(h),
     editable: !!edit && !liked,
     privacy: edit?.privacy,
@@ -514,7 +522,7 @@ export async function artist(id: string): Promise<ArtistPage> {
     id,
     title: text(h?.title),
     thumb: thumb(h?.thumbnail ?? h?.foreground_thumbnail),
-    description: text(h?.description).replace(/^N\/A$/, ''),
+    description: text(h?.description),
     subscribed: !!h?.subscription_button?.subscribed,
     songs: tracks(songShelf?.contents),
     songsMore: songShelf ? moreOf(songShelf) : undefined,
