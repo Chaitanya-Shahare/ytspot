@@ -153,6 +153,23 @@ export function useChordShapes(instrument: Instrument): {
 // the player's choice.
 const lastPosition = new Map<string, number>()
 
+// A chord's shape on the instrument, always on show (the chord sounding now and the next one, for
+// playing along): the position last picked for it on its hover card.
+export function ShapeOf({ name, instrument }: { name: string; instrument: Instrument }) {
+  if (!name) return null
+  const at = lastPosition.get(`${instrument}:${name}`) ?? 0
+  if (instrument === 'piano') {
+    const voicings = voicingsFor(name)
+    const v = voicings[Math.min(at, voicings.length - 1)]
+    if (!v) return null
+    const keys = voicings.flatMap((x) => x.keys)
+    return <KeysDiagram voicing={v} range={[Math.min(...keys), Math.max(...keys)]} />
+  }
+  const shapes = shapesFor(name, instrument)
+  const shape = shapes[Math.min(at, shapes.length - 1)]
+  return shape ? <ChordDiagram shape={shape} /> : null
+}
+
 function ShapesCard({ name, instrument, at, onEnter, onLeave }: { name: string; instrument: Instrument; at: DOMRect; onEnter: () => void; onLeave: () => void }) {
   const shapes = instrument === 'piano' ? [] : shapesFor(name, instrument)
   const voicings = instrument === 'piano' ? voicingsFor(name) : []

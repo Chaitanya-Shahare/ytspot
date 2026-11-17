@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { ArtistPage, Card, LibraryFilter, PlayerState, QueueItem, ShuffleMode, Track } from '../../shared/types'
+import type { ArtistPage, Card, LibraryFilter, PlayerState, QueueItem, RepeatMode, SearchResult, ShuffleMode, Track } from '../../shared/types'
 import * as I from './components/icons'
-import { Ctx, downloadsSource, fmt, getClock, getDownloads, isRecordingKeys, libraryChanged, likedChangedSoon, loadLikedIds, loadPrefs, noteLiked, useLikedIds, markRecent, onLibraryChange, playlistChanged, recentAt, resetCache, routeFor, savePrefs, setClock, sized, useApp, useCached, useColor, useDownloads, useRecents, useTime, type AppCtx, type Prefs, type Route, type SaveSong, type Source, type ToastAction, sameRoute } from './lib'
+import { Ctx, downloadsSource, fetchCached, fmt, getClock, getDownloads, isRecordingKeys, libraryChanged, likedChangedSoon, loadLikedIds, loadPrefs, noteLiked, useLikedIds, markRecent, onLibraryChange, playlistChanged, recentAt, resetCache, routeFor, savePrefs, setClock, sized, useApp, useCached, useColor, useDownloads, useRecents, useTime, type AppCtx, type Prefs, type Route, type SaveSong, type Source, type ToastAction, sameRoute } from './lib'
 import { bindings, comboLabel, comboOf, SHORTCUTS, type Action } from '../../shared/shortcuts'
 import { cardMenu, songMenu } from './components/menus'
 import { Boundary, Img, Loading } from './components/ui'
@@ -240,6 +240,19 @@ export default function App() {
     [player?.shuffle, player?.local, toast]
   )
 
+  // Repeat says what it's now doing: from "repeat all", one press repeats just this song, which
+  // otherwise reads as repeat refusing to turn off.
+  const repeat = useCallback(
+    (mode?: RepeatMode) => {
+      if (!player?.videoId) return
+      const to = mode ?? NEXT_REPEAT[player.repeat]
+      if (to === player.repeat) return
+      window.ytm.cmd(mode ? { type: 'repeatMode', mode } : { type: 'repeat' })
+      toast(REPEAT_TOAST[to])
+    },
+    [player?.videoId, player?.repeat, toast]
+  )
+
   // The Queue and Now Playing buttons each open their view, or close it when it's already showing.
   const showPanel = useCallback(
     (which: 'np' | 'queue') => {
@@ -328,6 +341,25 @@ export default function App() {
     [toast, playSong, playTrack]
   )
 
+  // ⌘↩: play the top result for what's in the search box (or the search on show), as Spotify does,
+  // and show its results. Songs and videos play; an album, playlist or artist plays from its start.
+  const playTop = useCallback(async () => {
+    const q = (searchRef.current?.value ?? '').trim() || (route.name === 'search' ? route.q.trim() : '')
+    if (!q) return toast('Search for something to play')
+    if (route.name !== 'search' || route.q !== q) go({ name: 'search', q })
+    try {
+      const r = await fetchCached<SearchResult>(`search:all:${q}`, () => window.ytm.search(q, 'all'))
+      const top = r.top
+      if (top && (top.kind === 'song' || top.kind === 'video'))
+        return void playTrack({ videoId: top.id, title: top.title, artists: top.subtitle, duration: '', thumb: top.thumb })
+      if (top) return playCard(top)
+      if (r.songs[0]) return void playTrack(r.songs[0])
+      toast(`No results for “${q}”`)
+    } catch {
+      toast('Couldn’t search — check your connection')
+    }
+  }, [route, go, playTrack, playCard, toast])
+
   // Volume as last set here, so holding the volume key steps from the newest value rather than
   // the one the player last reported.
   const volume = useRef(50)
@@ -367,7 +399,7 @@ export default function App() {
         case 'volUp': return setVolume(volume.current + 10)
         case 'volDown': return setVolume(volume.current - 10)
         case 'shuffle': return shuffle()
-        case 'repeat': return void cmd({ type: 'repeat' })
+        case 'repeat': return repeat()
         case 'like': return like()
         case 'search': searchRef.current?.focus(); searchRef.current?.select(); return
         case 'home': return go({ name: 'home' })
@@ -378,9 +410,10 @@ export default function App() {
         case 'toggleLeft': return setLeft((v) => !v)
         case 'toggleRight': return showPanel('np')
         case 'help': return setHelp((v) => !v)
+        case 'playTop': return void playTop()
       }
     },
-    [player, go, back, forward, like, shuffle, openQueue, showPanel, toast, toggleLyrics, full, openFull, route.name]
+    [player, go, back, forward, like, shuffle, repeat, openQueue, showPanel, toast, toggleLyrics, full, openFull, route.name, playTop]
   )
 
   // Keyboard: Esc closes overlays/leaves the search box; otherwise match combos and sequences
@@ -476,8 +509,8 @@ export default function App() {
   // "Playing from" holds only while one of its songs is playing (not after radio or autoplay).
   const liveSource = source && (!source.ids || !player?.videoId || source.ids.includes(player.videoId)) ? source : null
   const ctx: AppCtx = useMemo(
-    () => ({ route, go, player, playTrack, source: liveSource, openCard, playCard, toast, openSave, prefs, setPrefs, openQueue, authed: !!authed }),
-    [route, go, player, playTrack, liveSource, openCard, playCard, toast, openSave, prefs, setPrefs, openQueue, authed]
+    () => ({ route, go, player, playTrack, source: liveSource, openCard, playCard, toast, openSave, prefs, setPrefs, openQueue, repeat, authed: !!authed }),
+    [route, go, player, playTrack, liveSource, openCard, playCard, toast, openSave, prefs, setPrefs, openQueue, repeat, authed]
   )
 
   if (authed === null) return <div className="splash" />
@@ -1485,6 +1518,8 @@ function PlusButton({ liked, onPlus, size = 16 }: { liked: boolean; onPlus: (fro
 }
 
 const REPEAT_LABEL = { NONE: 'Enable repeat', ALL: 'Enable repeat one', ONE: 'Disable repeat' } as const
+const NEXT_REPEAT = { NONE: 'ALL', ALL: 'ONE', ONE: 'NONE' } as const
+const REPEAT_TOAST = { NONE: 'Repeat off', ALL: 'Repeating your queue', ONE: 'Repeating this song' } as const
 const NEXT_SHUFFLE = { off: 'on', on: 'smart', smart: 'off' } as const
 // What the button does next, as Spotify labels it.
 const SHUFFLE_LABEL = { off: 'Enable shuffle', on: 'Enable Smart Shuffle', smart: 'Disable shuffle' } as const
@@ -1492,7 +1527,7 @@ const SHUFFLE_TOAST = { off: 'Shuffle off', on: 'Shuffle on', smart: 'Added Smar
 
 // Shuffle / previous / play / next / repeat, shared by the player bar and the full-screen view.
 function Controls({ onShuffle, big }: { onShuffle: (mode?: ShuffleMode) => void; big?: boolean }) {
-  const { player: p } = useApp()
+  const { player: p, repeat } = useApp()
   const cmd = window.ytm.cmd
   // Nothing loaded yet: the controls show but can't be used, as in Spotify.
   const off = !p?.videoId
@@ -1506,6 +1541,16 @@ function Controls({ onShuffle, big }: { onShuffle: (mode?: ShuffleMode) => void;
       { id: 'smart', label: 'Smart Shuffle', checked: mode === 'smart', enabled: !p?.local }
     ])
     if (pick) onShuffle(pick as ShuffleMode)
+  }
+  const repeatMenu = async (e: React.MouseEvent) => {
+    e.preventDefault()
+    const now = p?.repeat ?? 'NONE'
+    const pick = await window.ytm.popup([
+      { id: 'NONE', label: 'Repeat off', checked: now === 'NONE' },
+      { id: 'ALL', label: 'Repeat all', checked: now === 'ALL' },
+      { id: 'ONE', label: 'Repeat this song', checked: now === 'ONE' }
+    ])
+    if (pick) repeat(pick as RepeatMode)
   }
   return (
     <div className={`pb-controls ${big ? 'big' : ''}`}>
@@ -1532,7 +1577,8 @@ function Controls({ onShuffle, big }: { onShuffle: (mode?: ShuffleMode) => void;
       <button
         disabled={off}
         className={`icon-btn repeat ${p && p.repeat !== 'NONE' ? 'green dot' : ''}`}
-        onClick={() => cmd({ type: 'repeat' })}
+        onClick={() => repeat()}
+        onContextMenu={repeatMenu}
         aria-label={REPEAT_LABEL[p?.repeat ?? 'NONE']}
         title={REPEAT_LABEL[p?.repeat ?? 'NONE']}
         data-shortcut="repeat"

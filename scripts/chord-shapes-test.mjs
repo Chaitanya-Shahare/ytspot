@@ -106,4 +106,27 @@ assert.deepEqual(S.noteNames('Db'), ['Db', 'F', 'Ab'])
 // Loops.
 assert.deepEqual(S.progressions(['C', 'G', 'Am', 'F', 'C', 'G', 'Am', 'F', 'C', 'G', 'Am', 'F'].map((name) => ({ name }))), [{ loop: ['C', 'G', 'Am', 'F'], times: 3 }])
 
-console.log(`ok: ${checked} shapes and voicings, spelling, numerals and loops`)
+// The chord sheet: a beat a second, bars of 4 after a one-beat pickup; a verse (C G Am F, a bar
+// each) twice, a chorus (F G C C), the verse again.
+{
+  const prog = [['C', 'G', 'Am', 'F'], ['C', 'G', 'Am', 'F'], ['F', 'G', 'C', 'C'], ['C', 'G', 'Am', 'F']].flat()
+  const beats = Array.from({ length: 1 + prog.length * 4 }, (_, i) => i)
+  const chords = [{ time: 0, end: 1, name: '' }]
+  prog.forEach((name, b) => chords.push({ time: 1 + b * 4, end: 5 + b * 4, name }))
+  const merged = chords.filter((c) => c.name).reduce((out, c) => (out.length && out[out.length - 1].name === c.name ? (out[out.length - 1].end = c.end) : out.push({ ...c }), out), [])
+  const downbeats = prog.map((_, b) => 1 + b * 4)
+  const sheet = S.chordSheet({ chords: merged, beats, downbeats, meter: 4 }, beats.length)
+  // The silent pickup bar is left out; 16 bars in rows of 4.
+  assert.equal(sheet.rows.length, 4)
+  assert.deepEqual(sheet.rows.map((r) => r.label), ['A', 'A', '', 'A'])
+  assert.deepEqual(sheet.sections, [{ label: 'A', chords: ['C', 'G', 'Am', 'F'], times: 3 }])
+  // Chord names only where they change: the chorus's F carries on from the verse's, and so does its second C.
+  const chorus = sheet.rows[2].bars.map((b) => b.beats.filter((x) => x.change).map((x) => x.chord).join(''))
+  assert.deepEqual(chorus, ['', 'G', 'C', ''])
+  assert.equal(S.beatAt(sheet.beats, 5.5), 5)
+  assert.equal(S.beatAt(sheet.beats, -1), -1)
+  // Without beats (chords heard live) there's no sheet.
+  assert.equal(S.chordSheet({ chords: merged }, 10), null)
+}
+
+console.log(`ok: ${checked} shapes and voicings, spelling, numerals, loops and the chord sheet`)

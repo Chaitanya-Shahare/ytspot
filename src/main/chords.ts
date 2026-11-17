@@ -5,12 +5,11 @@
 // AnalyserNode offline (ANALYZE_JS), so all its chords are there in a few seconds, along with its
 // tuning and tempo. Should that fail, the YTM page listens to the song as it plays (CHROMA_JS in
 // player.ts) and hands over the same frames as it goes. Here they're laid out on the song's
-// timeline and decoded into chords (chord-detect.ts): each frame is scored against the 24 major and
-// minor triads, then a Viterbi pass picks the likeliest sequence, where changing chord costs a
-// little (so one stray frame doesn't flicker the chord). A song's frames are saved, so it's only
-// worked out once.
+// timeline and decoded (chord-detect.ts): worked out whole, by the beat and in bars, so chords only
+// change on beats and nearly always where a bar starts; heard live, frame by frame. A song's frames
+// are saved, so it's only worked out once (the most recent few hundred songs are kept).
 import { app, BrowserWindow, type WebContents } from 'electron'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Chords } from '../shared/types'
 import { addFrames, ANALYZE_JS, decode, emptyTimeline, FPS, VERSION, type Timeline } from './chord-detect'
@@ -41,8 +40,8 @@ function load(id: string): Song {
       s.duration = f.duration
       // Worked out by an older analysis: it's what's known until the song is worked out again.
       s.full = !!f.full && f.v === VERSION
-      s.bpm = f.bpm || undefined
       s.tuning = f.tuning || undefined
+      if (s.full && f.onset) (s.onset = Buffer.from(f.onset, 'base64')), (s.onsetLow = f.onsetLow ? Buffer.from(f.onsetLow, 'base64') : undefined)
       s.have.set(have)
       s.chroma.set(Buffer.from(f.chroma, 'base64'))
       const db = Buffer.from(f.db, 'base64')
@@ -57,15 +56,34 @@ function load(id: string): Song {
   return s
 }
 
+// Saved songs kept on disk (~60 KB each); older ones go, a little at a time, once a session.
+const KEEP = 400
+let pruned = false
+function prune(): void {
+  pruned = true
+  try {
+    const files = readdirSync(dir()).filter((f) => f.endsWith('.json'))
+    if (files.length <= KEEP) return
+    const aged = files.map((f) => ({ f, t: statSync(join(dir(), f)).mtimeMs })).sort((a, b) => b.t - a.t)
+    for (const { f } of aged.slice(KEEP)) unlinkSync(join(dir(), f))
+  } catch (e) {
+    console.error('[chords] prune', e)
+  }
+}
+
 function save(s: Song): void {
   if (!s.dirty) return
   s.dirty = false
+  if (!pruned) prune()
   try {
     mkdirSync(dir(), { recursive: true })
     const b64 = (a: Uint8Array | Int8Array) => Buffer.from(a.buffer, a.byteOffset, a.byteLength).toString('base64')
     writeFileSync(
       join(dir(), `${s.id}.json`),
-      JSON.stringify({ v: VERSION, duration: s.duration, full: s.full, bpm: s.bpm, tuning: s.tuning, have: b64(s.have), chroma: b64(s.chroma), db: b64(s.db) })
+      JSON.stringify({
+        v: VERSION, duration: s.duration, full: s.full, tuning: s.tuning, have: b64(s.have), chroma: b64(s.chroma), db: b64(s.db),
+        ...(s.onset ? { onset: b64(s.onset) } : {}), ...(s.onsetLow ? { onsetLow: b64(s.onsetLow) } : {})
+      })
     )
   } catch (e) {
     console.error('[chords] save', e)
@@ -97,7 +115,11 @@ const songOf = (id: string) => (current?.id === id ? current : load(id))
 
 let analyzer: Promise<WebContents> | null = null
 let analyzerWin: BrowserWindow | null = null
+// The page is a whole renderer process (~60 MB), so it only stays while songs are being worked out.
+const ANALYZER_IDLE_MS = 2 * 60 * 1000
+let analyzerIdle: ReturnType<typeof setTimeout> | undefined
 function analysisPage(): Promise<WebContents> {
+  clearTimeout(analyzerIdle)
   return (analyzer ??= (async () => {
     const win = (analyzerWin = new BrowserWindow({ show: false, webPreferences: { spellcheck: false, backgroundThrottling: false } }))
     win.on('closed', () => ((analyzer = null), (analyzerWin = null)))
@@ -114,14 +136,23 @@ let wanted: string | null = null
 let working: string | null = null
 const failed = new Map<string, number>()
 const RETRY_MS = 10 * 60 * 1000
+let running = false
 function want(id: string): void {
   wanted = id
-  if (!working) void work()
+  if (!running) void work()
+}
+// The song coming up next, worked out ahead whenever nothing else is, so its chords are there the
+// moment it starts (playing along through a playlist, there's no wait between songs).
+let upNext: () => string = () => ''
+function ahead(): string | null {
+  const id = upNext()
+  if (!id || !VALID_ID.test(id) || id === current?.id || Date.now() - (failed.get(id) ?? 0) < RETRY_MS) return null
+  return songOf(id).full ? null : id
 }
 async function work(): Promise<void> {
-  while (wanted) {
-    const id = wanted
-    wanted = null
+  running = true
+  for (let id = wanted ?? ahead(); id; id = wanted ?? ahead()) {
+    if (id === wanted) wanted = null
     const s = songOf(id)
     if (s.full || Date.now() - (failed.get(id) ?? 0) < RETRY_MS) continue
     working = id
@@ -133,15 +164,17 @@ async function work(): Promise<void> {
       const r = (await (await analysisPage()).executeJavaScript(`window.__analyze(${JSON.stringify(audio.url)})`)) as {
         frames: number[]
         duration: number
-        bpm: number
+        onset: number[]
+        onsetLow: number[]
         tuning: number
       }
       // The whole song replaces what was heard of it.
       Object.assign(s, { ...blank(id, Math.ceil(r.duration * FPS) + 1), result: undefined })
       ingest(s, r.duration, r.frames)
       s.full = true
-      s.bpm = r.bpm || undefined
       s.tuning = r.tuning || undefined
+      s.onset = Uint8Array.from(r.onset)
+      s.onsetLow = Uint8Array.from(r.onsetLow)
       save(s)
     } catch (e) {
       console.error('[chords]', id, (e as Error).message)
@@ -152,6 +185,9 @@ async function work(): Promise<void> {
     }
     push()
   }
+  running = false
+  clearTimeout(analyzerIdle)
+  analyzerIdle = setTimeout(() => analyzerWin?.destroy(), ANALYZER_IDLE_MS)
 }
 
 // While on, follow the playing song: work it out whole, take any frames heard live (until it's
@@ -168,9 +204,10 @@ function push(): void {
   const json = JSON.stringify(r)
   if (json !== lastSent) (lastSent = json), send(r)
 }
-export function setChords(on: boolean, onChords: (c: Chords) => void, nowPlaying: () => string): void {
+export function setChords(on: boolean, onChords: (c: Chords) => void, nowPlaying: () => string, next: () => string): void {
   send = onChords
   playing = nowPlaying
+  upNext = next
   if (!on) {
     if (timer) clearInterval(timer)
     timer = null
@@ -192,6 +229,7 @@ export function setChords(on: boolean, onChords: (c: Chords) => void, nowPlaying
     if (t?.id === id && t.frames.length && !current.full) ingest(current, t.duration, t.frames)
     if (Date.now() - lastSave > 30000) (lastSave = Date.now()), save(current)
     push()
+    if (!running && ahead()) void work()
   }
   timer = setInterval(tick, 1000)
   void tick()

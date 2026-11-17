@@ -10,6 +10,21 @@ export function Img({ src, className = '', artist, onClick, title }: { src?: str
   // image can finish loading before an effect would run, and must not be hidden again).
   const [loaded, setLoaded] = useState<string | null>(null)
   const [failed, setFailed] = useState<string | null>(null)
+  // A cover that didn't load is tried again (a moment later, then a little longer), and once more
+  // when the connection comes back: a blip shouldn't leave the placeholder up for good.
+  const [retry, setRetry] = useState<{ src?: string; n: number }>({ n: 0 })
+  const n = retry.src === src ? retry.n : 0
+  useEffect(() => {
+    if (!src || failed !== src) return
+    const again = () => (setFailed(null), setRetry({ src, n: n + 1 }))
+    if (!navigator.onLine) {
+      window.addEventListener('online', again, { once: true })
+      return () => window.removeEventListener('online', again)
+    }
+    if (n >= 2) return
+    const t = setTimeout(again, 2000 * (n + 1))
+    return () => clearTimeout(t)
+  }, [src, failed, n])
   // Once anything has loaded, a new `src` stays visible: the browser keeps drawing the old picture
   // until the new one is ready, so artwork swaps without a blank flash.
   const state = !src || failed === src ? 'failed' : loaded !== null ? 'ok' : 'loading'
@@ -21,7 +36,7 @@ export function Img({ src, className = '', artist, onClick, title }: { src?: str
     )
   return (
     <img
-      src={src}
+      src={n ? `${src}#retry${n}` : src}
       className={`fade ${state === 'ok' ? 'loaded' : ''} ${artist ? 'round' : ''} ${className}`}
       loading="lazy"
       ref={(el) => void (el?.complete && el.naturalWidth && loaded !== src && setLoaded(src ?? null))}
