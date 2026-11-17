@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { app, BaseWindow, BrowserWindow, session, WebContentsView, type WebContents } from 'electron'
 import { AD_URLS, blockAds, isAdUrl } from './adblock'
-import type { PlayerCommand, PlayerState, ShuffleMode, VideoRect, YtmSetting } from '../shared/types'
+import type { PlayerCommand, PlayerState, RepeatMode, ShuffleMode, VideoRect, YtmSetting } from '../shared/types'
 
 const YTM = 'https://music.youtube.com'
 // Same sign-in entry point Pear uses: Google login, then YouTube's sign-in handler, then YTM.
@@ -38,6 +38,7 @@ const VIDEO_CSS = `
 
 export function createPlayerWindow(): BaseWindow {
   shuffleMode = savedShuffle()
+  repeatMode = savedRepeat()
   host = new BaseWindow({ show: false, ...HIDDEN_BOUNDS })
   // Background throttling stays on: Chromium never throttles a page while it plays audio, and when
   // paused it lets this hidden page sleep instead of waking the CPU for YTM's timers.
@@ -60,7 +61,7 @@ export function createPlayerWindow(): BaseWindow {
   if (process.env.YTSPOT_MUTE) p.setAudioMuted(true)
   p.on('dom-ready', () => {
     p.insertCSS(VIDEO_CSS)
-    run(SETUP_JS(videoMode, shuffleMode))
+    run(SETUP_JS(videoMode, shuffleMode, repeatMode))
     if (chordCapture) run(CHROMA_JS(true))
   })
   // The page crashed, or couldn't load (offline at launch, a network change): load it again, waiting
@@ -209,7 +210,7 @@ const run = <T>(js: string): Promise<T | null> =>
 // Shared helpers injected into the YTM page once per load, plus the audio-only policy:
 // unless video mode is on, switch to YTM's audio-only stream when offered, otherwise drop the
 // video to 144p so a hidden window isn't decoding HD video for music.
-const SETUP_JS = (videoMode: boolean, shuffleMode: ShuffleMode) => `(() => {
+const SETUP_JS = (videoMode: boolean, shuffleMode: ShuffleMode, repeatMode: RepeatMode) => `(() => {
   if (window.__ytspot) return
   // A pause asked for while a track was changing: if YTM then starts the new track by itself,
   // pause it again (media events don't bubble, so listen while capturing).
@@ -357,6 +358,27 @@ const SETUP_JS = (videoMode: boolean, shuffleMode: ShuffleMode) => `(() => {
     }
     if (sh.wantRecs) mixInRecs()
   }
+  // ---- Repeat, kept as the user set it. YTM turns repeat off whenever a new queue starts (another
+  // playlist, a song from search); Spotify keeps it, so after a new queue it's set back. YTM's button
+  // only cycles, so it's pressed until the mode is the one wanted.
+  const rp = { want: ${JSON.stringify(repeatMode)}, busy: false }
+  const bar = () => document.querySelector('ytmusic-player-bar')
+  const repeatNow = () => store()?.repeatMode || (bar() ? bar().getAttribute('repeat-mode') || 'NONE' : ${NEW_REPEAT})
+  const setRepeat = async (mode) => {
+    rp.want = mode
+    if (rp.busy) return
+    rp.busy = true
+    try {
+      for (let i = 0; i < 3 && repeatNow() !== rp.want; i++) {
+        ;(bar()?.querySelector('.repeat') || ${NEW_REPEAT_BUTTON})?.click()
+        await new Promise((r) => setTimeout(r, 150))
+      }
+    } finally {
+      rp.busy = false
+    }
+  }
+  const keepRepeat = () => [1500, 4000].forEach((ms) => setTimeout(() => repeatNow() !== rp.want && setRepeat(rp.want), ms))
+
   // Watch YTM's own queue changes: a CLEAR starts a new queue; songs added with "Play next" / "Add
   // to queue" (\`adding\`) are the user's; autoplay songs YTM moves in at the end stay in its order.
   const hook = () => {
@@ -368,6 +390,7 @@ const SETUP_JS = (videoMode: boolean, shuffleMode: ShuffleMode) => `(() => {
       const r = dispatch(a)
       if (sh.busy || !a) return r
       if (a.type === 'CLEAR') {
+        keepRepeat()
         sh.order = []
         sh.queued.clear()
         sh.atEnd.clear()
@@ -435,7 +458,7 @@ const SETUP_JS = (videoMode: boolean, shuffleMode: ShuffleMode) => `(() => {
   // YTM's autoplay recommendations ("Dynamic queue") that play after the queue runs out.
   const autoplay = () => (store()?.autoplay ? rows(store().automixItems).filter(Boolean) : [])
   const s = window.__ytspot = {
-    video: ${videoMode}, t, queue, autoplay, sh, setShuffle,
+    video: ${videoMode}, t, queue, autoplay, sh, setShuffle, setRepeat,
     // Whether \`id\` is playing: that video, or its twin that YTM's Song/Video switch swapped in.
     plays(id) {
       const now = playingId(), w = current()?.playlistPanelVideoWrapperRenderer
@@ -503,6 +526,28 @@ const NEXT_SHUFFLE = { off: 'on', on: 'smart', smart: 'off' } as const
 // And remembered across launches, as Spotify does. (Read when the player is made, not on import:
 // a test run sets its own profile folder first.)
 const shuffleFile = () => join(app.getPath('userData'), 'shuffle.json')
+// Repeat too: YTM forgets it with every new queue (see setRepeat in SETUP_JS).
+let repeatMode: RepeatMode = 'NONE'
+const NEXT_REPEAT = { NONE: 'ALL', ALL: 'ONE', ONE: 'NONE' } as const
+const repeatFile = () => join(app.getPath('userData'), 'repeat.json')
+function savedRepeat(): RepeatMode {
+  try {
+    const mode = JSON.parse(readFileSync(repeatFile(), 'utf8'))
+    return mode in NEXT_REPEAT ? mode : 'NONE'
+  } catch {
+    return 'NONE'
+  }
+}
+export const repeatWanted = (): RepeatMode => repeatMode
+async function setRepeat(mode: RepeatMode): Promise<void> {
+  repeatMode = mode
+  try {
+    writeFileSync(repeatFile(), JSON.stringify(mode))
+  } catch {
+    // not worth failing the button over
+  }
+  await run(`window.__ytspot?.setRepeat(${JSON.stringify(mode)})`)
+}
 function savedShuffle(): ShuffleMode {
   try {
     const mode = JSON.parse(readFileSync(shuffleFile(), 'utf8'))
@@ -531,7 +576,7 @@ const CHROMA_JS = (on: boolean) => `(() => {
   c.take = () => {
     const f = c.frames
     c.frames = []
-    return { id: c.id || '', duration: document.getElementById('movie_player')?.getDuration?.() || 0, frames: f }
+    return { id: c.id || '', duration: document.getElementById('movie_player') ? ${DURATION_JS} : 0, frames: f }
   }
   c.timer = setInterval(() => {
     const p = document.getElementById('movie_player'), v = p?.querySelector('video')
@@ -567,8 +612,10 @@ const CHROMA_JS = (on: boolean) => `(() => {
       x[24] += m * m
     }
     const top = Math.max(...x.subarray(0, 12)) || 1, low = Math.max(...x.subarray(12, 24)) || 1
-    // The analyser's window ends now and spans ~0.35 s of audio; stamp its middle.
-    c.frames.push(Math.round((v.currentTime - 0.17 * v.playbackRate) * 100) / 100)
+    // The analyser's window ends now and spans ~0.35 s of audio; stamp its middle. In song time:
+    // the <video>'s own clock runs on across songs with segmented streaming (it can read 487 s
+    // 192 s into a song).
+    c.frames.push(Math.round((p.getCurrentTime() - 0.17 * v.playbackRate) * 100) / 100)
     for (let i = 0; i < 12; i++) c.frames.push(Math.round((x[i] / top) * 100))
     for (let i = 12; i < 24; i++) c.frames.push(Math.round((x[i] / low) * 100))
     c.frames.push(Math.round(10 * Math.log10(x[24] + 1e-12)))
@@ -603,6 +650,16 @@ const NEW_REPEAT_BUTTON = `[...document.querySelectorAll('ytmusic-wiz-player-con
 // "Repeat off" / "Repeat all" / "Repeat one", as the player bar's repeat-mode says NONE / ALL / ONE.
 const NEW_REPEAT = `((l) => (/one/i.test(l) ? 'ONE' : /all/i.test(l) ? 'ALL' : 'NONE'))(${NEW_REPEAT_BUTTON}?.getAttribute('aria-label') || '')`
 
+// How long the playing song is. Not the player's getDuration(): with YTM's segmented streaming
+// that's how far the audio has been fetched so far, which grows in jumps of ~30 s while the song
+// plays and near the end already counts the next song's first seconds (so the bar sat at ~80-90%
+// when the song ended). The song's own length, from its player response, is what's shown; the
+// player's figure only stands in when there's no response for this video yet.
+const DURATION_JS = `((p) => {
+  const r = p.getPlayerResponse?.()?.videoDetails, len = r && r.videoId === p.getVideoData?.().video_id ? Number(r.lengthSeconds) || 0 : 0
+  return len ? Math.max(len, p.getCurrentTime() || 0) : p.getDuration() || 0
+})(document.getElementById('movie_player'))`
+
 const STATE_JS = (rev: string) => `(() => {
   const p = document.getElementById('movie_player'), y = window.__ytspot
   if (!p || !p.getVideoData || !y) return null
@@ -631,7 +688,7 @@ const STATE_JS = (rev: string) => `(() => {
     // Nothing reliable to show for this song yet; main waits a moment before pushing it.
     pending: !fresh && !cur,
     time: p.getCurrentTime() || 0,
-    duration: p.getDuration() || 0,
+    duration: ${DURATION_JS},
     // The same notion of "playing" the toggle uses (see command), so the button always does what it shows.
     playing: ${IS_PLAYING},
     volume: p.getVolume(),
@@ -731,8 +788,13 @@ export async function command(c: PlayerCommand): Promise<void> {
       return setShuffle(NEXT_SHUFFLE[shuffleMode])
     case 'shuffleMode':
       return setShuffle(c.mode)
-    case 'repeat':
-      return void run(`(b => b ? b.click() : ${NEW_REPEAT_BUTTON}?.click())(document.querySelector('ytmusic-player-bar .repeat'))`)
+    // Off → all → one → off, from what's on show (YTM may have dropped it since it was last set).
+    case 'repeat': {
+      const now = (await getState())?.repeat ?? repeatMode
+      return setRepeat(NEXT_REPEAT[now])
+    }
+    case 'repeatMode':
+      return setRepeat(c.mode)
     case 'like':
       return void run(rate('like'))
     case 'dislike':

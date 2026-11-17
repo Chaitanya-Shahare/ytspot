@@ -521,6 +521,62 @@ kbd { font-family: inherit; font-size: 12px; color: var(--text-base); padding: 2
 .chord { cursor: default; }
 .chord:hover { text-decoration: underline; }
 .lyrics.synced .lyric:has(.chord:hover) { text-decoration: none; }
+/* Playing along: the chord now and its shape, the next one (counting down in beats) and its shape,
+   then the ones after. The shapes keep their size, so nothing moves as the chords change. */
+.chord-play { flex: 1; min-width: 0; display: flex; align-items: center; gap: 20px; }
+.chord-shape { flex: none; display: grid; place-items: center; }
+.chord-shape.now { width: 128px; min-height: 120px; }
+.chord-shape.small { width: 92px; min-height: 86px; transform-origin: left center; }
+.chord-shape.small svg { transform: scale(.72); transform-origin: left center; }
+.chord-shape .chord-diagram .cd-string, .chord-shape .chord-diagram .cd-fret { stroke: #ffffffb3; }
+.chord-shape .chord-diagram .cd-finger { fill: var(--lyrics-bg); }
+.chord-upnext { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.chord-upnext-head { display: flex; align-items: baseline; gap: 10px; }
+.chord-label { color: #000000b3; font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.chord-in { color: #000000b3; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.chord-upnext-body { display: flex; align-items: center; gap: 4px; min-height: 86px; }
+/* Brightens as the change comes closer (--soon: 1 four beats away or more, 0 on the next beat). */
+.chord-next-name { min-width: 64px; font-size: 34px; font-weight: 800; line-height: 1; color: rgb(255 255 255 / calc(1 - var(--soon, 1) * .45)); cursor: default; }
+.chord-then { display: flex; gap: 8px; color: #000000b3; font-size: 15px; font-weight: 800; }
+.chord-then span { cursor: default; }
+.chord-then::before { content: 'then'; font-size: 12px; font-weight: 700; letter-spacing: .04em; align-self: center; }
+/* The bar's beats: the first a little bigger, the one sounding lit. */
+.beat-dots { display: flex; align-items: center; gap: 7px; height: 16px; }
+.beat-dot { width: 9px; height: 9px; border-radius: 50%; background: #00000033; transition: background-color .06s; }
+.beat-dot.downbeat { width: 13px; height: 13px; }
+.beat-dot.on { background: #fff; }
+/* The chord sheet: rows of four bars, a cell per beat. */
+.chord-sheet { position: relative; display: flex; flex-direction: column; gap: 8px; padding: 24px 64px 40vh; }
+.sheet-sections { display: flex; flex-wrap: wrap; gap: 10px 32px; margin-bottom: 12px; }
+.sheet-section { display: flex; align-items: center; gap: 10px; }
+.sheet-section-chord { display: flex; flex-direction: column; align-items: center; color: #fff; font-size: 17px; font-weight: 800; line-height: 1.1; cursor: default; }
+.sheet-section-chord small { color: #000000b3; font-size: 11px; font-weight: 700; }
+.sheet-badge { flex: none; display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; background: #00000040; color: #fff; font-size: 13px; font-weight: 800; }
+.sheet-badge.none { background: none; }
+.sheet-loop { display: flex; align-items: center; gap: 12px; color: #fff; font-size: 14px; font-weight: 700; }
+.sheet-loop .link-btn { color: #000000b3; }
+.sheet-row { display: grid; grid-template-columns: 24px 1fr; align-items: center; gap: 12px; }
+.sheet-bars { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-radius: 6px; overflow: hidden; background: #0000001f; }
+.sheet-bar { display: flex; min-width: 0; overflow: hidden; border-left: 3px solid #00000040; cursor: pointer; transition: background-color .15s; }
+.sheet-bar:first-child { border-left: 0; }
+.sheet-bar:hover { background: #ffffff14; }
+.sheet-bar.looped { background: #ffffff2e; }
+.sheet-beat { position: relative; flex: 1; min-width: 0; height: 52px; display: flex; align-items: center; padding-left: 8px; border-left: 1px solid #00000014; color: #fff; font-size: 20px; font-weight: 800; white-space: nowrap; transition: background-color .06s, color .06s; }
+.sheet-beat:first-child { border-left: 0; }
+/* A name runs on over the beats after it (which have none of their own unless the chord changes
+   again right away, when the next cell's background covers the overflow). */
+.sheet-beat b { position: relative; z-index: 1; cursor: default; }
+.sheet-beat:has(+ .sheet-beat b) b { max-width: 100%; overflow: hidden; text-overflow: clip; }
+.sheet-beat.carry { color: #00000059; }
+.sheet-beat.on { background: #ffffffe6; color: #000; }
+@container (max-width: 760px) {
+  .chord-shape.now { width: 96px; }
+  .chord-shape.now svg { transform: scale(.8); }
+  .chord-then { display: none; }
+  .chord-sheet { padding-inline: 24px; }
+  .sheet-beat { font-size: 16px; padding-left: 5px; }
+}
+
 /* A chord's shapes, shown on hover (Ultimate Guitar style): its name, the chord box, ‹ 1 / 4 ›. */
 .chord-card { position: fixed; z-index: 1000; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 12px 8px; border-radius: 8px; background: #282828; color: #fff; box-shadow: 0 16px 24px #00000080, 0 6px 8px #00000033; }
 .chord-card-name { font-size: 16px; font-weight: 800; }

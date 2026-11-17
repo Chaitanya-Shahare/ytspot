@@ -176,7 +176,7 @@ app.whenReady().then(async () => {
   const analyse = async (id) => {
     const t0 = Date.now()
     const r = await win.webContents.executeJavaScript(`window.__analyze('evalaudio://x/${encodeURIComponent(id)}')`)
-    const tl = { ...emptyTimeline(Math.ceil(r.duration * 10) + 1), full: true, bpm: r.bpm || undefined }
+    const tl = { ...emptyTimeline(Math.ceil(r.duration * 10) + 1), full: true, onset: Uint8Array.from(r.onset), onsetLow: Uint8Array.from(r.onsetLow) }
     if (process.env.VERBOSE) console.log(id, 'tuning', r.tuning)
     addFrames(tl, r.duration, r.frames)
     return { ...decode(id, tl), ms: Date.now() - t0 }

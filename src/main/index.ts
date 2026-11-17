@@ -10,7 +10,7 @@ import { leaveLocal, localActive, localCommand, localState, playLocal, setLocalL
 import { buildMenu } from './menu'
 import { initTray, setTrayMode, trayOn, updateTray } from './tray'
 import { checkForUpdates, initUpdater, promptUpdate, setAutoUpdate, updateState } from './updater'
-import { command, createPlayerWindow, fitVideo, parkVideo, pauseYtm, placeVideo, rateVideo, saveToLibrary, subscribe, getState, onLoggedIn, setVideoMode, setChordCapture, applyYtmSetting, showLogin, signOut, uploadImage, ytmSession, ytmSettings } from './player'
+import { command, repeatWanted, createPlayerWindow, fitVideo, parkVideo, pauseYtm, placeVideo, rateVideo, saveToLibrary, subscribe, getState, onLoggedIn, setVideoMode, setChordCapture, applyYtmSetting, showLogin, signOut, uploadImage, ytmSession, ytmSettings } from './player'
 import { bindings, DEFAULT_PREFS, type Action } from '../shared/shortcuts'
 import type { Download, DownloadQuality, MainPrefs, MenuBarIcon, MenuBarMode, PlayerCommand, PlayerState, Track, VideoRect } from '../shared/types'
 import type { TransferApi } from '../shared/transfer'
@@ -155,13 +155,21 @@ function showMain(then?: (page: WebContents) => void): void {
 // A track change briefly has no trustworthy title/artwork (see player.ts); hold the update back
 // for up to a second so the UI never shows the old song's art under the new song.
 let pendingSince: { id: string; at: number } | null = null
-// The song on show, for the chords (see chords.ts), which follow it whichever player it's in.
+// The song on show, for the chords (see chords.ts), which follow it whichever player it's in, and
+// the one after it (repeating this one, or the next in the queue or autoplay), worked out ahead.
 let nowPlaying = ''
+let upNext = ''
+function nextOf(s: PlayerState): string {
+  if (s.repeat === 'ONE') return s.videoId
+  const at = s.queue.findIndex((q) => q.selected)
+  return at < 0 ? '' : (s.queue[at + 1]?.videoId ?? s.autoplay[0]?.videoId ?? '')
+}
 async function pushState(): Promise<void> {
   const shown = !!main && (main.isVisible() || headless)
   if (!shown && !trayOn()) return
   const s = await currentState()
   nowPlaying = s?.videoId ?? ''
+  upNext = s ? nextOf(s) : ''
   updateTray(s)
   if (!s || !ui || !shown) return
   if (s.pending) {
@@ -193,6 +201,8 @@ async function playerCommand(c: PlayerCommand): Promise<void> {
     const ytm = localActive() ? null : await getState()
     if (ytm?.playing) await pauseYtm()
     await playLocal(songs, at, ytm ? (ytm.muted ? 0 : ytm.volume) : undefined)
+    // Repeat carries over too, as it does from one playlist to the next.
+    await localCommand({ type: 'repeatMode', mode: repeatWanted() }, songsOf)
   } else if (c.type === 'play' || c.type === 'videoMode' || !localActive()) {
     if (c.type === 'play' && localActive()) leaveLocal()
     await command(c)
@@ -376,7 +386,7 @@ app.whenReady().then(() => {
     keepPlaying = p.keepPlaying
     setVideoMode(p.videoMode)
     setChordCapture(p.chords)
-    setChords(p.chords, (c) => ui?.send('chords', c), () => nowPlaying)
+    setChords(p.chords, (c) => ui?.send('chords', c), () => nowPlaying, () => upNext)
     if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: p.openAtLogin })
     if (p.menuBar !== menuBar || p.menuBarIcon !== menuBarIcon || p.autoUpdate !== autoUpdate) {
       const tray = p.menuBar !== menuBar || p.menuBarIcon !== menuBarIcon

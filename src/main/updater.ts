@@ -90,6 +90,8 @@ async function check(): Promise<void> {
   try {
     res = await net.fetch(`https://github.com/${REPO}/releases/latest/download/${MANIFEST}`)
   } catch (e) {
+    // Tried again on the next hourly tick, not in a day: the Mac may just have woken up offline.
+    lastCheck = 0
     return set({ status: 'error', message: `Couldn’t reach GitHub. Check your connection and try again. (${(e as Error).message})` })
   }
   try {
@@ -106,6 +108,7 @@ async function check(): Promise<void> {
     }
     set(newer(release.version, app.getVersion()) ? { status: 'available', version: release.version } : { status: 'latest' })
   } catch (e) {
+    lastCheck = 0
     set({ status: 'error', message: `Couldn’t check for updates. (${(e as Error).message})` })
   }
 }
@@ -138,6 +141,8 @@ async function download(r: Release, quiet = false): Promise<void> {
   const dir = join(app.getPath('temp'), 'ytspot-update')
   const zip = join(dir, ASSET)
   set({ status: 'downloading', version: r.version, percent: 0 })
+  let out: ReturnType<typeof createWriteStream> | undefined
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
   try {
     await rm(dir, { recursive: true, force: true })
     await mkdir(dir, { recursive: true })
@@ -145,8 +150,8 @@ async function download(r: Release, quiet = false): Promise<void> {
     if (!res.ok || !res.body) throw new Error(`GitHub answered ${res.status}.`)
     const total = Number(res.headers.get('content-length')) || 0
     const hash = createHash('sha256')
-    const out = createWriteStream(zip)
-    const reader = res.body.getReader()
+    out = createWriteStream(zip)
+    reader = res.body.getReader()
     let got = 0
     let shown = 0
     for (;;) {
@@ -177,6 +182,9 @@ async function download(r: Release, quiet = false): Promise<void> {
     if (quiet) deps.page()?.send('update:ready', r.version)
     else await promptUpdate()
   } catch (e) {
+    // A download cut off midway still has the file and the connection open.
+    out?.destroy()
+    reader?.cancel().catch(() => {})
     await rm(dir, { recursive: true, force: true }).catch(() => {})
     set({ status: 'error', message: `Couldn’t download ytspot ${r.version}. ${(e as Error).message}` })
     if (!quiet) await promptUpdate()

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Chords, Lyrics, PlayerState } from '../../../shared/types'
-import { numeral, progressions, respell, type Instrument } from '../chord-shapes'
-import { InstrumentSwitch, useChordShapes } from '../components/chords'
+import { beatAt, chordSheet, numeral, progressions, respell, type Instrument, type Sheet } from '../chord-shapes'
+import { InstrumentSwitch, ShapeOf, useChordShapes } from '../components/chords'
 import * as I from '../components/icons'
 import { ErrorBox } from '../components/ui'
 import { liveClock, setClock, useApp, useCached, useColor } from '../lib'
@@ -63,6 +63,9 @@ function SongLyrics({ player, full }: { player: PlayerState; full?: boolean }) {
   const chords = useMemo(() => heard && respell(heard, song.transpose), [heard, song.transpose])
   // Placed once per chords update, not on every line change.
   const placed = useMemo(() => (chords && data?.synced ? data.lines.map((_, i) => lineChords(data, chords, i)) : null), [chords, data])
+  // The whole song in bars, once its beats are known (worked out whole).
+  const sheet = useMemo(() => (chords ? chordSheet(chords, player.duration) : null), [chords, player.duration])
+  const sheetOn = chordsOn && !!sheet && prefs.chordView === 'sheet'
   const shapes = useChordShapes(prefs.chordInstrument)
   const tint = useColor(player.thumb, lastLyricsColor)
   useEffect(() => void (lastLyricsColor = tint), [tint])
@@ -79,9 +82,9 @@ function SongLyrics({ player, full }: { player: PlayerState; full?: boolean }) {
   const [away, setAway] = useState(false)
   const follow = () => box.current?.children[active]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   useEffect(() => {
-    if (active >= 0 && !away) follow()
+    if (active >= 0 && !away && !sheetOn) follow()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, away])
+  }, [active, away, sheetOn])
 
   const seek = (t?: number) => {
     seekTo(t, player.playing)
@@ -89,20 +92,25 @@ function SongLyrics({ player, full }: { player: PlayerState; full?: boolean }) {
   }
 
   return (
-    <div ref={pageRef} className={`page lyrics-page ${full ? 'full' : ''}`} style={{ '--lyrics-bg': bg } as React.CSSProperties} onWheel={() => data?.synced && setAway(true)}>
+    <div ref={pageRef} className={`page lyrics-page ${full ? 'full' : ''}`} style={{ '--lyrics-bg': bg } as React.CSSProperties} onWheel={() => (sheetOn || data?.synced) && setAway(true)}>
       {chordsOn && (
         <ChordBar
           chords={chords}
+          sheet={sheet}
           playing={player.playing}
           song={song}
           setSong={setSong}
           instrument={prefs.chordInstrument}
           setInstrument={(chordInstrument) => setPrefs({ chordInstrument })}
+          view={sheet ? prefs.chordView : null}
+          setView={(chordView) => (setPrefs({ chordView }), setAway(false))}
           bind={shapes.bind}
         />
       )}
       {shapes.popover}
-      {error && data === undefined ? (
+      {sheetOn ? (
+        <ChordSheet sheet={sheet!} keyName={chords?.key ?? ''} playing={player.playing} bind={shapes.bind} away={away} setAway={setAway} />
+      ) : error && data === undefined ? (
         <ErrorBox error={error} onRetry={retry} />
       ) : data === undefined ? (
         <p className="lyrics-note">Loading lyrics…</p>
@@ -238,55 +246,130 @@ function ChordLine({ text, at, bind }: { text: string; at: { at: number; name: s
   return <>{parts}</>
 }
 
-// The chord sounding now and the ones coming next, for playing along, with the key, the tempo, the
-// recording's tuning when it's off, transposing and the instrument to show shapes for. It keeps its
-// place and size from before the chords arrive, so nothing jumps.
-function ChordBar({ chords, playing, song, setSong, instrument, setInstrument, bind }: {
+// The chord sounding now (with how to play it) and the ones coming next, for playing along: with
+// the song's beats known, the next change counts down in beats and dots tick through the bar. Also
+// the key, the time signature and tempo, the recording's tuning when it's off, transposing, the
+// instrument to show shapes for, and the sheet/lyrics switch. It keeps its place and size from
+// before the chords arrive, so nothing jumps.
+function ChordBar({ chords, sheet, playing, song, setSong, instrument, setInstrument, view, setView, bind }: {
   chords: Chords | null
+  sheet: Sheet | null
   playing: boolean
   song: SongChordPrefs
   setSong: (p: Partial<SongChordPrefs>) => void
   instrument: Instrument
   setInstrument: (i: Instrument) => void
+  view: 'sheet' | 'lyrics' | null // null: no sheet to switch to (chords heard live)
+  setView: (v: 'sheet' | 'lyrics') => void
   bind: BindChord
 }) {
   const [t, setT] = useState(() => liveClock(playing))
   useEffect(() => {
-    const id = setInterval(() => setT(liveClock(playing)), 100)
+    // With the beats known nothing on show changes between them, so it only redraws on a new beat.
+    const same = (a: number, b: number) => !!sheet && beatAt(sheet.beats, a + 0.05) === beatAt(sheet.beats, b + 0.05)
+    const id = setInterval(() => {
+      const now = liveClock(playing)
+      setT((prev) => (same(prev, now) ? prev : now))
+    }, sheet ? 30 : 100)
     return () => clearInterval(id)
-  }, [playing])
+  }, [playing, sheet])
   const list = chords?.chords ?? []
-  // The song's loops in Roman numerals, to jam along without reading every chord.
-  const loops = useMemo(() => progressions(chords?.chords ?? []), [chords])
+  // Without beats (heard live), the song's loops in Roman numerals stand in for the sheet.
+  const loops = useMemo(() => (sheet ? [] : progressions(chords?.chords ?? [])), [chords, sheet])
   const key = chords?.key ?? ''
-  let i = -1
-  while (i + 1 < list.length && list[i + 1].time <= t) i++
-  // While listening live the newest chord ends where the analysis has got to, a second or so
-  // behind the song: it's still the one sounding.
-  const now = i >= 0 && (list[i].end > t || (i === list.length - 1 && t - list[i].end < 3)) ? list[i] : null
-  const coming = list.slice(i + 1, i + 5)
-  const soon = coming[0] ? Math.max(0, coming[0].time - t) : 0
+  let now: string | null = null
+  let coming: string[] = []
+  let inBeats = 0, soon = 0
+  let beat: { pos: number; len: number } | null = null
+  if (sheet) {
+    // (A moment early, as a player reads ahead.)
+    const bi = beatAt(sheet.beats, t + 0.05)
+    const b = sheet.beats[bi]
+    now = b?.chord || null
+    if (b) beat = { pos: b.pos, len: b.len }
+    for (let j = Math.max(0, bi + 1); j < sheet.beats.length && coming.length < 4; j++) {
+      const x = sheet.beats[j]
+      if (!x.change) continue
+      if (!coming.length) inBeats = j - bi
+      coming.push(x.chord)
+    }
+  } else {
+    let i = -1
+    while (i + 1 < list.length && list[i + 1].time <= t) i++
+    // While listening live the newest chord ends where the analysis has got to, a second or so
+    // behind the song: it's still the one sounding.
+    now = i >= 0 && (list[i].end > t || (i === list.length - 1 && t - list[i].end < 3)) ? list[i].name : null
+    coming = list.slice(i + 1, i + 5).map((c) => c.name)
+    soon = list[i + 1] ? Math.max(0, list[i + 1].time - t) : 0
+  }
   const whole = !!chords && chords.heard >= 0.97
   const tempo = chords?.tempo ? Math.round(chords.tempo * song.tempo) : 0
   // Only worth a mention when it's enough to hear against a tuned instrument.
   const tuning = chords?.tuning && Math.abs(chords.tuning) >= 15 ? { cents: Math.abs(chords.tuning), dir: chords.tuning < 0 ? 'flat' : 'sharp' } : null
   const by = song.transpose
   const status = !chords || chords.working ? 'Working out the chords…' : !list.length ? 'Listening for chords…' : !coming.length && !whole ? 'Listening for chords…' : ''
+  const [next, ...then] = coming
   return (
-    <div className="chord-bar">
-      <div className={`chord-now ${now ? '' : 'none'}`} {...(now ? bind(now.name) : {})}>
-        {now?.name ?? '–'}
-        <span className="chord-numeral">{now ? numeral(now.name, key) : ''}</span>
-      </div>
-      <div className="chord-next">
-        {coming.map((c, k) => (
-          <span key={k} className="chord-chip" style={k === 0 ? ({ '--soon': Math.min(1, soon / 4) } as React.CSSProperties) : undefined} {...bind(c.name)}>
-            {c.name}
-          </span>
-        ))}
-        {status && <span className="chord-wait">{status}</span>}
+    <div className={`chord-bar ${sheet ? 'with-shapes' : ''}`}>
+      <div className="chord-play">
+        <div className={`chord-now ${now ? '' : 'none'}`} {...(now ? bind(now) : {})}>
+          {now ?? '–'}
+          <span className="chord-numeral">{now ? numeral(now, key) : ''}</span>
+        </div>
+        {sheet && (
+          <div className="chord-shape now" aria-hidden>
+            {now && <ShapeOf name={now} instrument={instrument} />}
+          </div>
+        )}
+        {sheet ? (
+          <div className="chord-upnext">
+            <div className="chord-upnext-head">
+              <span className="chord-label">Next</span>
+              {next && <span className="chord-in">{inBeats === 1 ? 'next beat' : `in ${inBeats} beats`}</span>}
+            </div>
+            <div className="chord-upnext-body">
+              {next ? (
+                <>
+                  <span className="chord-next-name" style={{ '--soon': Math.min(1, (inBeats - 1) / 4) } as React.CSSProperties} {...bind(next)}>
+                    {next}
+                  </span>
+                  <div className="chord-shape small" aria-hidden>
+                    <ShapeOf name={next} instrument={instrument} />
+                  </div>
+                </>
+              ) : (
+                status && <span className="chord-wait">{status}</span>
+              )}
+            </div>
+            {then.length > 0 && (
+              <div className="chord-then">
+                {then.map((c, k) => (
+                  <span key={k} {...bind(c)}>
+                    {c}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="chord-next">
+            {coming.map((c, k) => (
+              <span key={k} className="chord-chip" style={k === 0 ? ({ '--soon': Math.min(1, soon / 4) } as React.CSSProperties) : undefined} {...bind(c)}>
+                {c}
+              </span>
+            ))}
+            {status && <span className="chord-wait">{status}</span>}
+          </div>
+        )}
       </div>
       <div className="chord-tools">
+        {beat && (
+          <div className="beat-dots" aria-label={`Beat ${beat.pos + 1} of ${beat.len}`}>
+            {Array.from({ length: beat.len }, (_, k) => (
+              <span key={k} className={`beat-dot ${k === 0 ? 'downbeat' : ''} ${k === beat!.pos && playing ? 'on' : ''}`} />
+            ))}
+          </div>
+        )}
         <div className="chord-transpose" role="group" aria-label="Transpose">
           <button className="chord-step" onClick={() => setSong({ transpose: Math.max(-11, by - 1) })} aria-label="Transpose down a semitone">
             −
@@ -300,6 +383,7 @@ function ChordBar({ chords, playing, song, setSong, instrument, setInstrument, b
         </div>
         <div className="chord-meta">
           {chords?.key && <span>Key: {chords.key}</span>}
+          {sheet && <span>{sheet.meter}/4</span>}
           {tuning && (
             <span title={`This recording is ${tuning.cents} cents ${tuning.dir} of standard pitch (A = 440 Hz). The chords are named for the nearest note; tune ${tuning.dir === 'flat' ? 'down' : 'up'} ${tuning.cents} cents to play along.`}>
               Tuned {tuning.cents}¢ {tuning.dir}
@@ -320,21 +404,142 @@ function ChordBar({ chords, playing, song, setSong, instrument, setInstrument, b
       </div>
       {/* Always there (empty while working), so the bar doesn't change height when they arrive. */}
       <div className="chord-foot">
-        <div className="chord-loops" aria-label="Chord progressions">
-          {loops.map((p, k) => (
-            <div key={k} className="chord-loop">
-              {p.loop.map((c, j) => (
-                <span key={j} className={`loop-step ${c === now?.name ? 'on' : ''}`} {...bind(c)}>
-                  <b>{numeral(c, key) || c}</b>
-                  {numeral(c, key) && <small>{c}</small>}
+        {view ? (
+          <div className="chord-instrument chord-view" role="radiogroup" aria-label="Show chords">
+            {(['sheet', 'lyrics'] as const).map((v) => (
+              <button key={v} role="radio" aria-checked={view === v} className={view === v ? 'on' : ''} onClick={() => setView(v)}>
+                {v === 'sheet' ? 'Chord sheet' : 'With lyrics'}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="chord-loops" aria-label="Chord progressions">
+            {loops.map((p, k) => (
+              <div key={k} className="chord-loop">
+                {p.loop.map((c, j) => (
+                  <span key={j} className={`loop-step ${c === now ? 'on' : ''}`} {...bind(c)}>
+                    <b>{numeral(c, key) || c}</b>
+                    {numeral(c, key) && <small>{c}</small>}
+                  </span>
+                ))}
+                <span className="loop-times">×{p.times}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        <InstrumentSwitch value={instrument} onChange={setInstrument} />
+      </div>
+    </div>
+  )
+}
+
+// The whole song in bars, four to a row, as on Chordify: a chord's name where it starts (and, dimmed,
+// at the start of each bar it carries on into), a row's section letter when it comes round again,
+// and a key to the sections above. The beat sounding is lit and followed down the page. A click on
+// a bar jumps there; Shift-click another to loop the bars between, for practising a part.
+function ChordSheet({ sheet, keyName, playing, bind, away, setAway }: {
+  sheet: Sheet
+  keyName: string
+  playing: boolean
+  bind: BindChord
+  away: boolean
+  setAway: (a: boolean) => void
+}) {
+  const box = useRef<HTMLDivElement>(null)
+  // The bars looped (from the start of one to the end of another), and the last bar clicked.
+  const [loop, setLoop] = useState<{ from: number; to: number } | null>(null)
+  const anchor = useRef<number | null>(null)
+  const bars = useMemo(() => sheet.rows.flatMap((r) => r.bars), [sheet])
+  // Lit by hand rather than by re-rendering the whole sheet ten times a second.
+  useEffect(() => {
+    let lit = -1
+    let row: Element | null = null
+    const tick = () => {
+      const bi = beatAt(sheet.beats, liveClock(playing) + 0.05)
+      if (loop && playing) {
+        const t = liveClock(playing), end = bars[loop.to].end
+        if (t >= end - 0.05 && t < end + 2) seekTo(bars[loop.from].time, true)
+      }
+      if (bi === lit) return
+      box.current?.querySelector('.sheet-beat.on')?.classList.remove('on')
+      const cell = box.current?.querySelector(`[data-beat="${bi}"]`)
+      cell?.classList.add('on')
+      lit = bi
+      const r = cell?.closest('.sheet-row') ?? null
+      if (r && r !== row && !away) r.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      row = r
+    }
+    tick()
+    const id = setInterval(tick, playing ? 50 : 500)
+    return () => clearInterval(id)
+  }, [sheet, bars, playing, away, loop])
+  const pick = (e: React.MouseEvent, b: number) => {
+    if (e.shiftKey && anchor.current !== null) {
+      const [from, to] = [Math.min(anchor.current, b), Math.max(anchor.current, b)]
+      setLoop({ from, to })
+      seekTo(bars[from].time, playing)
+    } else {
+      anchor.current = b
+      setLoop(null)
+      seekTo(bars[b].time, playing)
+    }
+    setAway(false)
+  }
+  let n = -1
+  return (
+    <div ref={box} className="chord-sheet">
+      {sheet.sections.length > 0 && (
+        <div className="sheet-sections" aria-label="Sections">
+          {sheet.sections.map((s) => (
+            <div key={s.label} className="sheet-section">
+              <b className="sheet-badge">{s.label}</b>
+              {s.chords.map((c, j) => (
+                <span key={j} className="sheet-section-chord" {...bind(c)}>
+                  {c}
+                  {keyName && <small>{numeral(c, keyName)}</small>}
                 </span>
               ))}
-              <span className="loop-times">×{p.times}</span>
+              <span className="loop-times">×{s.times}</span>
             </div>
           ))}
         </div>
-        <InstrumentSwitch value={instrument} onChange={setInstrument} />
-      </div>
+      )}
+      {loop && (
+        <div className="sheet-loop">
+          Looping bars {loop.from + 1}–{loop.to + 1}
+          <button className="link-btn" onClick={() => setLoop(null)}>
+            Stop looping
+          </button>
+        </div>
+      )}
+      {sheet.rows.map((r, ri) => (
+        <div key={ri} className="sheet-row">
+          <span className={`sheet-badge ${r.label ? '' : 'none'}`}>{r.label}</span>
+          <div className="sheet-bars" style={{ '--meter': sheet.meter } as React.CSSProperties}>
+            {r.bars.map((b) => {
+              const bi = ++n
+              const looped = loop && bi >= loop.from && bi <= loop.to
+              return (
+                <div key={bi} className={`sheet-bar ${looped ? 'looped' : ''}`} onClick={(e) => pick(e, bi)} title={`Bar ${bi + 1}`}>
+                  {b.beats.map((x, k) => {
+                    const carry = k === 0 && !x.change && !!x.chord
+                    return (
+                      <span key={x.i} data-beat={x.i} className={`sheet-beat ${carry ? 'carry' : ''}`}>
+                        {(x.change || carry) && <b {...bind(x.chord)}>{x.chord}</b>}
+                      </span>
+                    )
+                  })}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      ))}
+      {away && (
+        <button className="lyrics-sync" onClick={() => setAway(false)}>
+          Sync
+        </button>
+      )}
     </div>
   )
 }

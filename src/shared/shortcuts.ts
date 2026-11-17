@@ -5,7 +5,7 @@ export type Action =
   | 'toggle' | 'next' | 'prev' | 'seekFwd' | 'seekBack' | 'seekFwdSmall' | 'seekBackSmall'
   | 'shuffle' | 'repeat' | 'volUp' | 'volDown' | 'mute' | 'like' | 'dislike'
   | 'search' | 'home' | 'explore' | 'library' | 'settings' | 'back' | 'forward' | 'liked'
-  | 'queue' | 'lyrics' | 'toggleLeft' | 'toggleRight' | 'fullscreen' | 'help'
+  | 'queue' | 'lyrics' | 'toggleLeft' | 'toggleRight' | 'fullscreen' | 'help' | 'playTop'
 
 export interface ShortcutDef {
   action: Action
@@ -31,6 +31,7 @@ export const SHORTCUTS: ShortcutDef[] = [
   { section: 'Playback', action: 'like', label: 'Like', spotify: ['Alt+Shift+B'], ytm: ['+'] },
   { section: 'Playback', action: 'dislike', label: 'Dislike', spotify: [], ytm: ['_'] },
   { section: 'Navigation', action: 'search', label: 'Search', spotify: ['Cmd+L', 'Cmd+K'], ytm: ['/'] },
+  { section: 'Navigation', action: 'playTop', label: 'Play the top search result', spotify: ['Cmd+Enter'], ytm: ['Cmd+Enter'] },
   { section: 'Navigation', action: 'home', label: 'Home', spotify: ['Alt+Shift+H'], ytm: ['G H'] },
   { section: 'Navigation', action: 'explore', label: 'Explore', spotify: [], ytm: ['G E'] },
   { section: 'Navigation', action: 'library', label: 'Your Library', spotify: [], ytm: ['G L'] },

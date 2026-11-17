@@ -104,6 +104,7 @@ const PAGE_JS = `(() => {
     volume: (v) => ((a.muted = false), (a.volume = Math.max(0, Math.min(1, v / 100)))),
     mute: () => (a.muted = !a.muted),
     repeat: () => (s.repeat = { NONE: 'ALL', ALL: 'ONE', ONE: 'NONE' }[s.repeat]),
+    setRepeat: (m) => (s.repeat = m),
     setShuffle,
     jump: (i) => ((s.pos = i), start()),
     remove(i) {
@@ -181,14 +182,20 @@ const item = (d: Download): QueueItem & { album?: string } => ({
 
 export async function playLocal(songs: Download[], index: number, volume?: number): Promise<void> {
   active = true
+  clearTimeout(idle)
   await open()
   await run(`load(${JSON.stringify(songs.map(item))}, ${index}, ${volume ?? 'undefined'})`)
 }
 
-// Back to YouTube Music: the downloaded song stops.
+// Back to YouTube Music: the downloaded song stops, and its page (a renderer process of its own)
+// goes after a while unless downloaded songs play again.
+const IDLE_MS = 5 * 60 * 1000
+let idle: ReturnType<typeof setTimeout> | undefined
 export function leaveLocal(): void {
   active = false
   run('pause()')
+  clearTimeout(idle)
+  idle = setTimeout(() => !active && win?.destroy(), IDLE_MS)
 }
 
 export async function localCommand(c: PlayerCommand, songs: (ids: string[]) => Promise<Download[]>): Promise<void> {
@@ -204,6 +211,8 @@ export async function localCommand(c: PlayerCommand, songs: (ids: string[]) => P
       return void (await run('next()'))
     case 'seek':
       return void (await run(`seek(${Number(c.seconds)})`))
+    case 'repeatMode':
+      return void (await run(`setRepeat(${JSON.stringify(c.mode)})`))
     case 'volume':
       return void (await run(`volume(${Number(c.value)})`))
     // Smart Shuffle's recommendations come from YouTube Music; offline, shuffle is all there is.

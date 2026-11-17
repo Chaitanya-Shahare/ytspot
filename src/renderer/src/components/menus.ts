@@ -212,8 +212,11 @@ export async function cardMenu(c: Card, ctx: AppCtx, lib?: InLibrary): Promise<v
 // Spotify-style "…" / right-click menu for a song, shared by track rows, the queue and Now Playing.
 export async function songMenu(song: MenuSong, ctx: AppCtx, where: Where = {}): Promise<void> {
   const { go, toast } = ctx
-  // Only your own playlists take songs; the list comes from YTM's "Save to playlist".
-  const playlists = await savablePlaylists(song.videoId).catch(() => [])
+  // Only your own playlists take songs; the list comes from YTM's "Save to playlist". The menu opens
+  // without waiting long for it (offline, or a slow first fetch): it's fetched once and kept.
+  const playlists = navigator.onLine
+    ? await Promise.race([savablePlaylists(song.videoId).catch(() => []), new Promise<null>((r) => setTimeout(() => r(null), 400))])
+    : []
   const ownPlaylist = where.playlistId && !/^(VL)?LM$/.test(where.playlistId) ? where.playlistId : undefined
   const items: PopupItem[] = [
     {
@@ -221,8 +224,9 @@ export async function songMenu(song: MenuSong, ctx: AppCtx, where: Where = {}): 
       label: 'Add to playlist',
       submenu: [
         { id: 'new', label: 'New playlist' },
-        ...(playlists.length ? [{ id: '-', label: '-' }] : []),
-        ...playlists.map((p) => ({ id: `pl:${p.id}`, label: p.title }))
+        ...(playlists === null ? [{ id: '-', label: '-' }, { id: 'loading', label: 'Loading your playlists…', enabled: false }] : []),
+        ...(playlists?.length ? [{ id: '-', label: '-' }] : []),
+        ...(playlists ?? []).map((p) => ({ id: `pl:${p.id}`, label: p.title }))
       ]
     },
     ...(ownPlaylist ? [{ id: 'remove-pl', label: 'Remove from this playlist' }] : []),
@@ -251,7 +255,7 @@ export async function songMenu(song: MenuSong, ctx: AppCtx, where: Where = {}): 
   const url = `https://music.youtube.com/watch?v=${song.videoId}`
   const done = (msg: string) => () => toast(msg)
   if (pick.startsWith('pl:')) {
-    const pl = playlists.find((p) => p.id === pick.slice(3))
+    const pl = playlists?.find((p) => p.id === pick.slice(3))
     if (pl) addSong(ctx, pl, song.videoId)
   }
   if (pick === 'new') newPlaylistWith(ctx, song)

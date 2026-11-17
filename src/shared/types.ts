@@ -84,6 +84,11 @@ export interface Chords {
   chords: { time: number; end: number; name: string }[]
   heard: number // how much of the song has been heard (or worked out), 0..1
   tempo?: number // beats per minute, once the whole song has been worked out
+  // Once worked out whole: when each beat falls (seconds), which beats start a bar (indexes into
+  // \`beats\`), and the beats to a bar (3 or 4). Chords change only on beats.
+  beats?: number[]
+  downbeats?: number[]
+  meter?: number
   tuning?: number // cents the recording is off A440 (its chords are named for the nearest semitone)
   working?: boolean // the whole song is being worked out right now
 }
@@ -110,6 +115,8 @@ export interface QueueItem {
 
 // Play in order, shuffle, or Smart Shuffle (shuffle plus recommendations), as in Spotify.
 export type ShuffleMode = 'off' | 'on' | 'smart'
+// Repeat off, the whole queue, or the playing song.
+export type RepeatMode = 'NONE' | 'ALL' | 'ONE'
 
 export interface PlayerState {
   videoId: string
@@ -124,7 +131,7 @@ export interface PlayerState {
   playing: boolean
   volume: number
   muted: boolean
-  repeat: 'NONE' | 'ALL' | 'ONE'
+  repeat: RepeatMode
   shuffle: ShuffleMode
   liked: boolean
   // The current item is a video (music video / upload); `videoMode` is the user's preference.
@@ -185,6 +192,7 @@ export type PlayerCommand =
   | { type: 'queueMove' | 'autoplayMove'; from: number; to: number }
   | { type: 'videoMode'; on: boolean }
   | { type: 'shuffleMode'; mode: ShuffleMode }
+  | { type: 'repeatMode'; mode: RepeatMode }
 
 // A YouTube Music setting mirrored from its own settings dialog.
 export interface YtmSetting {

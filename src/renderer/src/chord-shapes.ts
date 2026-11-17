@@ -133,6 +133,124 @@ export function progressions(chords: { name: string }[]): { loop: string[]; time
   return out
 }
 
+// ---- The chord sheet: the whole song in bars, as Chordify lays it out ----
+
+export interface SheetBeat {
+  i: number // index into the song's beats
+  time: number
+  chord: string // sounding on this beat ('' for none)
+  change: boolean // a new chord starts here
+  pos: number // its place in its bar, from 0
+  len: number // the beats in its bar
+}
+export interface SheetBar {
+  time: number
+  end: number
+  beats: SheetBeat[]
+}
+export interface SheetRow {
+  time: number
+  bars: SheetBar[]
+  label: string // the section it plays: rows with (nearly) the same chords share a letter; '' if it's the only one
+}
+export interface Section {
+  label: string
+  chords: string[] // its chords in order, as a player reads them
+  times: number // rows it covers
+}
+export interface Sheet {
+  rows: SheetRow[]
+  sections: Section[]
+  beats: SheetBeat[] // every beat, in order
+  meter: number
+}
+
+export const BARS_PER_ROW = 4
+// Rows count as the same section when this share of their beats have the same chord.
+const SAME_SECTION = 0.85
+
+// The song's bars (from its beats and bar lines), four to a row, and the sections they make up.
+// Null for chords heard live, which come without beats.
+export function chordSheet(song: { chords: { time: number; end: number; name: string }[]; beats?: number[]; downbeats?: number[]; meter?: number }, end: number): Sheet | null {
+  const { beats: times, downbeats, chords } = song
+  if (!times?.length || !downbeats?.length || !chords.length) return null
+  // Each beat's chord (chords start on beats, so the one sounding just after it).
+  let c = 0
+  const beats: SheetBeat[] = times.map((time, i) => {
+    while (c < chords.length && chords[c].end <= time + 0.01) c++
+    const chord = c < chords.length && chords[c].time <= time + 0.01 ? chords[c].name : ''
+    return { i, time, chord, change: false, pos: 0, len: 0 }
+  })
+  beats.forEach((b, i) => (b.change = !!b.chord && b.chord !== beats[i - 1]?.chord))
+  // Bars run from one bar line to the next; beats before the first make a short one (a pickup).
+  const starts = downbeats[0] > 0 ? [0, ...downbeats] : downbeats
+  const bars: SheetBar[] = starts.map((s, k) => {
+    const b = beats.slice(s, starts[k + 1] ?? beats.length)
+    b.forEach((x, j) => ((x.pos = j), (x.len = b.length)))
+    return { time: b[0].time, end: starts[k + 1] !== undefined ? beats[starts[k + 1]].time : end, beats: b }
+  })
+  // Silent bars at the very start and end (before the music, after it) are left out.
+  const sounds = (b: SheetBar) => b.beats.some((x) => x.chord)
+  let from = 0, to = bars.length
+  while (from < to && !sounds(bars[from])) from++
+  while (to > from && !sounds(bars[to - 1])) to--
+  const used = bars.slice(from, to)
+  if (!used.length) return null
+  // A pickup bar shorter than the rest sits in a row of its own, so the rows that follow start on
+  // bar lines.
+  const rowsOf: SheetBar[][] = []
+  let k = 0
+  if (used[0].beats.length < (song.meter ?? 4) && used.length > 1) rowsOf.push([used[k++]])
+  for (; k < used.length; k += BARS_PER_ROW) rowsOf.push(used.slice(k, k + BARS_PER_ROW))
+  // Sections: each row is compared beat by beat with the rows before it.
+  const sig = (r: SheetBar[]) => r.flatMap((b) => b.beats.map((x) => x.chord))
+  const like = (a: string[], b: string[]) => {
+    if (a.length !== b.length || !a.length) return 0
+    let same = 0
+    for (let i = 0; i < a.length; i++) if (a[i] === b[i]) same++
+    return same / a.length
+  }
+  const groups: { sig: string[]; rows: number[] }[] = []
+  for (const [i, r] of rowsOf.entries()) {
+    const s = sig(r)
+    let best: (typeof groups)[number] | null = null, score = SAME_SECTION
+    for (const g of groups) {
+      const v = like(s, g.sig)
+      if (v >= score) (score = v), (best = g)
+    }
+    if (best) best.rows.push(i)
+    else groups.push({ sig: s, rows: [i] })
+  }
+  const labels = new Array<string>(rowsOf.length).fill('')
+  const sections: Section[] = []
+  for (const g of groups) {
+    if (g.rows.length < 2) continue
+    const label = String.fromCharCode(65 + sections.length)
+    if (sections.length >= 26) break
+    for (const i of g.rows) labels[i] = label
+    const seq: string[] = []
+    for (const ch of g.sig) if (ch && ch !== seq[seq.length - 1]) seq.push(ch)
+    sections.push({ label, chords: seq, times: g.rows.length })
+  }
+  return {
+    rows: rowsOf.map((bars, i) => ({ time: bars[0].time, bars, label: labels[i] })),
+    sections,
+    beats,
+    meter: song.meter ?? 4
+  }
+}
+
+// The beat sounding at time t (its index into sheet.beats), or -1 before the first.
+export function beatAt(beats: { time: number }[], t: number): number {
+  let lo = 0, hi = beats.length - 1, at = -1
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    if (beats[mid].time <= t) (at = mid), (lo = mid + 1)
+    else hi = mid - 1
+  }
+  return at
+}
+
 // ---- Fretted shapes: guitar and ukulele ----
 
 // A fretting: per string (lowest-sounding first as drawn, left to right) the fret (0 open, null

@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ShortcutPrefs } from '../../shared/shortcuts'
 import { DEFAULT_PREFS } from '../../shared/shortcuts'
-import type { Card, DownloadQuality, DownloadsState, MenuBarIcon, MenuBarMode, More, PlayerState, Track, UpdateState } from '../../shared/types'
+import type { Card, DownloadQuality, DownloadsState, MenuBarIcon, MenuBarMode, More, PlayerState, RepeatMode, Track, UpdateState } from '../../shared/types'
 import type { Instrument } from './chord-shapes'
 
 export type Route =
@@ -43,6 +43,8 @@ export interface AppCtx {
   prefs: Prefs
   setPrefs: (p: Partial<Prefs>) => void
   openQueue: () => void
+  // Off → all → one → off, like Spotify's button (with a toast saying which); `mode` picks one directly.
+  repeat: (mode?: RepeatMode) => void
   // Signed in to YouTube Music: likes and playlists need it.
   authed: boolean
 }
@@ -71,9 +73,10 @@ export interface Prefs {
   chords: boolean // experimental: offer the chords button in the player bar
   showChords: boolean // that button: work out the song's chords from its audio and show them with the lyrics
   chordInstrument: Instrument // the instrument chord shapes are shown for
+  chordView: 'sheet' | 'lyrics' // the whole song in bars (to play along), or chords over the lyrics
 }
 
-const PREF_DEFAULTS: Prefs = { shortcuts: DEFAULT_PREFS, keepPlaying: true, openAtLogin: false, videoMode: false, keyboardNav: false, menuBar: 'both', menuBarIcon: 'note', autoUpdate: false, downloadQuality: 'high', chords: false, showChords: false, chordInstrument: 'guitar' }
+const PREF_DEFAULTS: Prefs = { shortcuts: DEFAULT_PREFS, keepPlaying: true, openAtLogin: false, videoMode: false, keyboardNav: false, menuBar: 'both', menuBarIcon: 'note', autoUpdate: false, downloadQuality: 'high', chords: false, showChords: false, chordInstrument: 'guitar', chordView: 'sheet' }
 export const loadPrefs = (): Prefs => ({ ...PREF_DEFAULTS, ...JSON.parse(localStorage.getItem('prefs') ?? '{}') })
 export const savePrefs = (p: Prefs) => localStorage.setItem('prefs', JSON.stringify(p))
 
@@ -169,8 +172,16 @@ export const liveClock = (playing: boolean) => (playing ? clock + Math.min(2, (p
 const subscribeClock = (f: () => void) => (clockSubs.add(f), () => void clockSubs.delete(f))
 export const useTime = () => useSyncExternalStore(subscribeClock, getClock)
 
-// Ask YouTube's image CDN for roughly the size we display (2x for retina) instead of 544px everywhere.
-export const sized = (url: string, px: number) => url.replace(/=w\d+-h\d+/, `=w${px * 2}-h${px * 2}`)
+// Ask YouTube's image CDN for roughly the size we display (2x for retina) instead of 544px or more
+// everywhere: Google's image URLs take a size as "=w544-h544" or "=s576"; a video's frame comes
+// in fixed sizes, of which mqdefault (320×180) is plenty for a small tile and a fraction of hq720's
+// weight. Big slow images were what left covers blank for seconds.
+export const sized = (url: string, px: number): string => {
+  const n = px * 2
+  if (/^https:\/\/i\.ytimg\.com\/vi\/[\w-]+\/(hq720|maxresdefault|sddefault|hqdefault)\.jpg/.test(url) && n <= 320)
+    return url.replace(/\/(hq720|maxresdefault|sddefault|hqdefault)\.jpg.*$/, '/mqdefault.jpg')
+  return url.replace(/=w\d+-h\d+/, `=w${n}-h${n}`).replace(/=s\d+(?=-|$)/, `=s${n}`)
+}
 
 // A "Show all" target: playlists open as playlists, anything else as a grid of cards.
 export function moreRoute(m: More, title: string): Route {
@@ -199,6 +210,17 @@ export function fmt(sec: number): string {
 // library) refresh quietly in the background; collections are kept for the session. Keys marked
 // `persist` are also saved to disk so the app opens with the last home feed/library already drawn.
 const cache = new Map<string, unknown>()
+// Only the most recently stored pages are kept: every search typed on the way to a query is a page
+// too, and the window can stay open for days. (Map order is insertion order, so oldest first.)
+const CACHE_MAX = 150
+function remember(key: string, data: unknown): void {
+  cache.delete(key)
+  cache.set(key, data)
+  for (const k of cache.keys()) {
+    if (cache.size <= CACHE_MAX) break
+    cache.delete(k)
+  }
+}
 localStorage.removeItem('cache:home') // pre-0.2 home feed, saved without its mood chips
 // Bumped when a key is invalidated, so a request (or a playlist page) that was already on its way
 // can't put the stale copy back.
@@ -256,6 +278,15 @@ export function savablePlaylists(videoId: string): Promise<Card[]> {
   return ownPlaylists
 }
 
+// The same data useCached would show for `key`, for acting on it outside a page (⌘↩ plays the top
+// search result): from the cache when it's there, otherwise fetched and cached.
+export async function fetchCached<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  if (cache.has(key)) return cache.get(key) as T
+  const g = gen(key), data = await fn()
+  if (gen(key) === g) remember(key, data)
+  return data
+}
+
 function read<T>(key: string, persist: boolean): T | undefined {
   if (cache.has(key) || !persist) return cache.get(key) as T | undefined
   const saved = localStorage.getItem(`cache:${key}`)
@@ -273,7 +304,7 @@ export function useCached<T>(
   const [attempt, setAttempt] = useState(0)
   const [loadedGen, setLoadedGen] = useState(() => gen(key))
   const store = (data: T) => {
-    cache.set(key, data)
+    remember(key, data)
     if (persist) localStorage.setItem(`cache:${key}`, JSON.stringify(data))
   }
   const set = (data: T) => {

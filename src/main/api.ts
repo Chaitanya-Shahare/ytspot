@@ -42,28 +42,37 @@ Parser.setParserErrorHandler((e) => {
 const TRIES = 3
 const TIMEOUT_MS = 15000
 const retryable = (status: number) => status >= 500 || status === 429
+// Requests that change something (create or delete a playlist, add or remove songs, like, follow)
+// are only sent again when they never reached YouTube: one that timed out or got a server error may
+// well have been carried out, and repeating it would make a second playlist or add songs twice.
+const WRITES = /\/(playlist\/(create|delete)|browse\/edit_playlist|like\/|subscription\/|feedback)/
+const urlOf = (input: Parameters<typeof fetch>[0]) => (typeof input === 'string' ? input : input instanceof URL ? input.href : input.url)
 export async function connect(cookie?: string, fresh?: () => Promise<string>): Promise<void> {
   const send: typeof fetch = async (input, init) => {
     const headers = init?.headers
     if (fresh && headers instanceof Headers && headers.has('Cookie')) headers.set('Cookie', (await fresh()) || headers.get('Cookie')!)
+    const write = WRITES.test(urlOf(input))
     for (let n = 1; ; n++) {
       const signal = AbortSignal.any([AbortSignal.timeout(TIMEOUT_MS), ...(init?.signal ? [init.signal] : [])])
       try {
         const res = await fetch(input, { ...init, signal })
-        if (n < TRIES && retryable(res.status)) {
+        if (n < TRIES && !write && retryable(res.status)) {
           await res.body?.cancel()
           await new Promise((r) => setTimeout(r, 400 * n))
           continue
         }
         return res
       } catch (e) {
-        if (init?.signal?.aborted) throw e
+        if (init?.signal?.aborted || (write && signal.aborted)) throw e
         if (n >= TRIES) throw new Error('Couldn’t reach YouTube Music. Check your internet connection.', { cause: e })
         await new Promise((r) => setTimeout(r, 400 * n))
       }
     }
   }
   yt = await Innertube.create({ cookie, retrieve_player: false, fetch: send })
+  // Pages kept from the last session belong to it (another account, after signing in or out).
+  suggestionPages.clear()
+  pending.clear()
   homeFeed = null
 }
 
@@ -345,9 +354,17 @@ export async function deletePlaylist(playlistId: string): Promise<void> {
 
 // YTM's "Suggestions" under a playlist you own. Each call returns the next batch (its Refresh).
 const suggestionPages = new Map<string, Playlist>()
+// Playlists opened earlier are kept in case they're opened again, but only the last few: each holds
+// YouTube's whole parsed response, and the app can stay open for days.
+const KEEP_PAGES = 10
+function keep<V>(map: Map<string, V>, key: string, value: V): void {
+  map.delete(key)
+  map.set(key, value)
+  for (const k of map.keys()) if (map.size > KEEP_PAGES) map.delete(k)
+}
 export async function playlistSuggestions(id: string, refresh = false): Promise<Track[]> {
   let pl = suggestionPages.get(id)
-  if (!pl || !refresh) suggestionPages.set(id, (pl = await api().music.getPlaylist(id)))
+  if (!pl || !refresh) keep(suggestionPages, id, (pl = await api().music.getPlaylist(id)))
   return tracks((await pl.getSuggestions(true)) as any[])
 }
 
@@ -399,7 +416,7 @@ export async function playlist(id: string, peek = false): Promise<Collection> {
   const pl = await api().music.getPlaylist(id)
   const first = tracks(pl.items as any[])
   if (!pl.header && !first.length) throw new Error('Couldn’t find that playlist. It may have been deleted or made private.')
-  if (!peek) pending.set(id, { pl, tracks: [...first] })
+  if (!peek) keep(pending, id, { pl, tracks: [...first] })
   // Only playlists you own come with YTM's edit header (title, description, privacy).
   const edit = (pl.page.contents_memo?.get('MusicEditablePlaylistDetailHeader')?.[0] as any)?.edit_header
   const h: any = pl.header

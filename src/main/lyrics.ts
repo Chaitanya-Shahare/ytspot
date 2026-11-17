@@ -23,7 +23,11 @@ const HEADERS = { 'User-Agent': 'ytspot (https://github.com/Chaitanya-Shahare/yt
 
 async function lrclib(path: string, params: Record<string, string>): Promise<unknown> {
   const res = await fetch(`${LRCLIB}/${path}?${new URLSearchParams(params)}`, { headers: HEADERS, signal: AbortSignal.timeout(8000) })
-  return res.ok ? res.json() : null
+  // Not found is "no lyrics"; anything else (rate limited, LRCLIB down) is a failure the lyrics page
+  // offers to try again, not a song without lyrics.
+  if (res.status === 404) return null
+  if (!res.ok) throw new Error(`LRCLIB answered ${res.status}`)
+  return res.json()
 }
 
 // Music videos and uploads carry decorations LRCLIB's exact match won't find.
