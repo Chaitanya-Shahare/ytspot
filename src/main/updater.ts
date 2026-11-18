@@ -42,6 +42,8 @@ let auto = false // Settings → App → Install updates automatically
 export const updateState = () => state
 
 function set(s: UpdateStatus): void {
+  // Each step once (not every percent of a download), with the version or error it's about.
+  if (s.status !== state.status) console.info(['[update]', s.status, 'version' in s && s.version, 'message' in s && s.message].filter(Boolean).join(' '))
   state = { current: app.getVersion(), ...s }
   deps.page()?.send('update', state)
 }

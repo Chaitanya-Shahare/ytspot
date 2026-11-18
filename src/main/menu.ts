@@ -1,5 +1,6 @@
-import { app, BrowserWindow, Menu, webContents, type BaseWindow, type MenuItemConstructorOptions, type WebContents } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, Menu, shell, webContents, type BaseWindow, type MenuItemConstructorOptions, type WebContents } from 'electron'
 import { accel, SHORTCUTS, type Action } from '../shared/shortcuts'
+import { logFile, problemReport } from './log'
 import { checkForUpdates } from './updater'
 
 // Spotify-style menu bar. Accelerators are display-only and mirror the user's current bindings:
@@ -76,7 +77,28 @@ export function buildMenu(
         ]
       },
       { role: 'windowMenu' },
-      { role: 'help', submenu: [item('help')] }
+      // The log (log.ts), for attaching to a bug report.
+      {
+        role: 'help',
+        submenu: [
+          item('help'), sep,
+          { label: 'Report a Problem…', click: (_i, win) => reportProblem(win) },
+          { label: 'Reveal Logs in Finder', click: () => shell.showItemInFolder(logFile) }
+        ]
+      }
     ])
   )
+}
+
+// Marks the moment in the log and puts the last two hours of it on the clipboard, for a bug report.
+async function reportProblem(win?: BaseWindow): Promise<void> {
+  clipboard.writeText(problemReport())
+  const o: Electron.MessageBoxOptions = {
+    type: 'info',
+    message: 'The log is on your clipboard',
+    detail: 'The last two hours of ytspot’s log, with this moment marked, are ready to paste into your bug report.',
+    buttons: ['OK', 'Show Log File']
+  }
+  const { response } = await (win ? dialog.showMessageBox(win, o) : dialog.showMessageBox(o))
+  if (response === 1) shell.showItemInFolder(logFile)
 }

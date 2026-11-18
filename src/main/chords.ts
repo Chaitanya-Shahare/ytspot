@@ -67,7 +67,8 @@ function prune(): void {
     const aged = files.map((f) => ({ f, t: statSync(join(dir(), f)).mtimeMs })).sort((a, b) => b.t - a.t)
     for (const { f } of aged.slice(KEEP)) unlinkSync(join(dir(), f))
   } catch (e) {
-    console.error('[chords] prune', e)
+    // No folder yet (no song saved so far) is nothing to prune.
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') console.error('[chords] prune', e)
   }
 }
 
