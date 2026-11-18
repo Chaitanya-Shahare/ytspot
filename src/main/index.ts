@@ -1,3 +1,5 @@
+// First, so the log captures everything from here on (see log.ts).
+import { log, startLogging } from './log'
 import { app, BaseWindow, BrowserWindow, clipboard, ipcMain, Menu, protocol, shell, WebContentsView, type WebContents } from 'electron'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -67,6 +69,7 @@ async function syncAuth(): Promise<void> {
     // Offline: the window still opens, and data calls try to connect again (see `data` below).
     console.error('[auth]', (e as Error).message)
   }
+  if (now !== loggedIn) log('info', `[auth] ${now ? 'signed in' : 'signed out'}`)
   // Only after a real sign-in (not on startup) does the player page need reloading.
   if (now && loggedIn === false) onLoggedIn()
   loggedIn = now
@@ -168,6 +171,7 @@ async function pushState(): Promise<void> {
   const shown = !!main && (main.isVisible() || headless)
   if (!shown && !trayOn()) return
   const s = await currentState()
+  noteState(s)
   nowPlaying = s?.videoId ?? ''
   upNext = s ? nextOf(s) : ''
   updateTray(s)
@@ -187,12 +191,33 @@ async function pushState(): Promise<void> {
   }
 }
 
+// The log's playback timeline: each new song, and playing/paused/stuck, as the UI saw them.
+// (Not before the page has answered once: it's still loading at launch.)
+let noted = { id: '', playing: false, missing: false, seen: false }
+function noteState(s: PlayerState | null): void {
+  if (!s) {
+    if (noted.seen && !noted.missing) log('warn', '[player] no player state (page reloading or not answering)')
+    noted.missing = true
+    return
+  }
+  if (noted.missing && noted.seen) log('info', '[player] player state back')
+  noted.missing = false
+  noted.seen = true
+  if (s.pending || !s.videoId) return
+  const src = localActive() ? 'downloaded' : 'ytm'
+  if (s.videoId !== noted.id) log('info', `[player] ${src} ${s.videoId} "${s.title}" by ${s.artist} (${s.playing ? 'playing' : 'paused'})`)
+  else if (s.playing !== noted.playing) log('info', `[player] ${s.playing ? 'playing' : 'paused'} at ${Math.round(s.time)}s`)
+  noted = { ...noted, id: s.videoId, playing: s.playing }
+}
+
 // Whichever is playing: YouTube Music, or downloaded songs from disk (local.ts).
 const currentState = () => (localActive() ? localState() : getState())
 
 const songsOf = async (ids: string[]) => (await Promise.all(ids.map(downloaded))).filter((d): d is Download => !!d)
 
 async function playerCommand(c: PlayerCommand): Promise<void> {
+  // Volume drags send dozens; the rest are what the user asked for, to set against what happened.
+  if (c.type !== 'volume') log('debug', '[cmd]', JSON.stringify(c))
   if (c.type === 'playLocal') {
     const songs = await songsOf(c.videoIds)
     const at = Math.max(0, songs.findIndex((d) => d.videoId === c.videoIds[c.index]))
@@ -296,6 +321,7 @@ app.on('before-quit', () => {
 app.on('activate', () => showMain())
 
 app.whenReady().then(() => {
+  startLogging()
   if (headless) app.dock?.hide()
   const ses = ytmSession()
   // Open the window right away; data handlers wait for the YouTube session instead.
@@ -369,7 +395,7 @@ app.whenReady().then(() => {
   ipcMain.handle('ui:popup', popup)
   ipcMain.handle('ui:open', (_, url: string) => shell.openExternal(url))
   ipcMain.handle('ui:copy', (_, text: string) => clipboard.writeText(text))
-  ipcMain.handle('ui:log', (_, msg: string) => console.error('[ui]', msg))
+  ipcMain.handle('ui:log', (_, msg: string, level: 'info' | 'warn' | 'error' = 'error') => log(level, '[ui]', msg))
   ipcMain.handle('ui:videoRect', (_, r: VideoRect | null) => placeVideo(main, ui, r))
   // A test run stays in its window: native full screen would take over the user's screen.
   // Returns whether the window was already in full screen, so a caller only undoes its own change.

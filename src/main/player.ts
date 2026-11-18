@@ -67,7 +67,11 @@ export function createPlayerWindow(): BaseWindow {
   // The page crashed, or couldn't load (offline at launch, a network change): load it again, waiting
   // longer each time, so playback recovers by itself instead of every control silently doing nothing.
   let retries = 0
-  const recover = () => setTimeout(() => !p.isDestroyed() && p.loadURL(YTM).catch(() => undefined), Math.min(30_000, 1000 * 2 ** retries++))
+  const recover = () => {
+    const wait = Math.min(30_000, 1000 * 2 ** retries++)
+    console.warn(`[player] reloading YouTube Music in ${wait / 1000}s (attempt ${retries})`)
+    setTimeout(() => !p.isDestroyed() && p.loadURL(YTM).catch(() => undefined), wait)
+  }
   p.on('render-process-gone', (_e, d) => d.reason !== 'clean-exit' && recover())
   // (-3: a load cut short by another, which is fine.)
   p.on('did-fail-load', (_e, code, _desc, _url, mainFrame) => mainFrame && code !== -3 && recover())
