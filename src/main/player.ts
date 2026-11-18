@@ -51,10 +51,18 @@ export function createPlayerWindow(): BaseWindow {
   // Nobody sees this page, so don't download or decode its artwork (our UI loads its own), and
   // don't run YTM's offline service worker, which costs a whole extra process. Ad requests never go
   // out. (A session takes one such listener, so this is the only one.)
+  // The one picture let through is the song's artwork in the page's media session: Chromium
+  // downloads it through this page to show in Control Center, so blocking it leaves a blank tile.
+  // (Asked of the frame, not the page: the page's executeJavaScript waits for loading to finish,
+  // and loading can be waiting on this very image.)
   const urls = ['*://*.ytimg.com/*', '*://*.ggpht.com/*', '*://*.googleusercontent.com/*', '*://*.gstatic.com/*', '*://music.youtube.com/sw.js*', ...AD_URLS]
-  ytmSession().webRequest.onBeforeRequest({ urls }, (d, cb) =>
-    cb({ cancel: isAdUrl(d.url) || d.url.includes('/sw.js') || (d.webContentsId === id && d.resourceType === 'image') })
-  )
+  const isArtwork = async (url: string) =>
+    !p.isDestroyed() && p.mainFrame.executeJavaScript(`!!navigator.mediaSession.metadata?.artwork?.some((a) => a.src === ${JSON.stringify(url)})`).then(Boolean, () => false)
+  ytmSession().webRequest.onBeforeRequest({ urls }, (d, cb) => {
+    if (isAdUrl(d.url) || d.url.includes('/sw.js')) return cb({ cancel: true })
+    if (d.webContentsId !== id || d.resourceType !== 'image') return cb({})
+    isArtwork(d.url).then((ok) => cb({ cancel: !ok }))
+  })
   ytmSession().clearStorageData({ storages: ['serviceworkers'] })
   // YTM's "Leave site?" beforeunload handler would otherwise silently block quitting and reloads.
   p.on('will-prevent-unload', (e) => e.preventDefault())
