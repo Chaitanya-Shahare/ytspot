@@ -5,7 +5,7 @@ export type Action =
   | 'toggle' | 'next' | 'prev' | 'seekFwd' | 'seekBack' | 'seekFwdSmall' | 'seekBackSmall'
   | 'shuffle' | 'repeat' | 'volUp' | 'volDown' | 'mute' | 'like' | 'dislike'
   | 'search' | 'home' | 'explore' | 'library' | 'settings' | 'back' | 'forward' | 'liked'
-  | 'queue' | 'lyrics' | 'toggleLeft' | 'toggleRight' | 'fullscreen' | 'help' | 'playTop'
+  | 'queue' | 'lyrics' | 'toggleLeft' | 'toggleRight' | 'fullscreen' | 'help' | 'playTop' | 'copyLink'
 
 export interface ShortcutDef {
   action: Action
@@ -30,6 +30,8 @@ export const SHORTCUTS: ShortcutDef[] = [
   { section: 'Playback', action: 'mute', label: 'Mute', spotify: [], ytm: ['M'] },
   { section: 'Playback', action: 'like', label: 'Like', spotify: ['Alt+Shift+B'], ytm: ['+'] },
   { section: 'Playback', action: 'dislike', label: 'Dislike', spotify: [], ytm: ['_'] },
+  // ⌘C copies the link only when there's no text to copy (see App.tsx), as in Spotify; ⇧⌘C always does.
+  { section: 'Playback', action: 'copyLink', label: 'Copy link to song', spotify: ['Cmd+C', 'Shift+Cmd+C'], ytm: ['Cmd+C', 'Shift+Cmd+C'] },
   { section: 'Navigation', action: 'search', label: 'Search', spotify: ['Cmd+L', 'Cmd+K'], ytm: ['/'] },
   { section: 'Navigation', action: 'playTop', label: 'Play the top search result', spotify: ['Cmd+Enter'], ytm: ['Cmd+Enter'] },
   { section: 'Navigation', action: 'home', label: 'Home', spotify: ['Alt+Shift+H'], ytm: ['G H'] },
@@ -95,8 +97,13 @@ export const comboLabel = (combo: string) =>
     .map((step) => step.split(/\+(?=.)/).map((k) => SYM[k] ?? k).join(' '))
     .join(' then ')
 
-// Electron accelerator for the menu bar (display only); sequences and bare keys aren't shown.
+// The Edit menu's keys. macOS gives a key to the first menu item that shows it, so another item
+// showing one of these would either never get it or take it from Copy, Paste and the rest.
+const EDIT_KEYS = new Set(['Cmd+Z', 'Shift+Cmd+Z', 'Cmd+X', 'Cmd+C', 'Cmd+V', 'Cmd+A'])
+
+// Electron accelerator for the menu bar (display only); sequences, bare keys and the Edit menu's
+// keys aren't shown.
 export function accel(combos: string[]): string | undefined {
-  const c = combos.find((x) => !x.includes(' ') && /^(Ctrl|Alt|Shift|Cmd)\+/.test(x)) ?? combos.find((x) => x === 'Space')
+  const c = combos.find((x) => !x.includes(' ') && !EDIT_KEYS.has(x) && /^(Ctrl|Alt|Shift|Cmd)\+/.test(x)) ?? combos.find((x) => x === 'Space')
   return c?.replace(/\+\+$/, '+Plus')
 }

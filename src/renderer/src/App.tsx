@@ -41,7 +41,7 @@ const COLLAPSE_AT = 200
 const TEXT_ENTRY = 'input:not([type=button], [type=checkbox], [type=radio], [type=range], [type=file]), textarea, select, [contenteditable=""], [contenteditable="true"]'
 const CONTROL = 'button, a[href], summary, [role=button], [role=switch], [role=slider], [role=menuitem], [role=tab], [role=option]'
 const REPEATABLE = new Set<Action>(['seekFwd', 'seekBack', 'seekFwdSmall', 'seekBackSmall', 'volUp', 'volDown', 'back', 'forward'])
-const OVERLAY_ACTIONS = new Set<Action>(['toggle', 'next', 'prev', 'seekFwd', 'seekBack', 'seekFwdSmall', 'seekBackSmall', 'shuffle', 'repeat', 'volUp', 'volDown', 'mute', 'like', 'dislike', 'fullscreen', 'lyrics', 'help'])
+const OVERLAY_ACTIONS = new Set<Action>(['toggle', 'next', 'prev', 'seekFwd', 'seekBack', 'seekFwdSmall', 'seekBackSmall', 'shuffle', 'repeat', 'volUp', 'volDown', 'mute', 'like', 'dislike', 'copyLink', 'fullscreen', 'lyrics', 'help'])
 
 export default function App() {
   const [authed, setAuthed] = useState<boolean | null>(null)
@@ -411,6 +411,9 @@ export default function App() {
         case 'toggleRight': return showPanel('np')
         case 'help': return setHelp((v) => !v)
         case 'playTop': return void playTop()
+        case 'copyLink':
+          if (!player?.videoId) return toast('Nothing is playing')
+          return void window.ytm.copy(`https://music.youtube.com/watch?v=${player.videoId}`).then(() => toast('Link copied to clipboard'))
       }
     },
     [player, go, back, forward, like, shuffle, repeat, openQueue, showPanel, toast, toggleLyrics, full, openFull, route.name, playTop]
@@ -446,6 +449,9 @@ export default function App() {
       const combo = comboOf(e)
       if (!combo) return
       if (typing && (!e.metaKey || /Left|Right|Up|Down/.test(combo))) return
+      // ⌘C is Copy first: while typing or with text selected it copies that, and only acts as a
+      // shortcut (Copy link to song, by default) when there is nothing else to copy.
+      if (combo === 'Cmd+C' && (typing || !!window.getSelection()?.toString())) return
       if (ownsKeys && (e.key === ' ' || e.key === 'Enter' || (/^Arrow/.test(e.key) && el?.closest('[role=slider]')))) return
       // A clicked button must not be pressed again by Space or Return (the browser's default).
       if (control && (e.key === ' ' || e.key === 'Enter')) e.preventDefault()
