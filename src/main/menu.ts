@@ -73,7 +73,7 @@ export function buildMenu(
           item('seekFwd'), item('seekBack'), sep,
           item('shuffle'), item('repeat'), sep,
           item('volUp', 'Volume Up'), item('volDown', 'Volume Down'), item('mute'), sep,
-          item('like', 'Like Song'), item('dislike', 'Dislike Song')
+          item('like', 'Like Song'), item('dislike', 'Dislike Song'), item('copyLink', 'Copy Song Link')
         ]
       },
       { role: 'windowMenu' },
