@@ -7,6 +7,7 @@
 // Imported first (see index.ts), so the console is captured before any other module runs.
 // Cookies and auth headers are blanked out; song ids and titles are kept.
 import { app, crashReporter, net, powerMonitor, webContents, type WebContents } from 'electron'
+import { execFile } from 'node:child_process'
 import { appendFileSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { inspect } from 'node:util'
@@ -139,16 +140,53 @@ export function pageName(wc: WebContents): string {
 }
 
 const mb = (kb: number) => Math.round(kb / 1024)
-export function health(): string {
+
+// Memory per process as Activity Monitor counts it (the "footprint"), in KB. Electron's own figure,
+// the working set, only counts what is in RAM right now: macOS compresses memory a page hasn't
+// touched lately, so a 650 MB leak in the YouTube Music page once showed up as 83 MB here.
+// Falls back to the working set if the system tool can't be run.
+const FOOTPRINT_UNITS: Record<string, number> = { B: 1 / 1024, KB: 1, MB: 1024, GB: 1024 * 1024 }
+function footprints(pids: number[]): Promise<Map<number, number>> {
+  return new Promise((done) => {
+    execFile('/usr/bin/footprint', pids.flatMap((p) => ['-p', String(p)]), { timeout: 10_000 }, (_e, out) => {
+      const kb = new Map<number, number>()
+      for (const m of String(out ?? '').matchAll(/\[(\d+)\]: .*?Footprint: ([\d.]+) (B|KB|MB|GB)/g)) {
+        kb.set(Number(m[1]), Number(m[2]) * FOOTPRINT_UNITS[m[3]])
+      }
+      done(kb)
+    })
+  })
+}
+
+// How much JavaScript a page is holding on to, in MB: the number that grows when a page leaks.
+// A page that doesn't answer within a couple of seconds is left out rather than holding up the line.
+function jsHeap(wc: WebContents): Promise<number | undefined> {
+  const asked = wc.executeJavaScript('performance.memory?.usedJSHeapSize').then(
+    (b) => (typeof b === 'number' ? Math.round(b / 1024 / 1024) : undefined),
+    () => undefined
+  )
+  return Promise.race([asked, new Promise<undefined>((r) => setTimeout(r, 2000))])
+}
+
+export async function health(): Promise<string> {
+  const metrics = app.getAppMetrics()
+  const fp = await footprints(metrics.map((m) => m.pid))
   const byType: Record<string, number> = {}
-  for (const m of app.getAppMetrics()) byType[m.type] = (byType[m.type] ?? 0) + m.memory.workingSetSize
+  for (const m of metrics) byType[m.type] = (byType[m.type] ?? 0) + (fp.get(m.pid) ?? m.memory.workingSetSize)
   const total = Object.values(byType).reduce((a, b) => a + b, 0)
   const parts = Object.entries(byType).map(([t, kb]) => `${t}=${mb(kb)}`)
   const heap = Math.round(process.memoryUsage().heapUsed / 1024 / 1024)
   const hours = (process.uptime() / 3600).toFixed(1)
-  const pages = webContents.getAllWebContents().map(pageName).join(',')
-  return `[health] up ${hours}h, memory ${mb(total)} MB (${parts.join(' ')}; main heap ${heap}), online=${net.isOnline()}, pages=${pages}`
+  const all = webContents.getAllWebContents().filter((wc) => !wc.isDestroyed())
+  const heaps = await Promise.all(all.map(async (wc) => [pageName(wc), await jsHeap(wc)] as const))
+  const js = heaps.filter(([, h]) => h !== undefined).map(([name, h]) => `${name}=${h}`)
+  const pages = all.map(pageName).join(',')
+  return (
+    `[health] up ${hours}h, memory ${mb(total)} MB (${parts.join(' ')}; main heap ${heap}; js heap ${js.join(' ') || '?'}), ` +
+    `online=${net.isOnline()}, pages=${pages}`
+  )
 }
+const logHealth = () => health().then((h) => log('info', h), (e) => log('warn', '[health] failed:', e))
 
 // Called once the app is ready (some of these need it).
 export function startLogging(): void {
@@ -180,14 +218,14 @@ export function startLogging(): void {
     powerMonitor.on(ev as 'suspend', () => log('info', `[power] ${ev}`))
   }
   // A baseline shortly after launch, then hourly.
-  setTimeout(() => log('info', health()), 5 * 60_000)
-  setInterval(() => log('info', health()), 60 * 60_000)
+  setTimeout(logHealth, 5 * 60_000)
+  setInterval(logHealth, 60 * 60_000)
 }
 
 // Help → Report a Problem: marks the moment in the log, and returns the last `hours` of it (from
 // the older file too, if the log rotated meanwhile) with a header, ready to paste into a report.
 const MAX_REPORT = 300_000
-export function problemReport(hours = 2): string {
+export async function problemReport(hours = 2): Promise<string> {
   log('warn', '[user] reported a problem here')
   flushRepeats()
   const since = Date.now() - hours * 3600_000
@@ -209,6 +247,6 @@ export function problemReport(hours = 2): string {
   }
   let body = lines.join('\n')
   if (body.length > MAX_REPORT) body = `… (older lines cut)\n${body.slice(-MAX_REPORT)}`
-  const head = `ytspot ${app.getVersion()} on macOS ${process.getSystemVersion()} ${process.arch}, reported ${stamp()}\n${health()}\nLast ${hours} hours of ${logFile}:`
+  const head = `ytspot ${app.getVersion()} on macOS ${process.getSystemVersion()} ${process.arch}, reported ${stamp()}\n${await health()}\nLast ${hours} hours of ${logFile}:`
   return `${head}\n\n${body}\n`
 }
