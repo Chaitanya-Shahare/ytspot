@@ -4,9 +4,9 @@
 
 # ytspot
 
-**YouTube Music for Mac, with a Spotify-style UI.**
+**YouTube Music for Mac, with Spotify's layout and shortcuts.**
 
-A free, open-source macOS desktop app for YouTube Music. It looks and works like the Spotify Mac app (same layout, keyboard shortcuts, Now Playing panel, queue, lyrics and full screen) and plays your YouTube Music library, without ads.
+A free, open-source Mac app that plays your YouTube Music library in a window that works like the Spotify Mac app: the same sidebar, Now Playing panel, queue, synced lyrics and ⌘ shortcuts. Ads are removed whether or not you pay for Premium, and you can bring your Spotify library over for free.
 
 [![Latest release](https://img.shields.io/github/v/release/Chaitanya-Shahare/ytspot?label=download&color=1ed760)](https://github.com/Chaitanya-Shahare/ytspot/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/Chaitanya-Shahare/ytspot/total?color=1ed760)](https://github.com/Chaitanya-Shahare/ytspot/releases)
@@ -25,7 +25,7 @@ A free, open-source macOS desktop app for YouTube Music. It looks and works like
 brew install --cask chaitanya-shahare/formulae/ytspot
 ```
 
-Then open **ytspot** and click **Log in** at the top right. That's it.
+Open **ytspot** and click **Log in** at the top right. That's it.
 
 <details>
 <summary><b>Without Homebrew</b></summary>
@@ -40,7 +40,7 @@ Then open **ytspot** and click **Log in** at the top right. That's it.
 
 **Update:** `brew upgrade --cask ytspot` · **Uninstall:** `brew uninstall --cask ytspot`
 
-Requires macOS 13+ on Apple Silicon. Intel Macs, Windows and Linux are untested; see [Build from source](#build-from-source).
+Needs macOS 13 or later on an Apple Silicon Mac. Intel Macs, Windows and Linux are untested; see [Build from source](#build-from-source).
 
 ## Demo
 
@@ -52,40 +52,56 @@ Requires macOS 13+ on Apple Silicon. Intel Macs, Windows and Linux are untested;
 
 </div>
 
-## Why
+## Why ytspot
 
-YouTube Music has the catalogue, but its desktop experience is a browser tab. Spotify has the best desktop app, but not your music. ytspot puts the Spotify UI on top of YouTube Music.
+YouTube Music has the catalogue, but on a Mac it lives in a browser tab. Spotify has the best desktop app, but not your music. ytspot puts the Spotify UI on top of YouTube Music.
 
-The UI is a separate React app, not a restyle of the YouTube Music website. Its colours, spacing, corner radii and control sizes come from the Spotify Mac app's design tokens. Playback runs in a hidden YouTube Music player, so Premium, radio and autoplay behave exactly as they do on music.youtube.com.
+The interface is ytspot's own React app; you never see the YouTube Music website. Its colours, spacing, corner radii and control sizes come from the Spotify Mac app's design tokens. Behind it, a hidden YouTube Music player does the playing, so Premium, radio and autoplay behave exactly as they do on music.youtube.com.
+
+What you get on day one:
+
+- **Your hands already know it.** Spotify's ⌘ shortcuts work, and so do YouTube Music's `j`/`k` keys.
+- **Ads are gone**, with or without Premium.
+- **Your Spotify library comes with you.** Liked Songs, playlists, albums and artists import to YouTube Music for free, with no limits.
+- **Songs play offline.** Download a song, album or playlist and it plays with Wi-Fi off.
+- **Lyrics follow the song.** The current line lights up, and clicking a line jumps to it.
 
 ## Features
 
 ### Listening
 
-- **No ads, with or without Premium.** Ads are stripped from YouTube Music's player responses before the player sees them, and ad requests are blocked. If one slips through anyway, it's muted and fast-forwarded.
-- **Download for offline listening.** Download a song from its ⋯ menu, or a whole album or playlist with the ↓ button. Downloaded songs (with their artwork and lyrics) show up under **Downloaded** in Your Library and play without an internet connection. Pick Low, Normal or High download quality in Settings.
-- **Audio-only by default.** Songs stream without the video. Turn on **Switch to video** to watch the music video in the Now Playing panel.
-- **Synced lyrics**, Spotify style: the current line is highlighted as the song plays, and clicking a line seeks to it. A lyrics card in the Now Playing panel follows along. Lyrics come from [LRCLIB](https://lrclib.net), with YouTube Music's own lyrics as a fallback.
-- **Chords for guitar, ukulele and piano (experimental).** Turn on Settings → Experimental → Chords, then the chords button in the player bar. The whole song's beats, bars, time signature (3/4 or 4/4), chords, key, tuning and tempo are worked out from its audio in a few seconds, and the next song in your queue is worked out ahead, so a playlist plays along without waiting. The **chord sheet** lays the whole song out in bars, four to a row, like Chordify: chords change on the beat (almost always where a bar starts), the beat sounding is lit, and rows that come round again share a section letter (A, B, C…) with a key to each section's chords and Roman numerals. Click a bar to jump there; Shift-click another to loop the bars between while you practise. The chord bar shows the chord now and the next one with how to play each, counts down the beats to the change, and ticks through the bar. Switch to **With lyrics** to see the chords over the synced lyrics instead. Chords are spelled for the song's key (G#m in E major, not Abm); transpose with − / +, pick Guitar, Ukulele or Piano, and hover a chord for every position on guitar and ukulele, or each inversion on piano.
-- **Full screen, three ways:** the artwork as in Spotify, the music video filling the screen, or full-screen synced lyrics. The controls fade out after 3 seconds without mouse movement.
-- **Shuffle and Smart Shuffle.** The shuffle button cycles off → Shuffle → Smart Shuffle. Smart Shuffle mixes a recommendation in after every 3 songs, marked with a ✦ in the queue. Turning shuffle off restores the original order.
+- **No ads, with or without Premium.** ytspot strips ads out of YouTube Music's player responses before the player sees them and blocks ad requests. If one slips through anyway, it's muted and fast-forwarded.
+- **Download for offline listening.** Download a song from its ⋯ menu, or a whole album or playlist with the ↓ button. Downloaded songs keep their artwork and lyrics, show up under **Downloaded** in Your Library, and play without an internet connection. Pick Low, Normal or High download quality in Settings.
+- **Audio only by default.** Songs stream without the video. Turn on **Switch to video** to watch the music video in the Now Playing panel.
+- **Synced lyrics**, Spotify style. The current line is highlighted as the song plays and clicking a line seeks to it. A lyrics card in the Now Playing panel follows along. Lyrics come from [LRCLIB](https://lrclib.net), with YouTube Music's own lyrics as a fallback.
+- **Full screen, three ways:** the artwork as in Spotify, the music video, or the synced lyrics. The controls fade out after 3 seconds without mouse movement.
+- **Shuffle and Smart Shuffle.** The shuffle button cycles off → Shuffle → Smart Shuffle. Smart Shuffle mixes in a recommendation after every 3 songs, marked ✦ in the queue. Turning shuffle off puts the original order back.
 - Keeps playing past YouTube Music's "Continue watching?" prompt.
+
+### Chords for guitar, ukulele and piano (experimental)
+
+Turn on **Settings → Experimental → Chords**, then press the chords button in the player bar. ytspot listens to the song and works out its beats, bars, time signature (3/4 or 4/4), chords, key, tuning and tempo in a few seconds. It works out the next song in your queue ahead of time, so you can play along through a whole playlist without waiting.
+
+- **Chord sheet:** the whole song in bars, four to a row, like Chordify. Chords change on the beat, the beat that's sounding is lit, and repeated rows share a section letter (A, B, C…) with a key to each section's chords and Roman numerals.
+- **Practise a section:** click a bar to jump there, then Shift-click another to loop the bars in between.
+- **Chord bar:** the chord now and the next one, how to play each, and a countdown of beats to the change. Switch to **With lyrics** to see the chords over the synced lyrics.
+- **Spelled for the key** (G#m in E major, not Abm). Transpose with − / +, pick Guitar, Ukulele or Piano, and hover a chord for every position on guitar and ukulele, or each inversion on piano.
 
 ### Spotify-style UI
 
 - **The full Spotify layout:** Your Library sidebar, Home with mood chips (Relax, Workout, Focus…), Search, Browse all, Explore, and album, artist and playlist pages with sticky headers.
 - **Now Playing panel:** artwork, where playback started, the lyrics card, About the artist and what's up next.
 - **Queue panel:** drag and drop to reorder the queue and the Autoplay list, jump to any track, or remove tracks.
-- **Song menus** on every row ("⋯" or right-click): add to playlist, play next, add to queue, like, go to song radio, artist or album, copy link.
+- **Song menus** on every row (⋯ or right-click): add to playlist, play next, add to queue, like, go to song radio, artist or album, copy link.
 - **Search** with filter chips (Songs, Videos, Albums, Artists, Playlists) and recent searches.
-- Resizable sidebars, a collapsible library, back/forward that restores your scroll position, and Spotify-style tooltips and toasts.
+- Resizable sidebars, a collapsible library, back and forward that restore your scroll position, and Spotify-style tooltips and toasts.
 
 ### Library and playlists
 
-- **Import from Spotify, free.** Bring your Liked Songs, playlists, saved albums and followed artists over to YouTube Music in a few minutes, with no limits. Log in to Spotify in a window inside ytspot, pick what to bring, and keep listening while it runs. Liked Songs keep their order and playlists come over as private ones. Afterwards, ytspot lists anything YouTube Music doesn't have, so you can pick a version yourself or leave it out, and any song it matched only closely, so you can play it and keep it or swap it for the right one. Importing again later adds only what's new. Open it from **Create → Import from Spotify…** or **Settings → Import**.
+- **Import from Spotify, free.** Log in to Spotify in a window inside ytspot, pick what to bring (Liked Songs, playlists, saved albums, followed artists), and keep listening while it runs. It takes a few minutes and has no limits. Liked Songs keep their order and playlists arrive as private ones. When it's done, ytspot lists the songs YouTube Music doesn't have, so you can pick a version yourself or leave them out, and the songs it matched only closely, so you can play each one and keep it or swap it. Importing again later adds only what's new. Open it from **Create → Import from Spotify…** or **Settings → Import**.
 - **Your Library** in Grid, List or Compact view, with search, sort and pinning. Sorted by Recents, whatever you last played or added moves to the top. Save albums and other people's playlists to it.
-- **Playlist editing:** create, delete, and edit the name, description, privacy and cover image, all saved to YouTube Music.
-- The **+** button saves to Liked Songs, then opens an **Add to playlist** popover. Duplicate adds ask first.
+- **Playlist editing:** create and delete playlists, and edit the name, description, privacy and cover image. Changes save to YouTube Music.
+- The **+** button saves to Liked Songs, then opens an **Add to playlist** popover. Adding a song that's already in the playlist asks first.
 - **Recommended songs** and an inline song search under your own playlists, like Spotify.
 - **Search in playlist** (⌘F) with sort by title, artist, album or duration.
 
@@ -98,14 +114,14 @@ The UI is a separate React app, not a restyle of the YouTube Music website. Its 
 ### macOS integration
 
 - **Control Center** Now Playing widget and **media keys**.
-- **Menu bar player:** the current song in the macOS menu bar, with play/pause, next, previous and like. Show the song, the artist, both, or just an icon, with a note or play/pause icon; switch it from the item's own Menu Bar submenu or in Settings.
+- **Menu bar player:** the current song in the macOS menu bar, with play/pause, next, previous and like. Show the song, the artist, both, or just an icon; change it from the item's own Menu Bar submenu or in Settings.
 - A full **app menu bar** (Playback, View, Window) that shows your current key bindings.
-- **Closing the window keeps the music playing**, like Spotify. The interface is unloaded to free memory and reopens from the Dock.
-- Optionally open ytspot when you log in to your Mac.
+- **Closing the window keeps the music playing**, like Spotify. ytspot unloads the interface to free memory and reopens it from the Dock.
+- Can open when you log in to your Mac.
 
 ### Settings
 
-- All **YouTube Music settings** in one Settings page: audio quality, Restricted Mode, dynamic queue, history, language and location.
+- Every **YouTube Music setting** on one page: audio quality, Restricted Mode, dynamic queue, history, language and location.
 
 ## Screenshots
 
@@ -218,6 +234,9 @@ Yes, by importing them: **Create → Import from Spotify…** copies your Liked 
 
 **Does it work without signing in?**
 Yes. You can browse, search and play as a guest. Sign in to see your library, likes and playlists.
+
+**Does ytspot collect any data?**
+No. It has no analytics and no server of its own. It talks to YouTube Music, to [LRCLIB](https://lrclib.net) for lyrics, to GitHub to check for updates, and to Spotify only while you import.
 
 **Does it work on Intel Macs, Windows or Linux?**
 Releases are built for Apple Silicon Macs only. Other platforms are untested, but you can try [building from source](#build-from-source).
