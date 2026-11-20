@@ -92,7 +92,7 @@ export function buildMenu(
 
 // Marks the moment in the log and puts the last two hours of it on the clipboard, for a bug report.
 async function reportProblem(win?: BaseWindow): Promise<void> {
-  clipboard.writeText(problemReport())
+  clipboard.writeText(await problemReport())
   const o: Electron.MessageBoxOptions = {
     type: 'info',
     message: 'The log is on your clipboard',
